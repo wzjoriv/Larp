@@ -14,6 +14,10 @@ def generateQuadTree(grid):
             self.topRight = topRight
             self.bottomLeft = bottomLeft
             self.bottomRight = bottomRight
+            #self.depth = depth
+            #self.parent = parent
+            # position wrt parent
+            # point to parent
                    
     class QuadTree:
         def construct(self, grid):

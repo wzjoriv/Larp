@@ -21,6 +21,7 @@ def generateQuadTree(grid):
                    
     class QuadTree:
         def construct(self, grid):
+
             def dfs(n, r, c): # n = size of grid; r = row number of topleft of grid; c = column of topLeft of grid;
                 allSame = True
                 for i in range(n):
@@ -29,7 +30,7 @@ def generateQuadTree(grid):
                             allSame = False
                             break
                 if allSame:
-                    return Node(grid[r][c], True, (r,c), (r,c+n-1), (r+n-1,c), (r+n-1,c+n-1))
+                    return Node(grid[r][c], True, (c,len(grid)-1-r), (c+n-1,len(grid)-1-r), (c,len(grid)-1-(r+n-1)), (c+n-1,len(grid)-1-(r+n-1))) # coordinates given as (x,y)
                 n = n // 2
                 topLeft = dfs(n, r, c)
                 topRight = dfs(n, r, c+n)
@@ -76,7 +77,3 @@ def displayQuadTree(quadTree):
 """
 
 
-
-
-
-# idea: add depth level to node information

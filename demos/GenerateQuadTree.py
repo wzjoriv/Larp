@@ -42,7 +42,7 @@ class QuadTree:
                         allSame = False
                         break
             if allSame:
-                return Node(grid[r][c], True, (c,len(grid)-1-r), (c+n-1,len(grid)-1-r), (c,len(grid)-1-(r+n-1)), (c+n-1,len(grid)-1-(r+n-1))) # coordinates given as (x,y)
+                return Node(grid[r][c], True, (r,c), (r,c+n-1), (c,r+n-1), (c+n-1,r+n-1)) # coordinates given as (x,y)
             n = n // 2
             tL = dfs(n, r, c)
             tR = dfs(n, r, c+n)
@@ -139,21 +139,73 @@ def populate_neighs(root):
       neighors are not leaves, we must process then accordingly to find the leaves on the correct side.
     """
 
+def findLeaves(node):
+    leaves = []
+    def dfs(node):
+        if node.isLeaf:
+            leaves.append(node)
+        else:
+            for child in [node.tL, node.tR, node.bL, node.bR]:
+                dfs(child)
+    dfs(node)
+    return leaves
+
+def makeAdjacency(leaves):
+    # applies the extend() function to all leaf nodes to make their adjacency lists
+    for leaf in leaves:
+        neighs = set() # set for neighbors
+        for i in range(8):
+            extend(neighs, leaf.neighs[i], i)
+        leaf.neighs = neighs
+    return
+
+def extend(neighs, node, pos):
+    # This function expands the neighbor information for a node to include all its neighbors that are leaves
+    if node and node.isLeaf: 
+        neighs.add(node)
+    elif node:
+        match pos: 
+            case 0: # neighbor on right
+                extend(neighs, node.tL, 0)
+                extend(neighs, node.bL, 0)
+            case 1: # topRight
+                extend(neighs, node.bL, 1)
+            case 2: # top
+                extend(neighs, node.bL, 2)
+                extend(neighs, node.bR, 2)
+            case 3: # topLeft
+                extend(neighs, node.bR,3)
+            case 4: # left
+                extend(neighs, node.bR, 4)
+                extend(neighs, node.tR, 4)
+            case 5: # bottomLeft
+                extend(neighs, node.tR, 5)
+            case 6: # bottom
+                extend(neighs, node.tL, 6)
+                extend(neighs, node.tR, 6)
+            case 7: # bottomRight
+                extend(neighs, node.tL, 7)
+
+    return
 
 if __name__ == "__main__":
-    grid2 = [[1,1,1,1,0,0,0,0],
-        [1,1,1,1,0,0,0,0],
-        [1,1,1,1,1,1,1,1],
-        [1,1,1,1,1,1,1,1],
-        [1,1,1,1,0,0,0,0],
-        [1,1,1,1,0,0,0,0],
-        [1,1,1,1,0,0,0,0],
-        [1,1,1,1,0,0,0,0]]
+    grid2 =[[1,1,1,1,0,0,0,0],
+            [1,1,1,1,0,0,0,0],
+            [1,1,1,1,1,1,1,1],
+            [1,1,1,1,1,1,1,1],
+            [1,1,1,1,0,0,0,0],
+            [1,1,1,1,0,0,0,0],
+            [1,1,1,1,0,0,0,0],
+            [1,1,1,1,0,0,0,0]]
     root = generateQuadTree(grid2)
     populate_neighs(root)
-    
+    leaves = findLeaves(root)
+    makeAdjacency(leaves)
+    """x = root.tR.tR.neighs
+    for z in x:
+        print(z.tL)
+    """
     print("Hello, World!")
-
 
 
 """

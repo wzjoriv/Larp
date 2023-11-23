@@ -21,8 +21,7 @@ def findAdjacency(leaves):
     ajList = {}
     for x in leaves:
         neighbors = []
-        xtrx = x.topRight[0]
-        xtry = x.topRight[1]
+        xtrx, xtry = x.topRight
         xtlx = x.topLeft[0]
         xtly = x.topLeft[1]
         xblx = x.bottomLeft[0]
@@ -63,8 +62,8 @@ grid2 = [[1,1,1,1,0,0,0,0],
 quadTree = generateQuadTree(grid2)
 displayQuadTree(quadTree)
 leaves = findLeaves(quadTree)
-ajList = findAdjacency(leaves)
-print(ajList)
+#ajList = findAdjacency(leaves)
+#print(ajList)
 
 """ 
 Notes:

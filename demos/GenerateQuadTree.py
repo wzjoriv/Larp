@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Fri Oct 13 01:19:49 2023
 
-@author: pruth
+"""
+Authors: pruth, Josue N Rivera
 """
     
 class Node:
@@ -36,6 +35,7 @@ class QuadTree:
 
         def dfs(n, r, c): # n = size of grid; r = row number of topleft of grid; c = column of topLeft of grid;
             allSame = True
+            # TODO: Detect values within range (Comment for Pruthvi)
             for i in range(n):
                 for j in range(n):
                     if grid[r][c] != grid[r+i][c+j]:
@@ -155,38 +155,29 @@ def makeAdjacency(leaves):
     for leaf in leaves:
         neighs = set() # set for neighbors
         for i in range(8):
-            extend(neighs, leaf.neighs[i], i)
+            dfs_neighs_leaf_extend(neighs, leaf.neighs[i], i)
         leaf.neighs = neighs
     return
 
-def extend(neighs, node, pos):
+def dfs_neighs_leaf_extend(neighs, node, pos):
     # This function expands the neighbor information for a node to include all its neighbors that are leaves
     if node and node.isLeaf: 
         neighs.add(node)
-    elif node:
-        match pos: 
-            case 0: # neighbor on right
-                extend(neighs, node.tL, 0)
-                extend(neighs, node.bL, 0)
-            case 1: # topRight
-                extend(neighs, node.bL, 1)
-            case 2: # top
-                extend(neighs, node.bL, 2)
-                extend(neighs, node.bR, 2)
-            case 3: # topLeft
-                extend(neighs, node.bR,3)
-            case 4: # left
-                extend(neighs, node.bR, 4)
-                extend(neighs, node.tR, 4)
-            case 5: # bottomLeft
-                extend(neighs, node.tR, 5)
-            case 6: # bottom
-                extend(neighs, node.tL, 6)
-                extend(neighs, node.tR, 6)
-            case 7: # bottomRight
-                extend(neighs, node.tL, 7)
+        return
 
-    return
+    directions = [
+        (node.tL, node.bL),  # right
+        (node.bL,),          # topRight
+        (node.bL, node.bR),  # top
+        (node.bR,),          # topLeft
+        (node.bR, node.tR),  # left
+        (node.tR,),          # bottomLeft
+        (node.tL, node.tR),  # bottom
+        (node.tL,)           # bottomRight
+    ]
+
+    for next_node in directions[pos]:
+        dfs_neighs_leaf_extend(neighs, next_node, pos)
 
 if __name__ == "__main__":
     grid2 =[[1,1,1,1,0,0,0,0],

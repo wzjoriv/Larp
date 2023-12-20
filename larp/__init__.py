@@ -1,7 +1,12 @@
 
 """
-Author: Josue N Rivera, Pruthvi Patel
-Date: 9/29/2023
+Author: Josue N Rivera
 """
 
-# add class info for quadTree
+class PotentialField():
+
+    def __init__(self):
+        pass
+
+    def addPoint():
+        pass

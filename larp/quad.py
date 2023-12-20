@@ -1,7 +1,8 @@
 from typing import Callable
 import numpy as np
+from larp import PotentialField
 
-from larp.types import FieldSize, PotentialField
+from larp.types import FieldSize
 
 """
 Author: Josue N Rivera, Pruthvi Patel
@@ -15,7 +16,6 @@ class QuadNode():
 
 def PFtoQuads(field: PotentialField,
               size: FieldSize,
-              dist_to_meters: float,
               bins:np.ndarray = np.arange(0.1, 1, 0.2)):
     pass
 

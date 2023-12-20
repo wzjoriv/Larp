@@ -1,10 +1,26 @@
-from typing import Callable, Tuple
+from typing import Any, List, Tuple, TypedDict
 import numpy as np
-from larp.quad import QuadNode
 
 """
 Author: Josue N Rivera
 """
 
-PotentialFieldType = Callable[[np.ndarray], QuadNode]
 FieldSize = Tuple[int, int]
+
+LOI = TypedDict('LOI', { #super set of GeoJSON geometry
+    'type': str,
+    'coordinates': Any, 
+    'decay': List[List[float]]
+})
+
+PointLOI = TypedDict('PointLOI', {
+    'type': str,
+    'coordinates': List[float], 
+    'decay': List[List[float]]
+})
+
+LineStringLOI = TypedDict('LineStringLOI',{
+    'type': str,
+    'coordinates': List[float], 
+    'decay': List[List[float]]
+})

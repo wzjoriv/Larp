@@ -2,11 +2,13 @@ from collections import defaultdict
 
 """
 Author: Josue N Rivera
-Adapted from: https://stackoverflow.com/questions/19472530/representing-graphs-data-structure-in-python
 """
 
 class Graph(object):
-    """ Graph data structure, undirected by default. """
+    """ Graph data structure, undirected by default. 
+    
+    - Adapted from: https://stackoverflow.com/questions/19472530/representing-graphs-data-structure-in-python
+    """
 
     def __init__(self, connections, directed=False):
         self._graph = defaultdict(set)
@@ -45,7 +47,7 @@ class Graph(object):
         return node1 in self._graph and node2 in self._graph[node1]
 
     def find_path(self, node1, node2, path=[]):
-        """ Find any path between node1 and node2 (may not be shortest) """
+        """ A* find shortest path"""
 
         path = path + [node1]
         if node1 == node2:
@@ -61,3 +63,14 @@ class Graph(object):
 
     def __str__(self):
         return '{}({})'.format(self.__class__.__name__, dict(self._graph))
+    
+class RouteGraph(Graph):
+
+    def __init__(self, connections, directed=False):
+        super.__init__(connections, directed)
+
+    def update_notes():
+        pass
+
+    def find_route(self, pointA, pointB):
+        pass

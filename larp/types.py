@@ -7,6 +7,8 @@ Author: Josue N Rivera
 
 FieldSize = Tuple[int, int]
 
+Point = Tuple[float, float]
+
 LOI = TypedDict('LOI', { #super set of GeoJSON geometry
     'type': str,
     'coordinates': Any, 

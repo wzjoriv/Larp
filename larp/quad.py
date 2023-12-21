@@ -1,8 +1,8 @@
-from typing import Callable
+from typing import List, Union
 import numpy as np
 from larp import PotentialField
 
-from larp.types import FieldSize
+from larp.types import Point
 
 """
 Author: Josue N Rivera, Pruthvi Patel
@@ -15,7 +15,11 @@ class QuadNode():
 
 
 def PFtoQuads(field: PotentialField,
-              size: FieldSize,
-              bins:np.ndarray = np.arange(0.1, 1, 0.2)):
-    pass
+              center_point: Point,
+              search_radius: float,
+              minimum_sector_length:float = 10.0,
+              bins:Union[np.ndarray, List[float]] = np.arange(0.1, 1, 0.2)) -> QuadNode:
+    
+    loc_tr = np.array(center_point) - np.array([search_radius, search_radius]) # tr = top right
+    loc_bl = np.array(center_point) + np.array([search_radius, search_radius]) # bl = bottom left
 

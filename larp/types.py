@@ -1,27 +1,29 @@
-from typing import Any, List, Tuple, TypedDict
+from typing import Any, List, Tuple, TypedDict, Union
 import numpy as np
 
 """
 Author: Josue N Rivera
+
+TODO: Add quads and eclipse
 """
 
 FieldSize = Tuple[int, int]
 
-Point = Tuple[float, float]
+Point = Union(Tuple[float, float], np.ndarray)
 
-LOI = TypedDict('LOI', { #super set of GeoJSON geometry
+LOIDict = TypedDict('LOIDict', { #super set of GeoJSON geometry
     'type': str,
     'coordinates': Any, 
     'decay': List[List[float]]
 })
 
-PointLOI = TypedDict('PointLOI', {
+PointLOIDict = TypedDict('PointLOIDict', {
     'type': str,
     'coordinates': List[float], 
     'decay': List[List[float]]
 })
 
-LineStringLOI = TypedDict('LineStringLOI',{
+LineStringLOIDict = TypedDict('LineStringLOIDict',{
     'type': str,
     'coordinates': List[float], 
     'decay': List[List[float]]

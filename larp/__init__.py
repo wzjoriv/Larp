@@ -1,7 +1,6 @@
-from typing import List, Union
+from typing import List, Optional, Union
 
 import numpy as np
-
 from larp.types import LOIDict, FieldSize
 
 """
@@ -80,18 +79,18 @@ class PotentialField():
     Potential field given a subset of LOIs
     """
 
-    def __init__(self, lois:List[LOIDict], size:FieldSize):
+    def __init__(self, size:FieldSize, lois:Optional[List[LOIDict]] = None):
         self.lois:List[LOI] = []
-        self.size = size
+        self.size = np.array(size)
 
         for loi in lois:
             self.addLOI(loi)
 
 
     def addLOI(self, loi:LOIDict) -> None:
-        LOIclass:LOI = globals()[loi[type]+"LOI"](coordinates = loi["coordinates"], decay = loi["decay"])
+        LOIclass:LOI = globals()[loi["type"]+"LOI"](coordinates = np.array(loi["coordinates"]), decay = np.array(loi["decay"]))
 
-        if LOIclass.LOIType != loi[type]:
+        if LOIclass.LOIType != loi["type"]:
             raise RuntimeError("LOI type does not match")
         
         self.lois.append(LOIclass)
@@ -101,12 +100,8 @@ class PotentialField():
 
         return np.max(np.concatenate([loi.eval(points) for loi in self.lois], 1), 1)
     
-    def squared_dist(self, x: Union[np.ndarray, List[np.ndarray]]) -> np.ndarray:
+    def squared_dist(self, points: Union[np.ndarray, List[np.ndarray]]) -> np.ndarray:
         points = np.array(points)
 
         return np.min(np.concatenate([loi.squared_dist(points) for loi in self.lois], 1), 1)
         
-    
-if __name__ == "__main__":
-    #TODO: test
-    pass

@@ -9,7 +9,7 @@ TODO: Add quads and eclipse
 
 FieldSize = Tuple[int, int]
 
-Point = Union(Tuple[float, float], np.ndarray)
+Point = Union[Tuple[float, float], np.ndarray]
 
 LOIDict = TypedDict('LOIDict', { #super set of GeoJSON geometry
     'type': str,

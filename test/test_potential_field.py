@@ -15,7 +15,7 @@ if __name__ == "__main__":
         {
             'type': "Point",
             'coordinates': [50, 50], 
-            'decay': [[10, 0], [0, 10]]
+            'decay': [[10, 0], [0, 5]]
         },
         {
             'type': "Point",
@@ -37,6 +37,6 @@ if __name__ == "__main__":
     field = larp.PotentialField(size=(100, 100),
                            lois=lois)
     
-    x2 = np.array([[50, 65]])
+    x = np.array([[50, 65], [70, 60], [60, 60]])
     
-    print(field.eval(x2))
+    print(field.eval(x))

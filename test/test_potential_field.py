@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import json
 import sys
 sys.path.append("E:\dev\Projects\LARP")
 
@@ -9,34 +10,23 @@ import larp
 Author: Josue N Rivera
 """
 
-if __name__ == "__main__":
+def test_eval():
 
-    lois = [
-        {
-            'type': "Point",
-            'coordinates': [50, 50], 
-            'decay': [[10, 0], [0, 5]]
-        },
-        {
-            'type': "Point",
-            'coordinates': [60, 55], 
-            'decay': [[12, 0], [0, 12]]
-        },
-        {
-            'type': "Point",
-            'coordinates': [55, 48], 
-            'decay': [[8, 0], [0, 10]]
-        },
-        {
-            'type': "LineString",
-            'coordinates': [[62, 53], [62, 60], [65, 65], [60, 60]], 
-            'decay': [[5, 0], [0, 5]]
-        }
-    ]
+    with open("test\data.rgj") as file:
+        rgjs:list = json.load(file)
     
     field = larp.PotentialField(size=(100, 100),
-                           lois=lois)
+                           rgjs=rgjs)
     
-    x = np.array([[50, 65], [70, 60], [60, 60]])
+    x = np.array([[50, 65], [70, 60], [60, 60], [63, 63], [50, 50], [65, 70]])
     
-    print(field.eval(x))
+    out = field.eval(x)
+    assert len(np.squeeze(out)) == len(x),   "Evaluation of line string rgj does not return a size equal to the size of the input"
+    assert np.squeeze(out)[0] != 1.0,        "Evaluation of line string rgj is incorrect for point at a high-energy state"
+    assert np.squeeze(out)[1] != 1.0,        "Evaluation of line string rgj is incorrect for point at a high-energy state"
+    assert np.squeeze(out)[2] == 1.0,        "Evaluation of line string rgj is incorrect for point at a high-energy state"
+    assert np.squeeze(out)[3] == 1.0,        "Evaluation of line string rgj is incorrect for point at a high-energy state"
+    assert np.squeeze(out)[4] == 1.0,        "Evaluation of line string rgj is incorrect for point at a high-energy state"
+    assert np.squeeze(out)[5] == np.exp(-1), "Evaluation of line string rgj is incorrect for a point one magnitude away"
+
+test_eval()

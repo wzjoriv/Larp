@@ -11,20 +11,20 @@ FieldSize = Tuple[int, int]
 
 Point = Union[Tuple[float, float], np.ndarray]
 
-LOIDict = TypedDict('LOIDict', { #super set of GeoJSON geometry
+RGJDict = TypedDict('LOIDict', { #super set of GeoJSON geometry
     'type': str,
     'coordinates': Any, 
-    'decay': List[List[float]]
+    'repulsion': List[List[float]]
 })
 
-PointLOIDict = TypedDict('PointLOIDict', {
+PointRGJDict = TypedDict('PointLOIDict', {
     'type': str,
     'coordinates': List[float], 
-    'decay': List[List[float]]
+    'repulsion': List[List[float]]
 })
 
-LineStringLOIDict = TypedDict('LineStringLOIDict',{
+LineStringRGJDict = TypedDict('LineStringLOIDict',{
     'type': str,
     'coordinates': List[float], 
-    'decay': List[List[float]]
+    'repulsion': List[List[float]]
 })

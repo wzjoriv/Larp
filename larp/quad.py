@@ -79,9 +79,9 @@ class QuadNode():
         self.children = [None]*len(self.chdToIdx)
         self.neighbors = [None]*len(self.nghToIdx)
 
-    def __getitem__(self, idx:Union[str, int, tuple]) -> Union[QuadNode, List[QuadNode]]:
+    def __getitem__(self, idx:Union[str, int, tuple, list]) -> Union[QuadNode, List[QuadNode]]:
 
-        if isinstance(idx, tuple):
+        if isinstance(idx, (list, tuple)):
             n = len(idx)
             out = [None]*n
 
@@ -94,8 +94,8 @@ class QuadNode():
             idx = self.chdToIdx[idx] if not isinstance(idx, int) else idx
             return self.children[idx]
 
-    def __setitem__(self, idx:Union[str, int], value:QuadNode) -> None:
-        if isinstance(idx, tuple):
+    def __setitem__(self, idx:Union[str, int, tuple, list], value:QuadNode) -> None:
+        if isinstance(idx, (list, tuple)):
             for id in idx:
                 id = self.chdToIdx[id] if not isinstance(id, int) else id
                 self.neighbors[id] = value

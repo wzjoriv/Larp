@@ -2,21 +2,21 @@
         {
             "type": "Point",
             "coordinates": [50, 50], 
-            "repulsion": [[100, 0], [0, 25]]
+            "repulsion": [[36, 0], [0, 25]]
         },
         {
             "type": "Point",
             "coordinates": [60, 55], 
-            "repulsion": [[144, 0], [0, 144]]
+            "repulsion": [[36, 0], [0, 36]]
         },
         {
             "type": "Point",
-            "coordinates": [55, 48], 
+            "coordinates": [45, 48], 
             "repulsion": [[64, 0], [0, 100]]
         },
         {
             "type": "LineString",
-            "coordinates": [[62, 53], [62, 60], [65, 65], [60, 60]], 
-            "repulsion": [[25, 0], [0, 25]]
+            "coordinates": [[10, 10], [80, 10], [80, 80], [10, 80], [10, 10]], 
+            "repulsion": [[9, 0], [0, 9]]
         }
 ]

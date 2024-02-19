@@ -48,7 +48,10 @@ class PointRGJ(RGJGeometry):
         super().__init__(coordinates, repulsion)
     
     def squared_dist(self, x: np.ndarray) -> np.ndarray:
-        return (((x - self.coordinates)@self.inv_repulsion.T)*(x - self.coordinates)).sum(1, keepdims=True)
+
+        x_d_xh = x - self.coordinates
+
+        return ((x_d_xh@self.inv_repulsion.T)*x_d_xh).sum(1, keepdims=True)
 
 class LineStringRGJ(RGJGeometry):
     RGJType = "LineString"
@@ -67,8 +70,9 @@ class LineStringRGJ(RGJGeometry):
         x12dotx12 = (x2_d_x1*x2_d_x1).sum(1, keepdims=True)
 
         g = line[0] + np.clip(x12dotxx1/x12dotx12, 0.0, 1.0)*(x2_d_x1)
+        x_d_g = x - g
 
-        return (((x - g)@self.inv_repulsion.T)*(x - g)).sum(1, keepdims=True)
+        return ((x_d_g@self.inv_repulsion.T)*x_d_g).sum(1, keepdims=True)
     
     def squared_dist(self, x: np.ndarray) -> np.ndarray:
         
@@ -80,6 +84,46 @@ class LineStringRGJ(RGJGeometry):
 
         return np.concatenate(dist, axis=1).min(1)
     
+class RectangleRGJ(RGJGeometry):
+    RGJType = "Rectangle"
+
+    def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, **kwargs) -> None:
+        super().__init__(coordinates, repulsion)
+        self.x1_abs_x2 = np.abs(self.coordinates[0] - self.coordinates[1])
+
+    def __new_vector__(self, x: np.ndarray) -> np.ndarray:
+        
+        return 0.5*(np.abs(x-self.coordinates[0]) + np.abs(x-self.coordinates[1]) - self.x1_abs_x2)
+    
+    def squared_dist(self, x: np.ndarray) -> np.ndarray:
+
+        nvector = self.__new_vector__(x)
+        return ((nvector@self.inv_repulsion.T)*nvector).sum(1, keepdims=True)
+    
+class EllipseRGJ(RGJGeometry):
+    RGJType = "Ellipse"
+    DEN_ERROR_BUFFER = 1e-6
+
+    def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, shape: np.ndarray, **kwargs) -> None:
+        super().__init__(coordinates, repulsion)
+        self.shape = shape
+        self.inv_shape = np.linalg.inv(self.shape)
+
+    def __new_vector__(self, x: np.ndarray) -> np.ndarray:
+
+        x_d_xh = x - self.coordinates
+        Binvx = x_d_xh@self.inv_shape.T
+
+        den = np.sqrt((Binvx*Binvx).sum(1, keepdims=True))
+        den = np.maximum(den, self.DEN_ERROR_BUFFER)
+
+        return np.maximum(1 - 1/den, 0)*x_d_xh
+    
+    def squared_dist(self, x: np.ndarray) -> np.ndarray:
+
+        nvector = self.__new_vector__(x)
+        return ((nvector@self.inv_repulsion.T)*nvector).sum(1, keepdims=True)
+    
 
 class PotentialField():
     """
@@ -89,13 +133,13 @@ class PotentialField():
     def __init__(self, size:Union[FieldSize, float], center_point: Optional[Point] = None, rgjs:Optional[List[RGJDict]] = None):
         self.rgjs:List[RGJGeometry] = []
         self.__reload_center = None
-        self.size = np.array([size, size]) if np.isscalar(float)  else np.array(size)
+        self.size = np.array([size, size]) if np.isscalar(float) else np.array(size)
 
         for rgj in rgjs:
             self.addRGJ(rgj)
 
         if center_point is None:
-            self.__reload_center = True # wether to recalculate center point if new RGJ are added
+            self.__reload_center = True # whether to recalculate center point if new RGJ are added
             self.center_point = self.__calculate_center_point()
         else:
             self.__reload_center = False
@@ -123,9 +167,14 @@ class PotentialField():
     def squared_dist(self, points:Union[np.ndarray, List[Point]]) -> np.ndarray:
         points = np.array(points)
 
-        return np.min(np.concatenate([rgj.squared_dist(points) for rgj in self.rgjs], axis=1), axis=1)
+        return np.min(self.squared_dist_list(points=points), axis=1)
     
-    def to_display(self, resolution:int = 100, margin:float = 0.0, center_point:Optional[Point] = None):
+    def squared_dist_list(self, points:Union[np.ndarray, List[Point]]) -> np.ndarray:
+        points = np.array(points)
+
+        return np.concatenate([rgj.squared_dist(points) for rgj in self.rgjs], axis=1)
+    
+    def to_image(self, resolution:int = 100, margin:float = 0.0, center_point:Optional[Point] = None):
 
         if center_point is not None:
             self.center_point = center_point
@@ -136,10 +185,10 @@ class PotentialField():
         loc_br = np.array(self.center_point) + np.array([n2[0]+margin, -n2[1]-margin])
 
         xaxis = np.linspace(loc_tl[0], loc_br[0], resolution)
-        yaxis = np.linspace(loc_tl[1], loc_br[1], resolution)
+        yaxis = np.linspace(loc_tl[1], loc_br[1], int(resolution*abs(loc_tl[1] - loc_br[1])/abs(loc_br[0] - loc_tl[0])))
 
         xgrid, ygrid = np.meshgrid(xaxis, yaxis)
-        points = np.vstack([xgrid.ravel(), ygrid.ravel()])
+        points = np.vstack([xgrid.ravel(), ygrid.ravel()]).T
 
         return self.eval(points).reshape((resolution, resolution))
         

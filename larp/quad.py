@@ -5,7 +5,7 @@ from larp import PotentialField
 from larp.types import Point
 
 """
-Author: Josue N Rivera, Pruthvi Patel
+Author: Josue N Rivera
 Date: 9/29/2023
 Generate the quadtree and graph from the potential field
 """

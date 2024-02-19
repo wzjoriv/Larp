@@ -12,8 +12,28 @@ Author: Josue N Rivera
 
 def test_eval():
 
-    with open("test\data.rgj") as file:
-        rgjs:list = json.load(file)
+    rgjs = [
+        {
+            "type": "Point",
+            "coordinates": [50, 50], 
+            "repulsion": [[100, 0], [0, 25]]
+        },
+        {
+            "type": "Point",
+            "coordinates": [60, 55], 
+            "repulsion": [[144, 0], [0, 144]]
+        },
+        {
+            "type": "Point",
+            "coordinates": [55, 48], 
+            "repulsion": [[64, 0], [0, 100]]
+        },
+        {
+            "type": "LineString",
+            "coordinates": [[62, 53], [62, 60], [65, 65], [60, 60]], 
+            "repulsion": [[25, 0], [0, 25]]
+        }
+    ]
     
     field = larp.PotentialField(size=(100, 100),
                            rgjs=rgjs)

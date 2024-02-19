@@ -32,7 +32,7 @@ class QuadTree():
         self.root = None
 
     def __approximated_PF_bins__(self, center_point:Point, size:float, filter_idx:Optional[List[int]] = None):
-        # TODO: Filter 
+        # TODO: Filter and set bins
 
         dist = self.field.squared_dist_list([center_point], filted_idx=filter_idx).ravel()
 
@@ -79,13 +79,29 @@ class QuadNode():
         self.children = [None]*len(self.chdToIdx)
         self.neighbors = [None]*len(self.nghToIdx)
 
-    def __getitem__(self, idx:Union[str, int]) -> QuadNode:
-        idx = self.chdToIdx[idx] if not isinstance(idx, int) else idx
+    def __getitem__(self, idx:Union[str, int, tuple]) -> Union[QuadNode, List[QuadNode]]:
 
-        return self.children[idx]
+        if isinstance(idx, tuple):
+            n = len(idx)
+            out = [None]*n
+
+            for i in range(n):
+                id = self.chdToIdx[idx[i]] if not isinstance(idx[i], int) else idx[i]
+                out[i] = self.neighbors[id]
+            return out
+        
+        else:
+            idx = self.chdToIdx[idx] if not isinstance(idx, int) else idx
+            return self.children[idx]
 
     def __setitem__(self, idx:Union[str, int], value:QuadNode) -> None:
-        idx = self.chdToIdx[idx] if not isinstance(idx, int) else idx
-        self.children[idx] = value
+        if isinstance(idx, tuple):
+            for id in idx:
+                id = self.chdToIdx[id] if not isinstance(id, int) else id
+                self.neighbors[id] = value
+
+        else:
+            idx = self.chdToIdx[idx] if not isinstance(idx, int) else idx
+            self.children[idx] = value
 
 

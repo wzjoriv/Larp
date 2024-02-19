@@ -17,7 +17,7 @@ def test_quad_on_simple_pf():
         'repulsion': [[5, 0], [0, 5]]
     },{
         'type': "Point",
-        'coordinates': [50, 50], 
+        'coordinates': [60, 60], 
         'repulsion': [[5, 0], [0, 5]]
     }]
 

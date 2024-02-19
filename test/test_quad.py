@@ -1,6 +1,6 @@
 import numpy as np
 import sys
-sys.path.append("E:\dev\Projects\LARP")
+sys.path.append("../LARP")
 
 import larp
 

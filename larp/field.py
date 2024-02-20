@@ -145,6 +145,9 @@ class PotentialField():
             self.__reload_center = False
             self.center_point = center_point
 
+    def __len__(self)->int:
+        return len(self.rgjs)
+
     def __calculate_center_point__(self):
         return np.array([rgj.get_center_point() for rgj in self.rgjs]).mean(0)
 

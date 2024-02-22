@@ -32,8 +32,8 @@ class QuadTree():
         self.boundaries = np.sort(np.array(boundaries))[::-1]
         self.n_zones = len(self.boundaries) + 1
         self.__zones_rad_ln = -np.log(self.boundaries)
-        self.ZONEToMaxRANGE = np.append([1.0, 1.0], self.boundaries)
-        self.ZONEToMinRANGE = np.append(self.boundaries[0:1], self.boundaries, [0.0])
+        self.ZONEToMaxRANGE = np.concatenate([[1.0, 1.0], self.boundaries])
+        self.ZONEToMinRANGE = np.concatenate([self.boundaries[0:1], self.boundaries, [0.0]])
 
         self.root = None
         self.leaves:List[QuadNode] = []
@@ -47,20 +47,23 @@ class QuadTree():
         quad.leaf = True
 
     def __approximated_PF_zones__(self, center_point:Point, size:float, filter_idx:Optional[List[int]] = None) -> Tuple[List[int], np.ndarray]: 
+        n_rgjs = len(filter_idx)
         zones = np.ones(len(filter_idx), dtype=int) * self.n_zones
 
         dist_sqr = self.field.squared_dist_list([center_point], filted_idx=filter_idx, scaled=False).ravel()
         zone0_select = dist_sqr <= (size*size)/2.0
         zones[zone0_select] = 0
 
-        dist_sqr = self.field.squared_dist_list([center_point], filted_idx=filter_idx[~zone0_select]).ravel()
-        dist_sqr_bins = (size*size)/2.0 + np.sqrt(2)*size*np.sqrt(self.__zones_rad_ln) + self.__zones_rad_ln
+        if sum(zone0_select) < n_rgjs:
+            dist_sqr = self.field.squared_dist_list([center_point], filted_idx=filter_idx[~zone0_select]).ravel()
+            dist_sqr_bins = (size*size)/2.0 + np.sqrt(2)*size*np.sqrt(self.__zones_rad_ln) + self.__zones_rad_ln
 
-        zones[~zone0_select] = np.digitize(dist_sqr, dist_sqr_bins, right=True) + 1
+            zones[~zone0_select] = np.digitize(dist_sqr, dist_sqr_bins, right=True) + 1
 
         return zones
 
     def build(self) -> Optional[QuadNode]:
+        self.leaves:List[QuadNode] = []
 
         def dfs(center_point:Point, size:float, filter_idx:Optional[List[int]]) -> QuadNode:
             quad = QuadNode(center_point=center_point, size=size)
@@ -76,12 +79,12 @@ class QuadTree():
                 return quad
             
             if zone > 0:
-                # stop subdiving if sphere does not leave zone 0
+                # stop subdiving if sphere does not leave zone
                 lower_range = self.ZONEToMinRANGE[zone]
                 rgjs_idx = filter_idx[zones == zone]
 
                 vectors = self.field.repulsion_vectors([center_point], filted_idx=rgjs_idx).reshape(-1, 2)
-                uni_vectors = vectors/np.linalg.norm(vectors, axis=1)
+                uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
                 if (self.field.eval(center_point + uni_vectors*size2) <= lower_range).any():
                     self.mark_leaf(quad)

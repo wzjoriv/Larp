@@ -7,7 +7,7 @@ from larp.types import RGJDict, FieldSize, Point
 """
 Author: Josue N Rivera
 
-coordinates are assumed to be a list of coordinates
+x are assumed to be a list of point coordinates
 """
 
 def __distance_matrix_points__(self, x:np.ndarray, y:Optional[np.ndarray]=None, p:int=2) -> np.ndarray:
@@ -42,7 +42,7 @@ class RGJGeometry():
         raise NotImplementedError
 
     def eval(self, x:np.ndarray):
-        return np.exp(-self.squared_dist(x).squeeze())
+        return np.exp(-self.squared_dist(x))
 
 class PointRGJ(RGJGeometry):
     RGJType = "Point"
@@ -58,7 +58,7 @@ class PointRGJ(RGJGeometry):
         x_d_xh = self.repulsion_vector(x=x)
         matrix = self.inv_repulsion.T if scaled else np.eye(len(x[0]))
         
-        return ((x_d_xh@matrix)*x_d_xh).sum(1, keepdims=True)
+        return ((x_d_xh@matrix)*x_d_xh).sum(axis=1)
 
 class LineStringRGJ(RGJGeometry):
     RGJType = "LineString"
@@ -73,7 +73,7 @@ class LineStringRGJ(RGJGeometry):
         x_d_g = self.__repulsion_vector_one_line__(x=x, line=line)
         matrix = self.inv_repulsion.T if scaled else np.eye(len(x[0]))
 
-        return ((x_d_g@matrix)*x_d_g).sum(1, keepdims=True)
+        return ((x_d_g@matrix)*x_d_g).sum(1)
     
     def __repulsion_vector_one_line__(self, x: np.ndarray, line: np.ndarray) -> np.ndarray:
         x2_d_x1 = line[1:2] - line[0:1]
@@ -92,7 +92,7 @@ class LineStringRGJ(RGJGeometry):
         else:
             vectors:np.ndarray = [self.__repulsion_vector_one_line__(x=x, line=line) for line in self.points_in_line_pair]
 
-        return vectors
+        return np.stack(vectors, axis=0)
     
     def squared_dist(self, x: np.ndarray, scaled=True) -> np.ndarray:
         
@@ -102,7 +102,7 @@ class LineStringRGJ(RGJGeometry):
         else:
             dist:np.ndarray = [self.__squared_dist_one_line__(x=x, line=line, scaled=scaled) for line in self.points_in_line_pair]
 
-        return np.concatenate(dist, axis=1).min(1)
+        return np.stack(dist, axis=1).min(axis=1)
     
 class RectangleRGJ(RGJGeometry):
     RGJType = "Rectangle"
@@ -120,7 +120,7 @@ class RectangleRGJ(RGJGeometry):
         nvector = self.repulsion_vector(x)
         matrix = self.inv_repulsion.T if scaled else np.eye(len(x[0]))
 
-        return ((nvector@matrix)*nvector).sum(1, keepdims=True)
+        return ((nvector@matrix)*nvector).sum(axis=1)
     
 class EllipseRGJ(RGJGeometry):
     RGJType = "Ellipse"
@@ -146,7 +146,7 @@ class EllipseRGJ(RGJGeometry):
         nvector = self.repulsion_vector(x)
         matrix = self.inv_repulsion.T if scaled else np.eye(len(x[0]))
 
-        return ((nvector@matrix)*nvector).sum(1, keepdims=True)
+        return ((nvector@matrix)*nvector).sum(axis=1)
     
 
 class PotentialField():
@@ -179,8 +179,8 @@ class PotentialField():
         size2 = self.size[0]/2.0
         return [self.center_point[0] - size2,
                 self.center_point[0] + size2,
-                self.center_point[1] + size2,
-                self.center_point[1] - size2]
+                self.center_point[1] - size2,
+                self.center_point[1] + size2]
 
     def addRGJ(self, rgj_dict:RGJDict) -> None:
         rgj:RGJGeometry = globals()[rgj_dict["type"]+"RGJ"](**rgj_dict)
@@ -199,13 +199,13 @@ class PotentialField():
     
     def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
         points = np.array(points)
-        rgjs = self.rgjs[filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
+        rgjs = [self.rgjs[idx] for idx in filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
 
-        return np.stack([rgj.repulsion_vector(points).reshape(-1, 2) for rgj in rgjs], axis=0)
+        return np.concatenate([rgj.repulsion_vector(points).reshape(-1, 2) for rgj in rgjs], axis=0)
 
     def eval(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
         points = np.array(points)
-        rgjs = self.rgjs[filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
+        rgjs = [self.rgjs[idx] for idx in filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
 
         return np.max(np.stack([rgj.eval(points) for rgj in rgjs], axis=1), axis=1)
     
@@ -216,9 +216,9 @@ class PotentialField():
     
     def squared_dist_list(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True) -> np.ndarray:
         points = np.array(points)
-        rgjs = self.rgjs[filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
+        rgjs = [self.rgjs[idx] for idx in filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
 
-        return np.concatenate([rgj.squared_dist(points, scaled=scaled) for rgj in rgjs], axis=1)
+        return np.stack([rgj.squared_dist(points, scaled=scaled) for rgj in rgjs], axis=1)
     
     def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None) -> np.ndarray:
 

@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import sys
 sys.path.append("../LARP")
@@ -21,8 +22,13 @@ def test_quad_on_simple_pf():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(rgjs=point_rgjs)
-    quadtree = larp.quad.QuadTree(field=field)
+    field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
+    quadtree = larp.quad.QuadTree(field=field,
+                                  build_tree=True,
+                                  minimum_sector_length=5,
+                                  boundaries=np.arange(0.2, 0.8, 0.2))
+    
+    quadtree.build()
     
 
 test_quad_on_simple_pf()

@@ -17,6 +17,6 @@ Then, open a new terminal and activate environment
 pip install -r requirements.txt
 ```
 
-## Deployment
+## Notes 
 
-TODO
+1. The code was tested on Python 3.8. No other version is supported.

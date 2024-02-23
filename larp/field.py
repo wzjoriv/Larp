@@ -31,11 +31,22 @@ class RGJGeometry():
         self.coordinates = np.array(coordinates)
         self.repulsion = np.array(repulsion)
         self.inv_repulsion = np.linalg.inv(self.repulsion)
+        self.eye_repulsion = np.eye(len(self.repulsion))
+
+    def get_dist_matrix(self, scaled=True, inverted=True):
+
+        if inverted and scaled:
+            return self.inv_repulsion
+        if not scaled:
+            return self.eye_repulsion
+        
+        return self.repulsion
+
 
     def get_center_point(self) -> np.ndarray:
         return self.coordinates if len(self.coordinates.shape) <= 1 else np.reshape(self.coordinates, (-1, 2)).mean(0)
 
-    def squared_dist(self, x:np.ndarray, scaled=True) -> np.ndarray:
+    def squared_dist(self, x:np.ndarray, scaled=True, inverted=True) -> np.ndarray:
         raise NotImplementedError
     
     def repulsion_vector(self, x:np.ndarray) -> np.ndarray:
@@ -53,10 +64,10 @@ class PointRGJ(RGJGeometry):
     def repulsion_vector(self, x: np.ndarray) -> np.ndarray:
         return x - self.coordinates
     
-    def squared_dist(self, x: np.ndarray, scaled=True) -> np.ndarray:
+    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
 
         x_d_xh = self.repulsion_vector(x=x)
-        matrix = self.inv_repulsion.T if scaled else np.eye(len(x[0]))
+        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
         
         return ((x_d_xh@matrix)*x_d_xh).sum(axis=1)
 
@@ -68,10 +79,10 @@ class LineStringRGJ(RGJGeometry):
         self.lines_n = len(coordinates)
         self.points_in_line_pair = np.stack([self.coordinates[:-1], self.coordinates[1:]], axis=1)
 
-    def __squared_dist_one_line__(self, x: np.ndarray, line: np.ndarray, scaled=True) -> np.ndarray:
+    def __squared_dist_one_line__(self, x: np.ndarray, line: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
 
         x_d_g = self.__repulsion_vector_one_line__(x=x, line=line)
-        matrix = self.inv_repulsion.T if scaled else np.eye(len(x[0]))
+        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
 
         return ((x_d_g@matrix)*x_d_g).sum(1)
     
@@ -94,13 +105,13 @@ class LineStringRGJ(RGJGeometry):
 
         return np.stack(vectors, axis=0)
     
-    def squared_dist(self, x: np.ndarray, scaled=True) -> np.ndarray:
+    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
         
         if self.lines_n > 20:
             p = Pool(5)
-            dist:np.ndarray = p.map(lambda line: self.__squared_dist_one_line__(x=x, line=line, scaled=scaled), self.points_in_line_pair)
+            dist:np.ndarray = p.map(lambda line: self.__squared_dist_one_line__(x=x, line=line, scaled=scaled, inverted=inverted), self.points_in_line_pair)
         else:
-            dist:np.ndarray = [self.__squared_dist_one_line__(x=x, line=line, scaled=scaled) for line in self.points_in_line_pair]
+            dist:np.ndarray = [self.__squared_dist_one_line__(x=x, line=line, scaled=scaled, inverted=inverted) for line in self.points_in_line_pair]
 
         return np.stack(dist, axis=1).min(axis=1)
     
@@ -115,10 +126,10 @@ class RectangleRGJ(RGJGeometry):
         
         return 0.5*(np.abs(x-self.coordinates[0]) + np.abs(x-self.coordinates[1]) - self.x1_abs_x2)
     
-    def squared_dist(self, x: np.ndarray, scaled=True) -> np.ndarray:
+    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
 
         nvector = self.repulsion_vector(x)
-        matrix = self.inv_repulsion.T if scaled else np.eye(len(x[0]))
+        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
 
         return ((nvector@matrix)*nvector).sum(axis=1)
     
@@ -141,10 +152,10 @@ class EllipseRGJ(RGJGeometry):
 
         return np.maximum(1 - 1/den, 0)*x_d_xh
     
-    def squared_dist(self, x: np.ndarray, scaled=True) -> np.ndarray:
+    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
 
         nvector = self.repulsion_vector(x)
-        matrix = self.inv_repulsion.T if scaled else np.eye(len(x[0]))
+        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
 
         return ((nvector@matrix)*nvector).sum(axis=1)
     
@@ -209,16 +220,16 @@ class PotentialField():
 
         return np.max(np.stack([rgj.eval(points) for rgj in rgjs], axis=1), axis=1)
     
-    def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True) -> np.ndarray:
+    def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
         points = np.array(points)
 
-        return np.min(self.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled), axis=1)
+        return np.min(self.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted), axis=1)
     
-    def squared_dist_list(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True) -> np.ndarray:
+    def squared_dist_list(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
         points = np.array(points)
         rgjs = [self.rgjs[idx] for idx in filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
 
-        return np.stack([rgj.squared_dist(points, scaled=scaled) for rgj in rgjs], axis=1)
+        return np.stack([rgj.squared_dist(points, scaled=scaled, inverted=inverted) for rgj in rgjs], axis=1)
     
     def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None) -> np.ndarray:
 

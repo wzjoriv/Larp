@@ -48,7 +48,7 @@ class QuadTree():
 
     def __approximated_PF_zones__(self, center_point:Point, size:float, filter_idx:Optional[List[int]] = None) -> Tuple[List[int], np.ndarray]: 
         n_rgjs = len(filter_idx)
-        zones = np.ones(len(filter_idx), dtype=int) * self.n_zones
+        zones = np.ones(n_rgjs, dtype=int) * self.n_zones
 
         dist_sqr = self.field.squared_dist_list([center_point], filted_idx=filter_idx, scaled=False).ravel()
         zone0_select = dist_sqr <= (size*size)/2.0
@@ -72,12 +72,12 @@ class QuadTree():
             quad.boundary_zone = zone = min(zones)
             quad.boundary_max_range = self.ZONEToMaxRANGE[zone]
             
-            size2 = size/2.0
-            if size2 <= self.min_sector_size or zone == self.n_zones:
-                # stop subdividing if next size is too small or the active zones are too far away
+            if size <= self.min_sector_size or zone == self.n_zones:
+                # stop subdividing if size is too small or the active zones are too far away
                 self.mark_leaf(quad)
                 return quad
             
+            size2 = size/2.0
             if zone > 0:
                 # stop subdiving if sphere does not leave zone
                 lower_range = self.ZONEToMinRANGE[zone]
@@ -86,7 +86,7 @@ class QuadTree():
                 vectors = self.field.repulsion_vectors([center_point], filted_idx=rgjs_idx).reshape(-1, 2)
                 uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
-                if (self.field.eval(center_point + uni_vectors*size2) <= lower_range).any():
+                if (self.field.eval(center_point + uni_vectors*size/np.sqrt(2)) >= lower_range).any():
                     self.mark_leaf(quad)
                     return quad
 
@@ -102,10 +102,13 @@ class QuadTree():
         self.root = dfs(self.field.center_point, self.size, np.arange(len(self.field)))
         return self.root
     
-    def to_boundary_lines_collection(self):
-        lines = [quad.to_boundary_lines() for quad in self.leaves]
+    def to_boundary_lines_collection(self, margin=0.1):
+        lines = [quad.to_boundary_lines(margin=margin) for quad in self.leaves]
         
         return [path for line in lines for path in line]
+    
+    def get_quad_maximum_range(self):
+        return np.array([quad.boundary_max_range for quad in self.leaves])
 
 class QuadNode():
 
@@ -147,7 +150,7 @@ class QuadNode():
             idx = self.chdToIdx[idx] if not isinstance(idx, int) else idx
             self.children[idx] = value
     
-    def to_boundary_lines(self) -> Tuple[np.ndarray, np.ndarray]:
+    def to_boundary_lines(self, margin=0.1) -> Tuple[np.ndarray, np.ndarray]:
         size2 = self.size/2.0
         offset = np.array([
             [-1.0, 1.0],
@@ -156,6 +159,8 @@ class QuadNode():
             [-1.0,-1.0],
             [-1.0, 1.0],
         ]) * size2
+        offset[offset > 0] = offset[offset > 0] - margin
+        offset[offset <= 0] = offset[offset <= 0] + margin
         path = self.center_point + offset
 
         return path[:, 0], path[:, 1]

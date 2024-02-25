@@ -157,8 +157,7 @@ class EllipseRGJ(RGJGeometry):
         nvector = self.repulsion_vector(x)
         matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
 
-        return ((nvector@matrix)*nvector).sum(axis=1)
-    
+        return ((nvector@matrix)*nvector).sum(axis=1) 
 
 class PotentialField():
     """

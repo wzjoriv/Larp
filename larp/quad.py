@@ -8,7 +8,7 @@ from larp.types import FieldSize, Point
 """
 Author: Josue N Rivera
 Date: 9/29/2023
-Generate the quadtree and graph from the potential field
+Generate the quadtree from the potential field
 """
 
 def __list_to_dict__(array:Union[np.ndarray, List[float]]):

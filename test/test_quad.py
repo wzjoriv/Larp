@@ -20,7 +20,12 @@ def test_quad_on_simple_pf():
         'type': "Point",
         'coordinates': [60, 60], 
         'repulsion': [[5, 0], [0, 5]]
-    }]
+    },
+        {
+            "type": "LineString",
+            "coordinates": [[10, 10], [80, 10], [80, 80], [10, 80], [10, 30]], 
+            "repulsion": [[9, 0], [0, 9]]
+        }]
 
     field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,

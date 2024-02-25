@@ -29,6 +29,13 @@ def test_quad_on_simple_pf():
                                   boundaries=np.arange(0.2, 0.8, 0.2))
     
     quadtree.build()
-    
 
-test_quad_on_simple_pf()
+    aleaf = quadtree.leaves[0]
+    assert aleaf == quadtree.find_quads([aleaf.center_point])[0], "Leaf found does not match expected leaf"
+
+    manyleaves = quadtree.leaves[:30]
+    quads = quadtree.find_quads([quad.center_point for quad in manyleaves])
+    assert np.array([manyleaves[idx] == quads[idx] for idx in range(len(quads))]).all(), "Many quads search failed"
+    
+if __name__ == "__main__":
+    test_quad_on_simple_pf()

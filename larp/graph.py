@@ -1,5 +1,7 @@
 from collections import defaultdict
 
+from larp.quad import QuadNode, QuadTree
+
 """
 Author: Josue N Rivera
 """
@@ -10,10 +12,11 @@ class Graph(object):
     - Adapted from: https://stackoverflow.com/questions/19472530/representing-graphs-data-structure-in-python
     """
 
-    def __init__(self, connections, directed=False):
+    def __init__(self, connections = None, directed = False):
         self._graph = defaultdict(set)
         self._directed = directed
-        self.add_connections(connections)
+        if connections is not None:
+            self.add_connections(connections)
 
     def add_connections(self, connections):
         """ Add connections (list of tuple pairs) to graph """
@@ -66,8 +69,50 @@ class Graph(object):
     
 class RouteGraph(Graph):
 
-    def __init__(self, connections, directed=False):
-        super.__init__(connections, directed)
+    def __init__(self, quad_tree:QuadTree, directed=False):
+        self.quad_tree = quad_tree
+        super.__init__(directed=directed)
+
+    def __fill_shallow_neighs__(self):
+
+        def side_fill(quad, corner = 'tl', idx = ['t', 'tr', 'bl', 'br']):
+
+            qc = quad['tl']
+            nt = quad[['t']][0]
+            if nt is not None or nt.leaf:
+                qtl[['t', 'tr']] = nt
+            else:
+                qtl[['t']] = nt['bl']
+                qtl[['tr']] = nt['br']
+
+        def dfs(quad:QuadNode):
+            if quad.leaf: return
+
+            qtl, qtr, qbl, qbr = quad['tl'], quad['tr'], quad['bl'], quad['br']
+
+            # fill tl neighbors
+            qtl[['r']] = qtr
+            qtl[['br']] = qbr
+            qtl[['b']] = qbl
+
+            nt = quad[['t']][0]
+            if nt is not None or nt.leaf:
+                qtl[['t', 'tr']] = nt
+            else:
+                qtl[['t']] = nt['bl']
+                qtl[['tr']] = nt['br']
+
+            for quad_loc in [qtl, qtr, qbl, qbr]:
+                dfs(quad_loc)
+        
+        dfs(self.quad_tree.root)
+
+    def __build_graph__(self):
+        pass
+
+    def build(self):
+        self.__fill_shallow_neighs__()
+        self.__build_graph__()
 
     def update_notes():
         pass

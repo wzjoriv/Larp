@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 from larp import PotentialField
 
-from larp.types import FieldSize, Point
+from larp.types import Point
 
 """
 Author: Josue N Rivera
@@ -109,6 +109,30 @@ class QuadTree():
     
     def get_quad_maximum_range(self):
         return np.array([quad.boundary_max_range for quad in self.leaves])
+    
+    
+    
+    def find_quads(self, x:np.ndarray) -> List[QuadNode]:
+        """ Finds quad for given points
+
+        * Parallization not possible
+        """
+        n = len(x)
+        x = np.array(x)
+
+        def subdivide(x:Point, quad:QuadNode) -> List[QuadNode]:
+            if quad is None or quad.leaf:
+                return quad
+
+            direction = x - quad.center_point
+            if direction[1] >= 0.0:
+                quadstr = "tr" if direction[0] >= 0.0 else "tl"
+            else:
+                quadstr = "br" if direction[0] >= 0.0 else "bl"
+
+            return subdivide(x, quad=quad[quadstr])
+
+        return [subdivide(x=xi, quad=self.root) for xi in x]
 
 class QuadNode():
 
@@ -164,5 +188,8 @@ class QuadNode():
         path = self.center_point + offset
 
         return path[:, 0], path[:, 1]
+    
+    def __str__(self) -> str:
+        return f"Qd({self.center_point.tolist()}, {self.size})"
 
 

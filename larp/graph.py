@@ -1,6 +1,9 @@
 from collections import defaultdict
 
+import numpy as np
+
 from larp.quad import QuadNode, QuadTree
+from larp.types import Point
 
 """
 Author: Josue N Rivera
@@ -77,13 +80,13 @@ class RouteGraph(Graph):
 
         def side_fill(quad, corner = 'tl', idx = ['t', 'tr', 'bl', 'br']):
 
-            qc = quad['tl']
+            qc = quad[corner]
             nt = quad[['t']][0]
             if nt is not None or nt.leaf:
-                qtl[['t', 'tr']] = nt
+                qc[['t', 'tr']] = nt
             else:
-                qtl[['t']] = nt['bl']
-                qtl[['tr']] = nt['br']
+                qc[['t']] = nt['bl']
+                qc[['tr']] = nt['br']
 
         def dfs(quad:QuadNode):
             if quad.leaf: return
@@ -114,8 +117,17 @@ class RouteGraph(Graph):
         self.__fill_shallow_neighs__()
         self.__build_graph__()
 
-    def update_notes():
-        pass
+    def find_route(self, pointA:Point, pointB:Point):
+        
+        quads = self.quad_tree.find_quads([pointA, pointB])
+        return self.find_path(quads[0], quads[1])
 
-    def find_route(self, pointA, pointB):
-        pass
+    def find_many_routes(self, pointsA:np.ndarray, pointsB:np.ndarray):
+        pointsA, pointsB = np.array(pointsA), np.ndarray(pointsB)
+        n = len(pointsA)
+
+        quads = self.quad_tree.find_quads(np.concatenate([pointsA, pointsB], axis=0))
+
+        return [self.find_path(quads[idx], quads[n+idx]) for idx in range(n)]
+
+

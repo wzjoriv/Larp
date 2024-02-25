@@ -98,7 +98,7 @@ class LineStringRGJ(RGJGeometry):
     
     def repulsion_vector(self, x: np.ndarray) -> np.ndarray:
         if self.lines_n > 20:
-            p = Pool(5)
+            p = Pool(3)
             vectors:np.ndarray = p.map(lambda line: self.__repulsion_vector_one_line__(x=x, line=line), self.points_in_line_pair)
         else:
             vectors:np.ndarray = [self.__repulsion_vector_one_line__(x=x, line=line) for line in self.points_in_line_pair]
@@ -108,7 +108,7 @@ class LineStringRGJ(RGJGeometry):
     def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
         
         if self.lines_n > 20:
-            p = Pool(5)
+            p = Pool(3)
             dist:np.ndarray = p.map(lambda line: self.__squared_dist_one_line__(x=x, line=line, scaled=scaled, inverted=inverted), self.points_in_line_pair)
         else:
             dist:np.ndarray = [self.__squared_dist_one_line__(x=x, line=line, scaled=scaled, inverted=inverted) for line in self.points_in_line_pair]

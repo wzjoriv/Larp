@@ -7,7 +7,6 @@ from larp.types import Point
 
 """
 Author: Josue N Rivera
-Date: 9/29/2023
 Generate the quadtree from the potential field
 """
 
@@ -109,8 +108,6 @@ class QuadTree():
     
     def get_quad_maximum_range(self):
         return np.array([quad.boundary_max_range for quad in self.leaves])
-    
-    
     
     def find_quads(self, x:np.ndarray) -> List[QuadNode]:
         """ Finds quad for given points

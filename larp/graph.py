@@ -80,6 +80,47 @@ class RouteGraph(Graph):
 
         def side_fill(quad, corner = 'tl', idx = ['t', 'tr', 'bl', 'br']):
 
+            qc = quad['tl']
+            nt = quad[['t']][0]
+            if nt is not None or nt.leaf:
+                qc[['t', 'tr']] = nt
+            else:
+                qc[['t']] = nt['bl']
+                qc[['tr']] = nt['br']
+
+        def dfs(quad:QuadNode):
+            if quad.leaf: return
+
+            qtl, qtr, qbl, qbr = quad['tl'], quad['tr'], quad['bl'], quad['br']
+
+            # fill tl neighbors
+            qtl[['r']] = qtr
+            qtl[['br']] = qbr
+            qtl[['b']] = qbl
+
+            nt = quad[['t']][0]
+            if nt is not None or nt.leaf:
+                qtl[['t', 'tr']] = nt
+            else:
+                qtl[['t']] = nt['bl']
+                qtl[['tr']] = nt['br']
+
+            for quad_loc in [qtl, qtr, qbl, qbr]:
+                dfs(quad_loc)
+        
+        dfs(self.quad_tree.root)
+
+    def __build_graph__(self):
+        pass
+
+    def build(self):
+        self.__fill_shallow_neighs__()
+        self.__build_graph__()
+
+    def __fill_shallow_neighs__(self):
+
+        def side_fill(quad, corner = 'tl', idx = ['t', 'tr', 'bl', 'br']):
+
             qc = quad[corner]
             nt = quad[['t']][0]
             if nt is not None or nt.leaf:

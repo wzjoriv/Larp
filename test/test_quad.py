@@ -1,7 +1,7 @@
 import json
 import numpy as np
 import sys
-sys.path.append("../LARP")
+sys.path.append("../larp")
 
 import larp
 

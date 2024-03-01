@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import json
 import sys
-sys.path.append("../LARP")
+sys.path.append("../larp")
 
 import larp
 

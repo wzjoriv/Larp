@@ -54,7 +54,15 @@ class QuadTree():
         zones[zone0_select] = 0
 
         if sum(zone0_select) < n_rgjs:
-            dist_sqr = self.field.squared_dist_list([center_point], filted_idx=filter_idx[~zone0_select]).ravel()
+            rgjs_idx = filter_idx[~zone0_select]
+            """ vectors, idxs = self.field.repulsion_vectors([center_point], filted_idx=rgjs_idx, reference_idx=True).reshape(-1, 2)
+            uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
+            # TODO: Use idxs to get minimum dist per rgj object
+
+            dist_sqr = self.field.squared_dist(center_point - uni_vectors*size/np.sqrt(2), filted_idx=rgjs_idx).ravel()
+            dist_sqr_bins = self.__zones_rad_ln """
+
+            dist_sqr = self.field.squared_dist_list([center_point], filted_idx=rgjs_idx).ravel()
             dist_sqr_bins = (size*size)/2.0 + np.sqrt(2)*size*np.sqrt(self.__zones_rad_ln) + self.__zones_rad_ln
 
             zones[~zone0_select] = np.digitize(dist_sqr, dist_sqr_bins, right=True) + 1
@@ -82,10 +90,12 @@ class QuadTree():
                 lower_range = self.ZONEToMinRANGE[zone]
                 rgjs_idx = filter_idx[zones == zone]
 
-                vectors = self.field.repulsion_vectors([center_point], filted_idx=rgjs_idx).reshape(-1, 2)
+                vectors, refs_idxs = self.field.repulsion_vectors([center_point], filted_idx=rgjs_idx, reference_idx=True)
+                vectors = vectors.reshape(-1, 2)
                 uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
-                if (self.field.eval(center_point + uni_vectors*size/np.sqrt(2)) >= lower_range).any():
+                bounds_evals = self.field.eval_per(center_point + uni_vectors*size/np.sqrt(2), idxs=refs_idxs)
+                if (bounds_evals >= lower_range).any():
                     self.mark_leaf(quad)
                     return quad
 

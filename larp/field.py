@@ -1,8 +1,8 @@
 from multiprocessing import Pool
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
-from larp.types import RGJDict, FieldSize, Point
+from larp.types import RGJDict, FieldSize, Point, RepulsionVectorsAndRef
 
 """
 Author: Josue N Rivera
@@ -42,14 +42,13 @@ class RGJGeometry():
         
         return self.repulsion
 
-
     def get_center_point(self) -> np.ndarray:
         return self.coordinates if len(self.coordinates.shape) <= 1 else np.reshape(self.coordinates, (-1, 2)).mean(0)
 
     def squared_dist(self, x:np.ndarray, scaled=True, inverted=True) -> np.ndarray:
         raise NotImplementedError
     
-    def repulsion_vector(self, x:np.ndarray) -> np.ndarray:
+    def repulsion_vector(self, x:np.ndarray, **kwargs) -> np.ndarray:
         raise NotImplementedError
 
     def eval(self, x:np.ndarray):
@@ -61,7 +60,7 @@ class PointRGJ(RGJGeometry):
     def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, **kwargs) -> None:
         super().__init__(coordinates, repulsion)
 
-    def repulsion_vector(self, x: np.ndarray) -> np.ndarray:
+    def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
         return x - self.coordinates
     
     def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
@@ -96,14 +95,21 @@ class LineStringRGJ(RGJGeometry):
         g = line[0] + np.clip(x12dotxx1/x12dotx12, 0.0, 1.0)*(x2_d_x1)
         return x - g
     
-    def repulsion_vector(self, x: np.ndarray) -> np.ndarray:
+    def repulsion_vector(self, x: np.ndarray, min_dist_select:False, **kwargs) -> np.ndarray:
         if self.lines_n > 20:
             p = Pool(5)
             vectors:np.ndarray = p.map(lambda line: self.__repulsion_vector_one_line__(x=x, line=line), self.points_in_line_pair)
         else:
             vectors:np.ndarray = [self.__repulsion_vector_one_line__(x=x, line=line) for line in self.points_in_line_pair]
 
-        return np.stack(vectors, axis=0)
+        vectors = np.stack(vectors, axis=0)
+        if min_dist_select:
+            vectors = vectors.swapaxes(0, 1)
+            dist = (vectors*vectors).sum(-1)
+            select = dist.min(1, keepdims=True) == dist
+            vectors = vectors[select]
+        
+        return vectors
     
     def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
         
@@ -122,7 +128,7 @@ class RectangleRGJ(RGJGeometry):
         super().__init__(coordinates, repulsion)
         self.x1_abs_x2 = np.abs(self.coordinates[0] - self.coordinates[1])
 
-    def repulsion_vector(self, x: np.ndarray) -> np.ndarray:
+    def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
         
         return 0.5*(np.abs(x-self.coordinates[0]) + np.abs(x-self.coordinates[1]) - self.x1_abs_x2)
     
@@ -142,7 +148,7 @@ class EllipseRGJ(RGJGeometry):
         self.shape = shape
         self.inv_shape = np.linalg.inv(self.shape)
 
-    def repulsion_vector(self, x: np.ndarray) -> np.ndarray:
+    def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
 
         x_d_xh = x - self.coordinates
         Binvx = x_d_xh@self.inv_shape.T
@@ -152,7 +158,7 @@ class EllipseRGJ(RGJGeometry):
 
         return np.maximum(1 - 1/den, 0)*x_d_xh
     
-    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
+    def squared_dist(self, x: np.ndarray, scaled:bool=True, inverted:bool=True) -> np.ndarray:
 
         nvector = self.repulsion_vector(x)
         matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
@@ -208,17 +214,46 @@ class PotentialField():
 
         del self.rgjs[idx]
     
-    def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
+    def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = False, reference_idx = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
         points = np.array(points)
-        rgjs = [self.rgjs[idx] for idx in filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
+        filted_idx = filted_idx if not (filted_idx is None or len(filted_idx) == 0) else list(range(len(self)))
 
-        return np.concatenate([rgj.repulsion_vector(points).reshape(-1, 2) for rgj in rgjs], axis=0)
+        if reference_idx:
+            idxs = []
+            repulsion_vectors = []
+
+            for idx in filted_idx:
+                vectors = self.rgjs[idx].repulsion_vector(points, min_dist_select=min_dist_select).reshape(-1, 2)
+
+                idxs.extend([idx]*len(vectors))
+                repulsion_vectors.append(vectors)
+
+            repulsion_vectors = np.concatenate(repulsion_vectors, axis=0)
+            return repulsion_vectors, np.array(idxs, dtype=int)
+   
+        else:
+            rgjs = [self.rgjs[idx] for idx in filted_idx]
+            return np.concatenate([rgj.repulsion_vector(points, min_dist_select=min_dist_select).reshape(-1, 2) for rgj in rgjs], axis=0)
 
     def eval(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
         points = np.array(points)
         rgjs = [self.rgjs[idx] for idx in filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
 
         return np.max(np.stack([rgj.eval(points) for rgj in rgjs], axis=1), axis=1)
+    
+    def eval_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None) -> np.ndarray:
+        if len(points) != len(idxs):
+            raise RuntimeError("The number of points doesn't match the number of indexes")
+        
+        n = len(points)
+        idxs = np.array(idxs, dtype=int)
+        
+        evals = np.ones(n, dtype=float)
+        for idx in set(idxs):
+            select = idx == idxs
+            evals[select] = self.rgjs[idx].eval(points[select])
+
+        return evals
     
     def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
         points = np.array(points)

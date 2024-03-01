@@ -119,7 +119,7 @@ class RouteGraph(Graph):
 
     def __fill_shallow_neighs__(self):
 
-        def side_fill(quad, corner = 'tl', idx = ['t', 'tr', 'bl', 'br']):
+        def side_fill(quad:QuadNode, corner = 'tl', idx = ['t', 'tr', 'bl', 'br']):
 
             qc = quad[corner]
             nt = quad[['t']][0]

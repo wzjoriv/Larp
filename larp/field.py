@@ -220,10 +220,10 @@ class PotentialField():
 
         if reference_idx:
             idxs = []
-            repulsion_vectors = [None]*len()
+            repulsion_vectors = []
 
             for idx in filted_idx:
-                vectors = rgjs[idx].repulsion_vector(points, min_dist_select=min_dist_select).reshape(-1, 2)
+                vectors = self.rgjs[idx].repulsion_vector(points, min_dist_select=min_dist_select).reshape(-1, 2)
 
                 idxs.extend([idx]*len(vectors))
                 repulsion_vectors.append(vectors)
@@ -240,6 +240,20 @@ class PotentialField():
         rgjs = [self.rgjs[idx] for idx in filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
 
         return np.max(np.stack([rgj.eval(points) for rgj in rgjs], axis=1), axis=1)
+    
+    def eval_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None) -> np.ndarray:
+        if len(points) != len(idxs):
+            raise RuntimeError("The number of points doesn't match the number of indexes")
+        
+        n = len(points)
+        idxs = np.array(idxs, dtype=int)
+        
+        evals = np.ones(n, dtype=float)
+        for idx in set(idxs):
+            select = idx == idxs
+            evals[select] = self.rgjs[idx].eval(points[select])
+
+        return evals
     
     def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
         points = np.array(points)

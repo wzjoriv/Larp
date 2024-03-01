@@ -122,9 +122,8 @@ class QuadTree():
     def find_quads(self, x:np.ndarray) -> List[QuadNode]:
         """ Finds quad for given points
 
-        * Parallization not possible
+        * Pool parallization not possible because quad memory reference is needed
         """
-        n = len(x)
         x = np.array(x)
 
         def subdivide(x:Point, quad:QuadNode) -> List[QuadNode]:
@@ -163,7 +162,7 @@ class QuadNode():
             out = [None]*n
 
             for i in range(n):
-                id = self.chdToIdx[idx[i]] if not isinstance(idx[i], int) else idx[i]
+                id = self.nghToIdx[idx[i]] if not isinstance(idx[i], int) else idx[i]
                 out[i] = self.neighbors[id]
             return out
         
@@ -174,9 +173,8 @@ class QuadNode():
     def __setitem__(self, idx:Union[str, int, tuple, list], value:QuadNode) -> None:
         if isinstance(idx, (list, tuple)):
             for id in idx:
-                id = self.chdToIdx[id] if not isinstance(id, int) else id
+                id = self.nghToIdx[id] if not isinstance(id, int) else id
                 self.neighbors[id] = value
-
         else:
             idx = self.chdToIdx[idx] if not isinstance(idx, int) else idx
             self.children[idx] = value

@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
@@ -61,27 +61,15 @@ class Graph(object):
 
         return node1 in self._graph and node2 in self._graph[node1]
 
-    def find_path(self, node1, node2, path=[]):
-        """ A* find shortest path"""
-
-        path = path + [node1]
-        if node1 == node2:
-            return path
-        if node1 not in self._graph:
-            return None
-        for node in self._graph[node1]:
-            if node not in path:
-                new_path = self.find_path(node, node2, path)
-                if new_path:
-                    return new_path
-        return None
-
     def __str__(self):
         return '{}({})'.format(self.__class__.__name__, dict(self._graph))
     
+    def find_path(self):
+        raise NotImplementedError
+    
 class RouteGraph(Graph):
 
-    NeighOuterEdges = { # Maps child quad' outer edge to neigbors children
+    ChildNeighOuterEdges = { # Maps child quad' outer edge to neigbors children
         'tl': {
             't':  [('t', 'bl'), ('tr', 'br')],
             'tl': [('tl', 'br')],
@@ -101,8 +89,18 @@ class RouteGraph(Graph):
             'b':  [('b', 'tr'), ('bl', 'tl')],
             'br': [('br', 'tl')],
             'r':  [('r', 'bl'), ('tr', 'tl')]
-        }
-        
+        }  
+    }
+
+    NeighOuterEdges = { # Maps quad' outer edge to neigbors children
+        'tl': ['br'],
+        't':  ['bl', 'br'],
+        'tr': ['bl'],
+        'r':  ['tl', 'bl'],
+        'br': ['tl'],
+        'b':  ['tl', 'tr'],
+        'bl': ['tr'],
+        'l':  ['tr', 'br']
     }
 
     def __init__(self, quad_tree:QuadTree, directed:bool=False, build_graph:bool=True):
@@ -118,7 +116,7 @@ class RouteGraph(Graph):
             child_quad = quad[child]
             parent_neigh:QuadNode = quad[[side]][0]
 
-            subs = self.NeighOuterEdges[child][side]
+            subs = self.ChildNeighOuterEdges[child][side]
             if parent_neigh is None or parent_neigh.leaf:
                 child_quad[[child_neigh for child_neigh, _ in subs]] = parent_neigh
             else:
@@ -166,35 +164,45 @@ class RouteGraph(Graph):
 
     def __build_graph__(self):
 
-        def recursive_search(shallow_neigh:QuadNode, neigh_list:List[QuadNode], direction:str = 't'):
-            if shallow_neigh.leaf: return shallow_neigh
+        def recursive_search(shallow_neigh:QuadNode, directions:List[str] = ['tl']) -> List[QuadNode]:
+            if shallow_neigh.leaf: return [shallow_neigh]
+            neigh_list = []
 
-            neigh_list.extend(recursive_search(shallow_neigh=shallow_neigh[direction],
-                                               neigh_list=neigh_list,
-                                               direction=direction))
-            if len(direction) < 2:
+            for direction in directions:
                 neigh_list.extend(recursive_search(shallow_neigh=shallow_neigh[direction],
-                                                neigh_list=neigh_list,
-                                                direction=direction))
+                                                   directions=directions))
 
             return neigh_list
 
-        def adjacent_neighs_search(quad:QuadNode) -> List[QuadNode]:
-            out = []
-
-            for neigh_str in ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l']:
-                out.extend(recursive_search(quad[[neigh_str]], [], neigh_str))
-
-            return out
-
-
         for quad in self.quad_tree.leaves:
-            adjacent_neighs = adjacent_neighs_search(quad=quad)
-            self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=True)
+            for neigh_str in ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l']:
+                adjacent_neighs = recursive_search(quad[[neigh_str]][0], self.NeighOuterEdges[neigh_str])
+                self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=True)
 
     def build(self):
         self.__fill_shallow_neighs__()
         self.__build_graph__()
+
+    def calculate_distance_square(node_from:QuadNode, node_to:QuadNode, transform=lambda x: 1.0*x):
+        multipler = np.Inf if node_to.boundary_zone == 0 else transform(node_to.boundary_max_range)
+
+        diff = node_to.center_point - node_from.center_point
+        return multipler*(diff@diff)
+    
+    def find_path(self, node1:QuadNode, node2:QuadNode, path:List[QuadNode]=[]) -> Optional[List[QuadNode]]:
+        """ find path (A*) """
+
+        path = path + [node1]
+        if node1 == node2:
+            return path
+        if node1 not in self._graph:
+            return None
+        for node in self._graph[node1]:
+            if node not in path:
+                new_path = self.find_path(node, node2, path)
+                if new_path:
+                    return new_path
+        return None
 
     def find_route(self, pointA:Point, pointB:Point):
         

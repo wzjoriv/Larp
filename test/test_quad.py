@@ -4,7 +4,6 @@ import larp
 """
 Author: Josue N Rivera
 
-TODO: Not implemneted yet
 """
 
 def test_quad_on_simple_pf():

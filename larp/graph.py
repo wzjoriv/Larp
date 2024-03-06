@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import List
 
 import numpy as np
 
@@ -33,6 +34,14 @@ class Graph(object):
         self._graph[node1].add(node2)
         if not self._directed:
             self._graph[node2].add(node1)
+
+    def add_one_to_many(self, node1, nodes, overwrite_directed=False):
+        """ Add connection between node1 and all other nodes """
+
+        self._graph[node1].update(nodes)
+        if not self._directed and not overwrite_directed:
+            for node2 in nodes:
+                self.add(node1, node2)
 
     def remove(self, node):
         """ Remove all references to node """
@@ -72,38 +81,83 @@ class Graph(object):
     
 class RouteGraph(Graph):
 
-    def __init__(self, quad_tree:QuadTree, directed=False):
+    NeighOuterEdges = { # Maps child quad' outer edge to neigbors children
+        'tl': {
+            't':  [('t', 'bl'), ('tr', 'br')],
+            'tl': [('tl', 'br')],
+            'l':  [('l', 'tr'), ('bl', 'br')]
+        },
+        'tr': {
+            't':  [('t', 'br'), ('tl', 'bl')],
+            'tr': [('tr', 'bl')],
+            'r':  [('r', 'tl'), ('br', 'bl')]
+        },
+        'bl': {
+            'b':  [('b', 'tl'), ('br', 'tr')],
+            'bl': [('bl', 'tr')],
+            'l':  [('l', 'br'), ('tl', 'tr')]
+        },
+        'br': {
+            'b':  [('b', 'tr'), ('bl', 'tl')],
+            'br': [('br', 'tl')],
+            'r':  [('r', 'bl'), ('tr', 'tl')]
+        }
+        
+    }
+
+    def __init__(self, quad_tree:QuadTree, directed:bool=False, build_graph:bool=True):
         self.quad_tree = quad_tree
         super.__init__(directed=directed)
 
+        if build_graph:
+            self.build()
+
     def __fill_shallow_neighs__(self):
 
-        def side_fill(quad, corner = 'tl', idx = ['t', 'tr', 'bl', 'br']):
+        def outer_edge_fill(quad:QuadNode, child = 'tl', side = 't'):
+            child_quad = quad[child]
+            parent_neigh:QuadNode = quad[[side]][0]
 
-            qc = quad['tl']
-            nt = quad[['t']][0]
-            if nt is not None or nt.leaf:
-                qc[['t', 'tr']] = nt
+            subs = self.NeighOuterEdges[child][side]
+            if parent_neigh is None or parent_neigh.leaf:
+                child_quad[[child_neigh for child_neigh, _ in subs]] = parent_neigh
             else:
-                qc[['t']] = nt['bl']
-                qc[['tr']] = nt['br']
+                for child_neigh, neigh_child in subs:
+                    child_quad[[child_neigh]] = parent_neigh[neigh_child]
 
         def dfs(quad:QuadNode):
             if quad.leaf: return
 
             qtl, qtr, qbl, qbr = quad['tl'], quad['tr'], quad['bl'], quad['br']
 
-            # fill tl neighbors
+            # tl neighbors
             qtl[['r']] = qtr
             qtl[['br']] = qbr
             qtl[['b']] = qbl
-
-            nt = quad[['t']][0]
-            if nt is not None or nt.leaf:
-                qtl[['t', 'tr']] = nt
-            else:
-                qtl[['t']] = nt['bl']
-                qtl[['tr']] = nt['br']
+            outer_edge_fill(quad, 'tl', 't')
+            outer_edge_fill(quad, 'tl', 'tl')
+            outer_edge_fill(quad, 'tl', 'l')
+            # tr neighbors
+            qtr[['l']] = qtl
+            qtr[['bl']] = qbl
+            qtr[['b']] = qbr
+            outer_edge_fill(quad, 'tr', 't')
+            outer_edge_fill(quad, 'tr', 'tr')
+            outer_edge_fill(quad, 'tr', 'r')
+            # bl neighbors
+            qbl[['t']] = qtl
+            qbl[['tr']] = qtr
+            qbl[['r']] = qbr
+            outer_edge_fill(quad, 'bl', 'b')
+            outer_edge_fill(quad, 'bl', 'bl')
+            outer_edge_fill(quad, 'bl', 'r')
+            # br neighbors
+            qbr[['l']] = qbl
+            qbr[['tl']] = qtl
+            qbr[['t']] = qtr
+            outer_edge_fill(quad, 'br', 'b')
+            outer_edge_fill(quad, 'br', 'br')
+            outer_edge_fill(quad, 'br', 'r')
 
             for quad_loc in [qtl, qtr, qbl, qbr]:
                 dfs(quad_loc)
@@ -111,48 +165,32 @@ class RouteGraph(Graph):
         dfs(self.quad_tree.root)
 
     def __build_graph__(self):
-        pass
 
-    def build(self):
-        self.__fill_shallow_neighs__()
-        self.__build_graph__()
+        def recursive_search(shallow_neigh:QuadNode, neigh_list:List[QuadNode], direction:str = 't'):
+            if shallow_neigh.leaf: return shallow_neigh
 
-    def __fill_shallow_neighs__(self):
+            neigh_list.extend(recursive_search(shallow_neigh=shallow_neigh[direction],
+                                               neigh_list=neigh_list,
+                                               direction=direction))
+            if len(direction) < 2:
+                neigh_list.extend(recursive_search(shallow_neigh=shallow_neigh[direction],
+                                                neigh_list=neigh_list,
+                                                direction=direction))
 
-        def side_fill(quad:QuadNode, corner = 'tl', idx = ['t', 'tr', 'bl', 'br']):
+            return neigh_list
 
-            qc = quad[corner]
-            nt = quad[['t']][0]
-            if nt is not None or nt.leaf:
-                qc[['t', 'tr']] = nt
-            else:
-                qc[['t']] = nt['bl']
-                qc[['tr']] = nt['br']
+        def adjacent_neighs_search(quad:QuadNode) -> List[QuadNode]:
+            out = []
 
-        def dfs(quad:QuadNode):
-            if quad.leaf: return
+            for neigh_str in ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l']:
+                out.extend(recursive_search(quad[[neigh_str]], [], neigh_str))
 
-            qtl, qtr, qbl, qbr = quad['tl'], quad['tr'], quad['bl'], quad['br']
+            return out
 
-            # fill tl neighbors
-            qtl[['r']] = qtr
-            qtl[['br']] = qbr
-            qtl[['b']] = qbl
 
-            nt = quad[['t']][0]
-            if nt is not None or nt.leaf:
-                qtl[['t', 'tr']] = nt
-            else:
-                qtl[['t']] = nt['bl']
-                qtl[['tr']] = nt['br']
-
-            for quad_loc in [qtl, qtr, qbl, qbr]:
-                dfs(quad_loc)
-        
-        dfs(self.quad_tree.root)
-
-    def __build_graph__(self):
-        pass
+        for quad in self.quad_tree.leaves:
+            adjacent_neighs = adjacent_neighs_search(quad=quad)
+            self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=True)
 
     def build(self):
         self.__fill_shallow_neighs__()

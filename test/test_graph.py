@@ -1,6 +1,31 @@
+import numpy as np
+import larp
 
 """
 Author: Josue N Rivera
-Date: 9/29/2023
+
 """
 
+def test_quad_on_simple_pf():
+    point_rgjs = [{
+        'type': "Point",
+        'coordinates': [50, 50], 
+        'repulsion': [[5, 0], [0, 5]]
+    },{
+        'type': "Point",
+        'coordinates': [60, 60], 
+        'repulsion': [[5, 0], [0, 5]]
+    }]
+
+    field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
+    quadtree = larp.quad.QuadTree(field=field,
+                                  build_tree=True,
+                                  minimum_sector_length=5,
+                                  boundaries=np.arange(0.2, 0.8, 0.2))
+    quadtree.build()
+    routing_graph = larp.graph.RouteGraph(quad_tree=quadtree)
+
+    
+    
+if __name__ == "__main__":
+    test_quad_on_simple_pf()

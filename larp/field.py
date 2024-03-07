@@ -32,6 +32,8 @@ class RGJGeometry():
         self.repulsion = np.array(repulsion)
         self.inv_repulsion = np.linalg.inv(self.repulsion)
         self.eye_repulsion = np.eye(len(self.repulsion))
+        evals, evects = np.linalg.eig(self.inv_repulsion)
+        self.half_inv_repulsion = evects * np.sqrt(evals) @ np.linalg.inv(evects)
 
     def get_dist_matrix(self, scaled=True, inverted=True):
 
@@ -40,7 +42,7 @@ class RGJGeometry():
         if not scaled:
             return self.eye_repulsion
         
-        return self.repulsion
+        return self.half_inv_repulsion
 
     def get_center_point(self) -> np.ndarray:
         return self.coordinates if len(self.coordinates.shape) <= 1 else np.reshape(self.coordinates, (-1, 2)).mean(0)
@@ -215,7 +217,7 @@ class PotentialField():
     
     def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = False, reference_idx = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
         points = np.array(points)
-        filted_idx = filted_idx if not (filted_idx is None or len(filted_idx) == 0) else list(range(len(self)))
+        filted_idx = filted_idx if not filted_idx is None else list(range(len(self)))
 
         if reference_idx:
             idxs = []
@@ -236,7 +238,7 @@ class PotentialField():
 
     def eval(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
         points = np.array(points)
-        rgjs = [self.rgjs[idx] for idx in filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
+        rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
 
         return np.max(np.stack([rgj.eval(points) for rgj in rgjs], axis=1), axis=1)
     
@@ -261,7 +263,7 @@ class PotentialField():
     
     def squared_dist_list(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
         points = np.array(points)
-        rgjs = [self.rgjs[idx] for idx in filted_idx] if not (filted_idx is None or len(filted_idx) == 0) else self.rgjs
+        rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
 
         return np.stack([rgj.squared_dist(points, scaled=scaled, inverted=inverted) for rgj in rgjs], axis=1)
     

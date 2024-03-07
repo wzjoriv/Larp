@@ -180,7 +180,7 @@ class QuadNode():
             self.children[idx] = value
     
     def to_boundary_lines(self, margin=0.1) -> Tuple[np.ndarray, np.ndarray]:
-        size2 = self.size/2.0
+        size2 = self.size/2.0 - margin
         offset = np.array([
             [-1.0, 1.0],
             [ 1.0, 1.0],
@@ -188,8 +188,6 @@ class QuadNode():
             [-1.0,-1.0],
             [-1.0, 1.0],
         ]) * size2
-        offset[offset > 0] = offset[offset > 0] - margin
-        offset[offset <= 0] = offset[offset <= 0] + margin
         path = self.center_point + offset
 
         return path[:, 0], path[:, 1]

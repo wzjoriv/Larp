@@ -1,4 +1,5 @@
 from collections import defaultdict
+import heapq
 from typing import List, Optional
 
 import numpy as np
@@ -64,7 +65,7 @@ class Graph(object):
     def __str__(self):
         return '{}({})'.format(self.__class__.__name__, dict(self._graph))
     
-    def find_path(self):
+    def find_path(self, node1, node2):
         raise NotImplementedError
     
 class RouteGraph(Graph):
@@ -106,6 +107,8 @@ class RouteGraph(Graph):
     def __init__(self, quad_tree:QuadTree, directed:bool=False, build_graph:bool=True):
         self.quad_tree = quad_tree
         super.__init__(directed=directed)
+        self.g_score = defaultdict(np.float64)
+        self.f_score = defaultdict(np.float64)
 
         if build_graph:
             self.build()
@@ -188,20 +191,46 @@ class RouteGraph(Graph):
 
         diff = node_to.center_point - node_from.center_point
         return multipler*(diff@diff)
-    
-    def find_path(self, node1:QuadNode, node2:QuadNode, path:List[QuadNode]=[]) -> Optional[List[QuadNode]]:
-        """ find path (A*) """
 
-        path = path + [node1]
-        if node1 == node2:
-            return path
-        if node1 not in self._graph:
-            return None
-        for node in self._graph[node1]:
-            if node not in path:
-                new_path = self.find_path(node, node2, path)
-                if new_path:
-                    return new_path
+    def __reconstruct_path__(self, came_from, current):
+        total_path = [current]
+        while current in came_from:
+            current = came_from[current]
+            total_path.insert(0, current)
+        return total_path
+    
+    def find_path(self, start_node:QuadNode, end_node:QuadNode) -> Optional[List[QuadNode]]:
+        """ find path (A*) 
+        
+        Returns None if no path found
+        """
+        open_set = []
+        heapq.heappush(open_set, (0, start_node))
+
+        came_from = {}
+        g_score = defaultdict(lambda: np.Inf)
+        g_score[start_node] = 0
+
+        f_score = defaultdict(lambda: np.Inf)
+        f_score[start_node] = self.calculate_distance_square(start_node, end_node, transform = lambda _: 1.0)
+
+        while open_set:
+            _, current = heapq.heappop(open_set)
+
+            if current == end_node:
+                return self.__reconstruct_path__(came_from, current)
+
+            for neighbor in self._graph[current]:
+                tentative_g_score = g_score[current] + self.calculate_distance_square(current, neighbor)
+
+                if tentative_g_score < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = tentative_g_score + self.calculate_distance_square(neighbor, end_node, transform = lambda _: 1.0)
+
+                    if neighbor not in [i[1] for i in open_set]:
+                        heapq.heappush(open_set, (f_score[neighbor], neighbor))
+
         return None
 
     def find_route(self, pointA:Point, pointB:Point):

@@ -18,5 +18,16 @@
             "type": "LineString",
             "coordinates": [[10, 10], [80, 10], [80, 80], [10, 80], [10, 30]], 
             "repulsion": [[9, 0], [0, 9]]
+        },
+        {
+            "type": "Rectangle",
+            "coordinates": [[68, 22], [85, 0]], 
+            "repulsion": [[4, 0], [0, 4]]
+        },
+        {
+            "type": "Ellipse",
+            "coordinates": [10, 80], 
+            "repulsion": [[9, 0], [0, 9]],
+            "shape": [[4, 0], [0, 4]]
         }
 ]

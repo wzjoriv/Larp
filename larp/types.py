@@ -1,4 +1,4 @@
-from typing import Any, List, Tuple, TypedDict, Union
+from typing import Any, List, Tuple, TypedDict, Union, Literal
 import numpy as np
 
 """
@@ -11,6 +11,8 @@ FieldSize = Tuple[int, int]
 
 Point = Union[Tuple[float, float], np.ndarray]
 RepulsionVectorsAndRef = Tuple[List[int], np.ndarray]
+
+RoutingAlgorithmStr = Literal['a*', 'dijkstra']
 
 RGJDict = TypedDict('LOIDict', { #super set of GeoJSON geometry
     'type': str,

@@ -5,7 +5,7 @@ from typing import List, Optional
 import numpy as np
 
 from larp.quad import QuadNode, QuadTree
-from larp.types import Point
+from larp.types import Point, RoutingAlgorithmStr
 
 """
 Author: Josue N Rivera
@@ -108,6 +108,10 @@ class RouteGraph(Graph):
         self.quad_tree = quad_tree
         super().__init__(directed=directed)
 
+        self.routing_algs = defaultdict(lambda: self.find_path_A_star)
+        self.routing_algs["a*"] = self.find_path_A_star
+        self.routing_algs["dijkstra"] = self.find_path_dijkstra
+
         if build_graph:
             self.build()
 
@@ -185,14 +189,14 @@ class RouteGraph(Graph):
         self.__fill_shallow_neighs__()
         self.__build_graph__()
 
-    def calculate_distance_square(self, node_from:QuadNode, node_to:QuadNode, transform=lambda x: x, scaled=True):
+    def calculate_distance_square(self, node_from:QuadNode, node_to:QuadNode, scale_tranform=lambda x: 1.0 + x, scaled=True):
         if scaled:
-            multipler = np.Inf if node_to.boundary_zone == 0 else transform(node_to.boundary_max_range)
+            multipler = np.Inf if node_to.boundary_zone == 0 else scale_tranform(node_to.boundary_max_range)
         else:
             multipler = 1.0
 
         diff = node_to.center_point - node_from.center_point
-        return multipler*(diff@diff)
+        return multipler*np.linalg.norm(diff)
 
     def __reconstruct_path__(self, came_from, current):
         total_path = [current]
@@ -201,7 +205,17 @@ class RouteGraph(Graph):
             total_path.append(current)
         return total_path[::-1]
     
-    def find_path(self, start_node:QuadNode, end_node:QuadNode, tranforms=lambda x: x) -> Optional[List[QuadNode]]:
+    def find_path(self, start_node:QuadNode, end_node:QuadNode, scale_tranform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*', **kwargs):
+        """Routing Algorithms
+
+        Options:
+        * A*
+        * Dijkstra
+        """
+
+        return self.routing_algs[alg.lower()](start_node=start_node, end_node=end_node, scale_tranform=scale_tranform, **kwargs)
+    
+    def find_path_A_star(self, start_node:QuadNode, end_node:QuadNode, scale_tranform=lambda x: 1.0 + x) -> Optional[List[QuadNode]]:
         """ find path (A*) 
         
         Returns None if no path found
@@ -214,7 +228,7 @@ class RouteGraph(Graph):
         g_score[start_node] = 0
 
         f_score = defaultdict(lambda: np.Inf)
-        f_score[start_node] = self.calculate_distance_square(start_node, end_node, scaled=False, transform=tranforms)
+        f_score[start_node] = self.calculate_distance_square(start_node, end_node, scaled=False)
 
         while open_set:
             _, current = heapq.heappop(open_set)
@@ -228,25 +242,51 @@ class RouteGraph(Graph):
                 if tentative_g_score < g_score[neighbor]:
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + self.calculate_distance_square(neighbor, end_node, scaled=False, transform=tranforms)
+                    f_score[neighbor] = tentative_g_score + self.calculate_distance_square(neighbor, end_node, scaled=False)
 
                     if neighbor not in [i[1] for i in open_set]:
                         heapq.heappush(open_set, (f_score[neighbor], neighbor))
 
         return None
+    
+    def find_path_dijkstra(self, start_node:QuadNode, end_node:QuadNode, scale_tranform=lambda x: 1.0 + x):
+        open_set = []
+        heapq.heappush(open_set, (0, start_node))
 
-    def find_route(self, pointA:Point, pointB:Point, tranforms =lambda x: x):
+        came_from = {}
+        dist = defaultdict(lambda: np.Inf)
+        dist[start_node] = 0
+
+        while open_set:
+            _, current = heapq.heappop(open_set)
+
+            if current == end_node:
+                return self.__reconstruct_path__(came_from, current)
+
+            for neighbor in self._graph[current]:
+                tentative_dist = dist[current] + self.calculate_distance_square(current, neighbor, scale_tranform=scale_tranform)
+
+                if tentative_dist < dist[neighbor]:
+                    came_from[neighbor] = current
+                    dist[neighbor] = tentative_dist
+
+                    if neighbor not in [i[1] for i in open_set]:
+                        heapq.heappush(open_set, (dist[neighbor], neighbor))
+
+        return None
+
+    def find_route(self, pointA:Point, pointB:Point, scale_tranform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*'):
         
         quads = self.quad_tree.find_quads([pointA, pointB])
-        return self.find_path(quads[0], quads[1], tranforms=tranforms)
+        return self.find_path(quads[0], quads[1], scale_tranform=scale_tranform, alg=alg)
 
-    def find_many_routes(self, pointsA:Point, pointsB:Point, tranforms =lambda x: x):
+    def find_many_routes(self, pointsA:Point, pointsB:Point, scale_tranform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*'):
         pointsA, pointsB = np.array(pointsA), np.array(pointsB)
         n = len(pointsA)
 
         quads = self.quad_tree.find_quads(np.concatenate([pointsA, pointsB], axis=0))
 
-        return [self.find_path(quads[idx], quads[n+idx], tranforms=tranforms) for idx in range(n)]
+        return [self.find_path(quads[idx], quads[n+idx], scale_tranform=scale_tranform, alg=alg) for idx in range(n)]
     
     def to_routes_lines_collection(self):
         

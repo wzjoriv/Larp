@@ -4,7 +4,6 @@ import larp
 """
 Author: Josue N Rivera
 
-TODO: Not implemneted yet
 """
 
 def test_quad_on_simple_pf():
@@ -16,12 +15,7 @@ def test_quad_on_simple_pf():
         'type': "Point",
         'coordinates': [60, 60], 
         'repulsion': [[5, 0], [0, 5]]
-    },
-        {
-            "type": "LineString",
-            "coordinates": [[10, 10], [80, 10], [80, 80], [10, 80], [10, 30]], 
-            "repulsion": [[9, 0], [0, 9]]
-        }]
+    }]
 
     field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
@@ -31,6 +25,13 @@ def test_quad_on_simple_pf():
                                   boundaries=np.arange(0.2, 0.8, 0.2))
     
     quadtree.build()
-    
 
-test_quad_on_simple_pf()
+    aleaf = quadtree.leaves[0]
+    assert aleaf == quadtree.find_quads([aleaf.center_point])[0], "Leaf found does not match expected leaf"
+
+    manyleaves = quadtree.leaves[:30]
+    quads = quadtree.find_quads([quad.center_point for quad in manyleaves])
+    assert np.array([manyleaves[idx] == quads[idx] for idx in range(len(quads))]).all(), "Many quads search failed"
+    
+if __name__ == "__main__":
+    test_quad_on_simple_pf()

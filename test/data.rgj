@@ -12,7 +12,7 @@
         {
             "type": "Point",
             "coordinates": [45, 48], 
-            "repulsion": [[64, 0], [64, 100]]
+            "repulsion": [[64, 0], [0, 100]]
         },
         {
             "type": "LineString",

@@ -3,12 +3,11 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 from larp import PotentialField
 
-from larp.types import FieldSize, Point
+from larp.types import Point
 
 """
 Author: Josue N Rivera
-Date: 9/29/2023
-Generate the quadtree and graph from the potential field
+Generate the quadtree from the potential field
 """
 
 def __list_to_dict__(array:Union[np.ndarray, List[float]]):
@@ -112,14 +111,34 @@ class QuadTree():
         self.root = dfs(self.field.center_point, self.size, np.arange(len(self.field)))
         return self.root
     
-    def to_boundary_lines_collection(self, margin=0.1):
+    def to_boundary_lines_collection(self, margin=0.1) -> List[np.ndarray]:
         lines = [quad.to_boundary_lines(margin=margin) for quad in self.leaves]
         
         return [path for line in lines for path in line]
     
-    def get_quad_maximum_range(self):
+    def get_quad_maximum_range(self) -> np.ndarray:
         return np.array([quad.boundary_max_range for quad in self.leaves])
     
+    def find_quads(self, x:np.ndarray) -> List[QuadNode]:
+        """ Finds quad for given points
+
+        * Pool parallization not possible because quad memory reference is needed
+        """
+        x = np.array(x)
+
+        def subdivide(x:Point, quad:QuadNode) -> List[QuadNode]:
+            if quad is None or quad.leaf:
+                return quad
+
+            direction = x - quad.center_point
+            if direction[1] >= 0.0:
+                quadstr = "tr" if direction[0] >= 0.0 else "tl"
+            else:
+                quadstr = "br" if direction[0] >= 0.0 else "bl"
+
+            return subdivide(x, quad=quad[quadstr])
+
+        return [subdivide(x=xi, quad=self.root) for xi in x]
     def get_quad_zones(self):
         return np.array([quad.boundary_zone for quad in self.leaves], dtype=int)
 
@@ -145,7 +164,7 @@ class QuadNode():
             out = [None]*n
 
             for i in range(n):
-                id = self.chdToIdx[idx[i]] if not isinstance(idx[i], int) else idx[i]
+                id = self.nghToIdx[idx[i]] if not isinstance(idx[i], int) else idx[i]
                 out[i] = self.neighbors[id]
             return out
         
@@ -156,15 +175,17 @@ class QuadNode():
     def __setitem__(self, idx:Union[str, int, tuple, list], value:QuadNode) -> None:
         if isinstance(idx, (list, tuple)):
             for id in idx:
-                id = self.chdToIdx[id] if not isinstance(id, int) else id
+                id = self.nghToIdx[id] if not isinstance(id, int) else id
                 self.neighbors[id] = value
-
         else:
             idx = self.chdToIdx[idx] if not isinstance(idx, int) else idx
             self.children[idx] = value
+
+    def __lt__(self, other:QuadNode):
+        return self.boundary_max_range < other.boundary_max_range
     
     def to_boundary_lines(self, margin=0.1) -> Tuple[np.ndarray, np.ndarray]:
-        size2 = self.size/2.0
+        size2 = self.size/2.0 - margin
         offset = np.array([
             [-1.0, 1.0],
             [ 1.0, 1.0],
@@ -172,10 +193,11 @@ class QuadNode():
             [-1.0,-1.0],
             [-1.0, 1.0],
         ]) * size2
-        offset[offset > 0] = offset[offset > 0] - margin
-        offset[offset <= 0] = offset[offset <= 0] + margin
         path = self.center_point + offset
 
         return path[:, 0], path[:, 1]
+    
+    def __str__(self) -> str:
+        return f"Qd({self.center_point.tolist()}, {self.size})"
 
 

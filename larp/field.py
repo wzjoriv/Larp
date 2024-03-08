@@ -1,5 +1,5 @@
 from multiprocessing import Pool
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import numpy as np
 from larp.types import RGJDict, FieldSize, Point, RepulsionVectorsAndRef
@@ -116,7 +116,7 @@ class LineStringRGJ(RGJGeometry):
     def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
         
         if self.lines_n > 20:
-            p = Pool(5)
+            p = Pool(3)
             dist:np.ndarray = p.map(lambda line: self.__squared_dist_one_line__(x=x, line=line, scaled=scaled, inverted=inverted), self.points_in_line_pair)
         else:
             dist:np.ndarray = [self.__squared_dist_one_line__(x=x, line=line, scaled=scaled, inverted=inverted) for line in self.points_in_line_pair]
@@ -165,8 +165,7 @@ class EllipseRGJ(RGJGeometry):
         nvector = self.repulsion_vector(x)
         matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
 
-        return ((nvector@matrix)*nvector).sum(axis=1)
-    
+        return ((nvector@matrix)*nvector).sum(axis=1) 
 
 class PotentialField():
     """

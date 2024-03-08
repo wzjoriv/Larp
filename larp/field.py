@@ -2,7 +2,8 @@ from multiprocessing import Pool
 from typing import List, Optional, Union
 
 import numpy as np
-from larp.types import RGJDict, FieldSize, Point, RepulsionVectorsAndRef
+import larp.fn as lpf
+from larp.types import FieldScaleTransform, RGJDict, FieldSize, Point, RepulsionVectorsAndRef
 
 """
 Author: Josue N Rivera
@@ -27,7 +28,7 @@ class RGJGeometry():
 
     RGJType = None
 
-    def __init__(self, coordinates:Union[List[Point], Point], repulsion:np.ndarray, **kwargs) -> None:
+    def __init__(self, coordinates:Union[np.ndarray, List[Point], Point], repulsion:np.ndarray, **kwargs) -> None:
         self.coordinates = np.array(coordinates)
         self.repulsion = np.array(repulsion)
         self.inv_repulsion = np.linalg.inv(self.repulsion)
@@ -255,6 +256,16 @@ class PotentialField():
             evals[select] = self.rgjs[idx].eval(points[select])
 
         return evals
+    
+    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+        route = np.array(route)
+
+        points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
+        points = points if n <= 0 else points[:-1]
+
+        f_eval = scale_transform(self.eval(points=points))
+
+        return f_eval.sum()*step
     
     def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
         points = np.array(points)

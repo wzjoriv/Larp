@@ -27,7 +27,8 @@ def test_quad_on_simple_pf():
                                   boundaries=np.arange(0.2, 0.8, 0.2))
     quadtree.build()
     routing_graph = larp.graph.RouteGraph(quad_tree=quadtree)
-    routing_graph.find_route((45, 45), (60, 65))
+    routing_graph.find_route((45, 45), (60, 65), alg='A*')
+    routing_graph.find_route((45, 45), (60, 65), alg='Dijkstra')
     
     
 if __name__ == "__main__":

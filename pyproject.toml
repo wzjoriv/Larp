@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "larp"
+version = "0.0.1"
+authors = [
+  { name="Josue N Rivera", email="josue.n.rivera@outlook.com" },
+]
+description = "Larp (/lärp/): Last-Mile Aerial Routing Path Planning"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ['numpy']
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/wzjoriv/Larp"
+Issues = "https://github.com/wzjoriv/Larp/issues"

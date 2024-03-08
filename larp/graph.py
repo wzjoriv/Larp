@@ -298,18 +298,16 @@ class RouteGraph(Graph):
         return lines
     
     @staticmethod
-    def route_to_lines_collection(pointsA:Point, pointsB:Point, route: List[QuadNode]) -> np.ndarray:
+    def route_to_lines_collection(pointsA:Point, pointsB:Point, route: List[QuadNode], remapped=False) -> np.ndarray:
         """
         Given a route (i.e. list of quads) and starting and ending location, it returns path of the route
         """
+        pointsA = np.array(pointsA)
+        pointsB = np.array(pointsB)
 
-        linesx = []
-        linesy = []
-        for quad_stop in route:
-            linesx.append(quad_stop.center_point[0])
-            linesy.append(quad_stop.center_point[1])
-
-        lines = np.array([linesx, linesy]).T
+        lines = np.array([quad_stop.center_point for quad_stop in route])
+        if remapped:
+            lines = np.concatenate([pointsA.reshape(-1, 2), lines, pointsB.reshape(-1, 2)], axis=0)
 
         return lines
 

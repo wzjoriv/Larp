@@ -58,5 +58,8 @@ def test_area_estimation():
     area = field.estimate_route_area([(49, 50), (51, 50)], step=0.0001)
     assert ((area - 1.49364)**2).sum() < 1e-5, "Area estimation off"
 
+    area = field.estimate_route_area([(49, 50), (51, 50)], step=0.0001, scale_transform=lambda x: 1/(1.0 - x + 0.000001))
+
+
 test_eval()
 test_area_estimation()

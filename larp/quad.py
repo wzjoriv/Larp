@@ -111,12 +111,12 @@ class QuadTree():
         self.root = dfs(self.field.center_point, self.size, np.arange(len(self.field)))
         return self.root
     
-    def to_boundary_lines_collection(self, margin=0.1):
+    def to_boundary_lines_collection(self, margin=0.1) -> List[np.ndarray]:
         lines = [quad.to_boundary_lines(margin=margin) for quad in self.leaves]
         
         return [path for line in lines for path in line]
     
-    def get_quad_maximum_range(self):
+    def get_quad_maximum_range(self) -> np.ndarray:
         return np.array([quad.boundary_max_range for quad in self.leaves])
     
     def find_quads(self, x:np.ndarray) -> List[QuadNode]:
@@ -180,6 +180,9 @@ class QuadNode():
         else:
             idx = self.chdToIdx[idx] if not isinstance(idx, int) else idx
             self.children[idx] = value
+
+    def __lt__(self, other:QuadNode):
+        return self.boundary_max_range < other.boundary_max_range
     
     def to_boundary_lines(self, margin=0.1) -> Tuple[np.ndarray, np.ndarray]:
         size2 = self.size/2.0 - margin

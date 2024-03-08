@@ -106,9 +106,7 @@ class RouteGraph(Graph):
 
     def __init__(self, quad_tree:QuadTree, directed:bool=False, build_graph:bool=True):
         self.quad_tree = quad_tree
-        super.__init__(directed=directed)
-        self.g_score = defaultdict(np.float64)
-        self.f_score = defaultdict(np.float64)
+        super().__init__(directed=directed)
 
         if build_graph:
             self.build()
@@ -151,7 +149,7 @@ class RouteGraph(Graph):
             qbl[['r']] = qbr
             outer_edge_fill(quad, 'bl', 'b')
             outer_edge_fill(quad, 'bl', 'bl')
-            outer_edge_fill(quad, 'bl', 'r')
+            outer_edge_fill(quad, 'bl', 'l')
             # br neighbors
             qbr[['l']] = qbl
             qbr[['tl']] = qtl
@@ -168,6 +166,7 @@ class RouteGraph(Graph):
     def __build_graph__(self):
 
         def recursive_search(shallow_neigh:QuadNode, directions:List[str] = ['tl']) -> List[QuadNode]:
+            if shallow_neigh is None: return []
             if shallow_neigh.leaf: return [shallow_neigh]
             neigh_list = []
 
@@ -186,20 +185,23 @@ class RouteGraph(Graph):
         self.__fill_shallow_neighs__()
         self.__build_graph__()
 
-    def calculate_distance_square(node_from:QuadNode, node_to:QuadNode, transform=lambda x: 1.0*x):
-        multipler = np.Inf if node_to.boundary_zone == 0 else transform(node_to.boundary_max_range)
+    def calculate_distance_square(self, node_from:QuadNode, node_to:QuadNode, transform=lambda x: x, scaled=True):
+        if scaled:
+            multipler = np.Inf if node_to.boundary_zone == 0 else transform(node_to.boundary_max_range)
+        else:
+            multipler = 1.0
 
         diff = node_to.center_point - node_from.center_point
         return multipler*(diff@diff)
 
     def __reconstruct_path__(self, came_from, current):
         total_path = [current]
-        while current in came_from:
+        while current in came_from.keys():
             current = came_from[current]
-            total_path.insert(0, current)
-        return total_path
+            total_path.append(current)
+        return total_path[::-1]
     
-    def find_path(self, start_node:QuadNode, end_node:QuadNode) -> Optional[List[QuadNode]]:
+    def find_path(self, start_node:QuadNode, end_node:QuadNode, tranforms=lambda x: x) -> Optional[List[QuadNode]]:
         """ find path (A*) 
         
         Returns None if no path found
@@ -212,7 +214,7 @@ class RouteGraph(Graph):
         g_score[start_node] = 0
 
         f_score = defaultdict(lambda: np.Inf)
-        f_score[start_node] = self.calculate_distance_square(start_node, end_node, transform = lambda _: 1.0)
+        f_score[start_node] = self.calculate_distance_square(start_node, end_node, scaled=False, transform=tranforms)
 
         while open_set:
             _, current = heapq.heappop(open_set)
@@ -226,24 +228,47 @@ class RouteGraph(Graph):
                 if tentative_g_score < g_score[neighbor]:
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + self.calculate_distance_square(neighbor, end_node, transform = lambda _: 1.0)
+                    f_score[neighbor] = tentative_g_score + self.calculate_distance_square(neighbor, end_node, scaled=False, transform=tranforms)
 
                     if neighbor not in [i[1] for i in open_set]:
                         heapq.heappush(open_set, (f_score[neighbor], neighbor))
 
         return None
 
-    def find_route(self, pointA:Point, pointB:Point):
+    def find_route(self, pointA:Point, pointB:Point, tranforms =lambda x: x):
         
         quads = self.quad_tree.find_quads([pointA, pointB])
-        return self.find_path(quads[0], quads[1])
+        return self.find_path(quads[0], quads[1], tranforms=tranforms)
 
-    def find_many_routes(self, pointsA:np.ndarray, pointsB:np.ndarray):
-        pointsA, pointsB = np.array(pointsA), np.ndarray(pointsB)
+    def find_many_routes(self, pointsA:Point, pointsB:Point, tranforms =lambda x: x):
+        pointsA, pointsB = np.array(pointsA), np.array(pointsB)
         n = len(pointsA)
 
         quads = self.quad_tree.find_quads(np.concatenate([pointsA, pointsB], axis=0))
 
-        return [self.find_path(quads[idx], quads[n+idx]) for idx in range(n)]
+        return [self.find_path(quads[idx], quads[n+idx], tranforms=tranforms) for idx in range(n)]
+    
+    def to_routes_lines_collection(self):
+        
+        lines = []
+        for leaf in self._graph.keys():
+            for neigh in self._graph[leaf]:
+                lines.extend([[leaf.center_point[0], neigh.center_point[0]], [leaf.center_point[1], neigh.center_point[1]]])
+
+        return lines
+    
+    @staticmethod
+    def route_to_lines_collection(route:List[QuadNode]) -> List[List[float]]:
+        """
+        Given a route (i.e.)
+        """
+
+        linesx = []
+        linesy = []
+        for quad_stop in route:
+            linesx.extend(quad_stop.center_point[0])
+            linesy.extend(quad_stop.center_point[1])
+        return [linesx, linesy]
+
 
 

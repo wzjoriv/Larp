@@ -32,8 +32,7 @@ def test_eval():
         }
     ]
     
-    field = larp.PotentialField(size=(100, 100),
-                           rgjs=rgjs)
+    field = larp.PotentialField(size=(100, 100), rgjs=rgjs)
     
     x = np.array([[50, 65], [70, 60], [60, 60], [63, 63], [50, 50], [65, 70]])
     
@@ -46,4 +45,18 @@ def test_eval():
     assert np.squeeze(out)[4] == 1.0,        "Evaluation of line string rgj is incorrect for point at a high-energy state"
     assert np.squeeze(out)[5] == np.exp(-1), "Evaluation of line string rgj is incorrect for a point one magnitude away"
 
+def test_area_estimation():
+    rgjs = [
+        {
+            "type": "Point",
+            "coordinates": [50, 50], 
+            "repulsion": [[1, 0], [0, 1]]
+        }
+    ]
+
+    field = larp.PotentialField(size=(100, 100), rgjs=rgjs)
+    area = field.estimate_route_area([(49, 50), (51, 50)], step=0.0001)
+    assert ((area - 1.49364)**2).sum() < 1e-5, "Area estimation off"
+
 test_eval()
+test_area_estimation()

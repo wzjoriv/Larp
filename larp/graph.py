@@ -260,14 +260,14 @@ class RouteGraph(Graph):
     @staticmethod
     def route_to_lines_collection(route:List[QuadNode]) -> List[List[float]]:
         """
-        Given a route (i.e.)
+        Given a route (i.e. list of quads) return a line forming it
         """
 
         linesx = []
         linesy = []
         for quad_stop in route:
-            linesx.extend(quad_stop.center_point[0])
-            linesy.extend(quad_stop.center_point[1])
+            linesx.append(quad_stop.center_point[0])
+            linesy.append(quad_stop.center_point[1])
         return [linesx, linesy]
 
 

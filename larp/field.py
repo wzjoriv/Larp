@@ -188,7 +188,8 @@ class PotentialField():
 
         if center_point is None:
             self.__reload_center = True # whether to recalculate center point if new RGJ are added
-            self.center_point = self.__calculate_center_point__()
+            if len(rgjs) > 0:
+                self.center_point = self.__calculate_center_point__()
         else:
             self.__reload_center = False
             self.center_point = center_point

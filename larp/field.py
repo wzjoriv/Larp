@@ -133,7 +133,7 @@ class RectangleRGJ(RGJGeometry):
 
     def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
         
-        return 0.5*(np.abs(x-self.coordinates[0]) + np.abs(x-self.coordinates[1]) - self.x1_abs_x2)
+        return 0.5*np.sign(x-self.coordinates[0])*(np.abs(x-self.coordinates[0]) + np.abs(x-self.coordinates[1]) - self.x1_abs_x2)
     
     def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
 

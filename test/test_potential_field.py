@@ -101,7 +101,6 @@ def test_gradient_file():
         rgjs:list = json.load(file)
     
     field = larp.PotentialField(size=(120, 120), rgjs=rgjs)
-    
     grad = field.gradient([(11, 10), (20, 11), (32, 31), (81, 82)])
 
 

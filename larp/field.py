@@ -114,8 +114,8 @@ class LineStringRGJ(RGJGeometry):
         if min_dist_select:
             vectors = vectors.swapaxes(0, 1)
             dist = (vectors*vectors).sum(-1)
-            select = dist.argmin(1, keepdims=True)
-            vectors = vectors[np.arange(len(select)), select.reshape(-1)]
+            select = dist.argmin(1)
+            vectors = vectors[np.arange(len(select)), select]
         
         return vectors
     

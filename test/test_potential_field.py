@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import sys
 sys.path.append("../larp")
@@ -60,6 +61,50 @@ def test_area_estimation():
 
     area = field.estimate_route_area([(49, 50), (51, 50)], step=0.0001, scale_transform=lambda x: 1/(1.0 - x + 0.000001))
 
+def test_gradient():
+    rgjs = [
+        {
+            "type": "Point",
+            "coordinates": [50, 50], 
+            "repulsion": [[1, 0], [0, 1]]
+        },
+        {
+            "type": "LineString",
+            "coordinates": [[10, 10], [10, 20], [20, 20], [20, 10]], 
+            "repulsion": [[2, 0], [0, 2]]
+        },
+        {
+            "type": "Rectangle",
+            "coordinates": [[30, 30], [25, 25]], 
+            "repulsion": [[1, 0], [0, 1]]
+        },
+        {
+            "type": "Ellipse",
+            "coordinates": [80, 80], 
+            "repulsion": [[4, 0], [0, 4]],
+            "shape": [[2, 0], [0, 2]]
+        }
+    ]
+
+    field = larp.PotentialField(size=(100, 100), rgjs=rgjs)
+    grad = field.gradient([(49, 50), (51, 50), (51, 51)])
+
+    assert ((grad[0] - np.array([2*np.exp(-1), 0]))**2).sum() < 1e-5, "Unexpected gradient"
+    assert ((grad[1] - np.array([-2*np.exp(-1), 0]))**2).sum() < 1e-5, "Unexpected gradient"
+    assert ((grad[2] - np.array([-2*np.exp(-2), -2*np.exp(-2)]))**2).sum() < 1e-5, "Unexpected gradient"
+
+    
+    grad = field.gradient([(11, 10), (20, 11), (32, 31), (81, 82)])
+
+def test_gradient_file():
+    with open("test/data.rgj") as file:
+        rgjs:list = json.load(file)
+    
+    field = larp.PotentialField(size=(120, 120), rgjs=rgjs)
+    grad = field.gradient([(11, 10), (20, 11), (32, 31), (81, 82)])
+
 
 test_eval()
 test_area_estimation()
+test_gradient()
+test_gradient_file()

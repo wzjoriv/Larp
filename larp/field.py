@@ -1,5 +1,5 @@
 from multiprocessing import Pool
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import larp.fn as lpf
@@ -35,6 +35,7 @@ class RGJGeometry():
         self.eye_repulsion = np.eye(len(self.repulsion))
         evals, evects = np.linalg.eig(self.inv_repulsion)
         self.half_inv_repulsion = evects * np.sqrt(evals) @ np.linalg.inv(evects)
+        self.inv_repulsion2x = self.inv_repulsion + self.inv_repulsion.T
 
     def get_dist_matrix(self, scaled=True, inverted=True):
 
@@ -53,6 +54,10 @@ class RGJGeometry():
     
     def repulsion_vector(self, x:np.ndarray, **kwargs) -> np.ndarray:
         raise NotImplementedError
+    
+    def gradient(self, x:np.ndarray, **kwargs):
+        repulsion = self.repulsion_vector(x, **kwargs)
+        return - self.eval(x=x).reshape(-1, 1) * (repulsion@self.inv_repulsion2x.T)
 
     def eval(self, x:np.ndarray):
         return np.exp(-self.squared_dist(x))
@@ -98,7 +103,7 @@ class LineStringRGJ(RGJGeometry):
         g = line[0] + np.clip(x12dotxx1/x12dotx12, 0.0, 1.0)*(x2_d_x1)
         return x - g
     
-    def repulsion_vector(self, x: np.ndarray, min_dist_select:False, **kwargs) -> np.ndarray:
+    def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
         if self.lines_n > 20:
             p = Pool(5)
             vectors:np.ndarray = p.map(lambda line: self.__repulsion_vector_one_line__(x=x, line=line), self.points_in_line_pair)
@@ -109,8 +114,8 @@ class LineStringRGJ(RGJGeometry):
         if min_dist_select:
             vectors = vectors.swapaxes(0, 1)
             dist = (vectors*vectors).sum(-1)
-            select = dist.min(1, keepdims=True) == dist
-            vectors = vectors[select]
+            select = dist.argmin(1)
+            vectors = vectors[np.arange(len(select)), select]
         
         return vectors
     
@@ -183,7 +188,8 @@ class PotentialField():
 
         if center_point is None:
             self.__reload_center = True # whether to recalculate center point if new RGJ are added
-            self.center_point = self.__calculate_center_point__()
+            if len(rgjs) > 0:
+                self.center_point = self.__calculate_center_point__()
         else:
             self.__reload_center = False
             self.center_point = center_point
@@ -236,6 +242,18 @@ class PotentialField():
         else:
             rgjs = [self.rgjs[idx] for idx in filted_idx]
             return np.concatenate([rgj.repulsion_vector(points, min_dist_select=min_dist_select).reshape(-1, 2) for rgj in rgjs], axis=0)
+        
+    def gradient(self, points: Union[np.ndarray, List[Point]]) -> np.ndarray:
+
+        points = np.array(points)
+        _, grad_idxs = self.squared_dist(points=points, reference_idx=True)
+
+        grad = np.ones((len(points), 2), dtype=float)
+        for idx in set(grad_idxs):
+            select = idx == grad_idxs
+            grad[select] = self.rgjs[idx].gradient(points[select])
+
+        return grad
 
     def eval(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
         points = np.array(points)
@@ -267,10 +285,15 @@ class PotentialField():
 
         return f_eval.sum()*step
     
-    def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
+    def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, reference_idx = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         points = np.array(points)
 
-        return np.min(self.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted), axis=1)
+        dists = self.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted)
+        if reference_idx:
+            min_idxs = np.argmin(dists, axis=1)
+            return dists[np.arange(len(dists)), min_idxs], min_idxs
+
+        return np.min(dists, axis=1)
     
     def squared_dist_list(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
         points = np.array(points)

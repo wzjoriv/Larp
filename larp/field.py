@@ -82,7 +82,7 @@ class LineStringRGJ(RGJGeometry):
 
     def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, **kwargs) -> None:
         super().__init__(coordinates, repulsion, **kwargs)
-        self.lines_n = len(coordinates)
+        self.lines_n = len(coordinates) - 1
         self.points_in_line_pair = np.stack([self.coordinates[:-1], self.coordinates[1:]], axis=1)
     
     def __repulsion_vector_one_line__(self, x: np.ndarray, line: np.ndarray) -> np.ndarray:
@@ -170,8 +170,49 @@ class MultiPointRGJ(RGJGeometry):
             dist = (Adiff*diff).sum(-1)
             select = dist.argmin(1)
             diff = diff[np.arange(len(select)), select]
+        else:
+            diff = diff.swapaxes(0, 1)
 
         return diff
+    
+class MultiLineStringRGJ(LineStringRGJ):
+    RGJType = "MultiLineString"
+
+    def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, **kwargs) -> None:
+        super(super(), self).__init__(coordinates, repulsion, **kwargs)
+        self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
+        self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1)
+
+class MultiRectangleRGJ(RGJGeometry):
+
+    RGJType = "MultiRectangle"
+
+    def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, **kwargs) -> None:
+        super().__init__(coordinates, repulsion, **kwargs)
+        self.rect_n = len(coordinates)
+        self.points_in_rect_pair = np.stack([self.coordinates[:-1], self.coordinates[1:]], axis=1)
+    
+    def __repulsion_vector_one_line__(self, x: np.ndarray, rect: np.ndarray) -> np.ndarray:
+
+        return 0.5*np.sign(x-rect[0])*(np.abs(x-rect[0]) + np.abs(x-rect[1]) - np.abs(rect[0] - rect[1]))
+    
+    def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
+        if self.rect_n > 20:
+            p = Pool(5)
+            vectors:np.ndarray = p.map(lambda rect: self.__repulsion_vector_one_line__(x=x, rect=rect), self.points_in_rect_pair)
+        else:
+            vectors:np.ndarray = [self.__repulsion_vector_one_line__(x=x, rect=rect) for rect in self.points_in_rect_pair]
+
+        vectors = np.stack(vectors, axis=0)
+        if min_dist_select:
+            vectors = vectors.swapaxes(0, 1)
+            matrix = self.get_dist_matrix(scaled=True, inverted=True)
+            nvectors = np.matmul(vectors, matrix)
+            dist = (vectors*nvectors).sum(-1)
+            select = dist.argmin(1)
+            vectors = vectors[np.arange(len(select)), select]
+        
+        return vectors
     
 class PotentialField():
     """

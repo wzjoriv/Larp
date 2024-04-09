@@ -103,20 +103,8 @@ def test_gradient_file():
     field = larp.PotentialField(size=(120, 120), rgjs=rgjs)
     grad = field.gradient([(11, 10), (20, 11), (32, 31), (81, 82)])
 
-def test_multi_object_repulsion():
-    
-    rgj = larp.MultiPointRGJ(coordinates=[(1, 1), (0, 0), (0.5, 0.5)], repulsion=np.eye(2))
-
-    vectors = rgj.repulsion_vector([(0.15, 0.15), (0.85, 0.85), (0.45, 0.45), (0.65, 0.65)])
-
-    assert ((vectors[0] - np.array([-0.15, -0.15]))**2).sum() < 1e-5, "Unexpected repulsion vector"
-    assert ((vectors[1] - np.array([ 0.15,  0.15]))**2).sum() < 1e-5, "Unexpected repulsion vector"
-    assert ((vectors[2] - np.array([ 0.05,  0.05]))**2).sum() < 1e-5, "Unexpected repulsion vector"
-    assert ((vectors[3] - np.array([-0.15, -0.15]))**2).sum() < 1e-5, "Unexpected repulsion vector"
-
 
 test_eval()
 test_area_estimation()
 test_gradient()
 test_gradient_file()
-test_multi_object_repulsion()

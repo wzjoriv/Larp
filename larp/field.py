@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import larp.fn as lpf
-from larp.types import FieldScaleTransform, RGJDict, FieldSize, Point, RepulsionVectorsAndRef
+from larp.types import FieldScaleTransform, RGJDict, FieldSize, Point, RGeoJSONCollection, RGeoJSONObject, RepulsionVectorsAndRef
 
 """
 Author: Josue N Rivera
@@ -11,24 +11,11 @@ Author: Josue N Rivera
 x are assumed to be a list of point coordinates
 """
 
-def __distance_matrix_points__(self, x:np.ndarray, y:Optional[np.ndarray]=None, p:int=2) -> np.ndarray:
-    y = x if y is None else y
-
-    n = x.shape[0]
-    m = y.shape[0]
-
-    x = np.tile(x, (m, 1, 1)).transpose(1, 0, 2)
-    y = np.tile(y, (n, 1, 1))
-
-    dist = np.linalg.norm(x - y, ord=p, axis=2)
-
-    return dist
-
 class RGJGeometry():
 
     RGJType = None
 
-    def __init__(self, coordinates:Union[np.ndarray, List[Point], Point], repulsion:np.ndarray, **kwargs) -> None:
+    def __init__(self, coordinates:Union[np.ndarray, List[Point], Point], repulsion:np.ndarray, properties:Optional[dict] = None, **kwargs) -> None:
         self.coordinates = np.array(coordinates)
         self.repulsion = np.array(repulsion)
         self.inv_repulsion = np.linalg.inv(self.repulsion)
@@ -36,6 +23,7 @@ class RGJGeometry():
         evals, evects = np.linalg.eig(self.inv_repulsion)
         self.half_inv_repulsion = evects * np.sqrt(evals) @ np.linalg.inv(evects)
         self.inv_repulsion2x = self.inv_repulsion + self.inv_repulsion.T
+        self.properties = {} if type(properties) == type(None) else properties
 
     def get_dist_matrix(self, scaled=True, inverted=True):
 
@@ -49,49 +37,53 @@ class RGJGeometry():
     def get_center_point(self) -> np.ndarray:
         return self.coordinates if len(self.coordinates.shape) <= 1 else np.reshape(self.coordinates, (-1, 2)).mean(0)
 
-    def squared_dist(self, x:np.ndarray, scaled=True, inverted=True) -> np.ndarray:
-        raise NotImplementedError
+    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, **kwargs) -> np.ndarray:
+        nvector = self.repulsion_vector(x, min_dist_select = True)
+        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
+
+        return ((nvector@matrix)*nvector).sum(axis=1)
     
     def repulsion_vector(self, x:np.ndarray, **kwargs) -> np.ndarray:
         raise NotImplementedError
     
     def gradient(self, x:np.ndarray, **kwargs):
-        repulsion = self.repulsion_vector(x, **kwargs)
-        return - self.eval(x=x).reshape(-1, 1) * (repulsion@self.inv_repulsion2x.T)
+        repulsion_vector = self.repulsion_vector(x, **kwargs)
+        return - self.eval(x=x).reshape(-1, 1) * (repulsion_vector@self.inv_repulsion2x.T)
 
     def eval(self, x:np.ndarray):
         return np.exp(-self.squared_dist(x))
+    
+    def toRGeoJSON(self) -> RGeoJSONObject:
+        if type(self.RGJType) == type(None): 
+            return UserWarning(f"Object doesn't have a RGJType")
+        
+        return {
+            "type": "Feature",
+            "properties": self.properties,
+            "geometry": {
+                "type": self.RGJType,
+                "coordinates": self.coordinates.tolist(),
+                "repulsion": self.repulsion.tolist()
+            }
+        }
+
 
 class PointRGJ(RGJGeometry):
     RGJType = "Point"
 
     def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, **kwargs) -> None:
-        super().__init__(coordinates, repulsion)
+        super().__init__(coordinates, repulsion, **kwargs)
 
     def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
         return x - self.coordinates
-    
-    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
-
-        x_d_xh = self.repulsion_vector(x=x)
-        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
-        
-        return ((x_d_xh@matrix)*x_d_xh).sum(axis=1)
 
 class LineStringRGJ(RGJGeometry):
     RGJType = "LineString"
 
     def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, **kwargs) -> None:
-        super().__init__(coordinates, repulsion)
+        super().__init__(coordinates, repulsion, **kwargs)
         self.lines_n = len(coordinates)
         self.points_in_line_pair = np.stack([self.coordinates[:-1], self.coordinates[1:]], axis=1)
-
-    def __squared_dist_one_line__(self, x: np.ndarray, line: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
-
-        x_d_g = self.__repulsion_vector_one_line__(x=x, line=line)
-        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
-
-        return ((x_d_g@matrix)*x_d_g).sum(1)
     
     def __repulsion_vector_one_line__(self, x: np.ndarray, line: np.ndarray) -> np.ndarray:
         x2_d_x1 = line[1:2] - line[0:1]
@@ -113,46 +105,31 @@ class LineStringRGJ(RGJGeometry):
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
             vectors = vectors.swapaxes(0, 1)
-            dist = (vectors*vectors).sum(-1)
+            matrix = self.get_dist_matrix(scaled=True, inverted=True)
+            nvectors = np.matmul(vectors, matrix)
+            dist = (vectors*nvectors).sum(-1)
             select = dist.argmin(1)
             vectors = vectors[np.arange(len(select)), select]
         
         return vectors
     
-    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
-        
-        if self.lines_n > 20:
-            p = Pool(3)
-            dist:np.ndarray = p.map(lambda line: self.__squared_dist_one_line__(x=x, line=line, scaled=scaled, inverted=inverted), self.points_in_line_pair)
-        else:
-            dist:np.ndarray = [self.__squared_dist_one_line__(x=x, line=line, scaled=scaled, inverted=inverted) for line in self.points_in_line_pair]
-
-        return np.stack(dist, axis=1).min(axis=1)
-    
 class RectangleRGJ(RGJGeometry):
     RGJType = "Rectangle"
 
     def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, **kwargs) -> None:
-        super().__init__(coordinates, repulsion)
+        super().__init__(coordinates, repulsion, **kwargs)
         self.x1_abs_x2 = np.abs(self.coordinates[0] - self.coordinates[1])
 
     def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
         
         return 0.5*np.sign(x-self.coordinates[0])*(np.abs(x-self.coordinates[0]) + np.abs(x-self.coordinates[1]) - self.x1_abs_x2)
     
-    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True) -> np.ndarray:
-
-        nvector = self.repulsion_vector(x)
-        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
-
-        return ((nvector@matrix)*nvector).sum(axis=1)
-    
 class EllipseRGJ(RGJGeometry):
     RGJType = "Ellipse"
     DEN_ERROR_BUFFER = 1e-6
 
     def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, shape: np.ndarray, **kwargs) -> None:
-        super().__init__(coordinates, repulsion)
+        super().__init__(coordinates, repulsion, **kwargs)
         self.shape = shape
         self.inv_shape = np.linalg.inv(self.shape)
 
@@ -166,13 +143,36 @@ class EllipseRGJ(RGJGeometry):
 
         return np.maximum(1 - 1/den, 0)*x_d_xh
     
-    def squared_dist(self, x: np.ndarray, scaled:bool=True, inverted:bool=True) -> np.ndarray:
+    def toRGeoJSON(self) -> RGeoJSONObject:
+        out = super().toRGeoJSON()
+        out["geometry"]['shape'] = self.shape.tolist()
+        return out
 
-        nvector = self.repulsion_vector(x)
-        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
+class MultiPointRGJ(RGJGeometry):
+    RGJType = "MultiPoint"
 
-        return ((nvector@matrix)*nvector).sum(axis=1) 
+    def __init__(self, coordinates: np.ndarray, repulsion: np.ndarray, **kwargs) -> None:
+        super().__init__(coordinates, repulsion)
 
+    def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
+        x = np.array(x)
+
+        n = x.shape[0]
+        m = self.coordinates.shape[0]
+
+        x = np.tile(x, (m, 1, 1)).transpose(1, 0, 2)
+        y = np.tile(self.coordinates, (n, 1, 1))
+        diff = y - x
+
+        if min_dist_select:
+            matrix = self.get_dist_matrix(scaled=True, inverted=True)
+            Adiff = np.matmul(diff, matrix)
+            dist = (Adiff*diff).sum(-1)
+            select = dist.argmin(1)
+            diff = diff[np.arange(len(select)), select]
+
+        return diff
+    
 class PotentialField():
     """
     Potential field given a subset of RGJs
@@ -221,8 +221,14 @@ class PotentialField():
     def delRGJ(self, idx:int) -> None:
 
         del self.rgjs[idx]
+
+    def toRGeoJSON(self) -> RGeoJSONCollection:
+        return {
+            'type': 'FeatureCollection',
+            'features': [rgj.toRGeoJSON() for rgj in self.rgjs]
+        }
     
-    def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = False, reference_idx = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
+    def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, reference_idx = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
         points = np.array(points)
         filted_idx = filted_idx if not filted_idx is None else list(range(len(self)))
 
@@ -243,7 +249,7 @@ class PotentialField():
             rgjs = [self.rgjs[idx] for idx in filted_idx]
             return np.concatenate([rgj.repulsion_vector(points, min_dist_select=min_dist_select).reshape(-1, 2) for rgj in rgjs], axis=0)
         
-    def gradient(self, points: Union[np.ndarray, List[Point]]) -> np.ndarray:
+    def gradient(self, points: Union[np.ndarray, List[Point]], min_dist_select=True) -> np.ndarray:
 
         points = np.array(points)
         _, grad_idxs = self.squared_dist(points=points, reference_idx=True)
@@ -251,7 +257,7 @@ class PotentialField():
         grad = np.ones((len(points), 2), dtype=float)
         for idx in set(grad_idxs):
             select = idx == grad_idxs
-            grad[select] = self.rgjs[idx].gradient(points[select])
+            grad[select] = self.rgjs[idx].gradient(points[select], min_dist_select=min_dist_select)
 
         return grad
 

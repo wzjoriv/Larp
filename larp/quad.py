@@ -58,10 +58,13 @@ class QuadTree():
         if sum(zone0_select) < n_rgjs:
             rgjs_idx = filter_idx[~zone0_select]
 
-            dist_sqr = self.field.squared_dist_list([center_point], filted_idx=rgjs_idx, inverted=False).ravel()
-            dist_sqr_bins = (size*size)/2.0 + np.sqrt(2)*size*np.sqrt(self.__zones_rad_ln) + self.__zones_rad_ln
+            vectors = self.field.repulsion_vectors([center_point], filted_idx=rgjs_idx, min_dist_select=True)
+            vectors = vectors.reshape(-1, 2)
+            uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
-            zones[~zone0_select] = np.digitize(dist_sqr, dist_sqr_bins, right=True) + 1
+            dist_sqr = self.field.squared_dist(center_point - uni_vectors*(size/np.sqrt(2)), filted_idx=rgjs_idx).ravel()
+
+            zones[~zone0_select] = np.digitize(dist_sqr, self.__zones_rad_ln, right=True) + 1
 
         return zones
 
@@ -93,7 +96,7 @@ class QuadTree():
                     vectors = vectors.reshape(-1, 2)
                     uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
-                    bounds_evals = self.field.eval_per(center_point + uni_vectors*size/np.sqrt(2), idxs=refs_idxs)
+                    bounds_evals = self.field.eval_per(center_point + uni_vectors*(size/np.sqrt(2)), idxs=refs_idxs)
                     if (bounds_evals >= lower_range).any():
                         self.mark_leaf(quad)
                         return quad

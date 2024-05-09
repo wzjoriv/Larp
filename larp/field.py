@@ -38,7 +38,7 @@ class RGJGeometry():
         
         coords = np.reshape(self.coordinates, (-1, 2))
 
-        return (coords.min(1) + coords.max(1))/2.0
+        return (coords.min(0) + coords.max(0))/2.0
 
     def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, **kwargs) -> np.ndarray:
         nvector = self.repulsion_vector(x, min_dist_select = True)
@@ -347,46 +347,58 @@ class PotentialField():
     def __init__(self, rgjs:Optional[List[RGJDict]] = None, center_point: Optional[Point] = None, size:Optional[Union[FieldSize, float]] = None, properties:Optional[List[dict]] = None, **extra_info):
         self.rgjs:List[RGJGeometry] = []
         self.__reload_center = None
+        self.center_point = center_point
         self.extra_info = extra_info
 
-        isSize = size is not None
+        if size is None:
+            self.size = size
+        elif np.isscalar(size):
+            self.size = np.array([size, size])
+        else:
+            self.size = np.array(size)
 
-        if properties is None:
+        if properties is not None:
             for rgj, proper in zip(rgjs, properties):
                 self.addRGJ(rgj_dict=rgj, properties=proper)
         else:
             for rgj in rgjs:
                 self.addRGJ(rgj_dict=rgj)
 
-        if center_point is None:
+        if self.center_point is None:
             self.__reload_center = True # whether to recalculate center point if new RGJ are added
             if len(rgjs) > 0:
-                self.center_point, size = self.__calculate_center_point__(return_size=isSize)
+                self.center_point, suggest_size = self.__calculate_center_point__(suggest_size=True)
+
+            self.size = np.array([suggest_size]*2) if self.size is None else self.size
         else:
             self.__reload_center = False
-            self.center_point = center_point
-        
-        if size is not None:
-            self.size = np.array([size, size]) if np.isscalar(float) else np.array(size)
-        else:
             coords = np.reshape(np.array([rgj.get_center_point() for rgj in self.rgjs]), (-1, 2))
-            size = np.linalg.norm(coords.min(1) - coords.max(1))/2 + 1
-            self.size = np.array([size, size])
+            bbmin, bbmax = coords.min(0), coords.max(0)
+            farthest_vh_dist = max(np.abs(np.concatenate([bbmin-self.center_point, bbmax-self.center_point], axis=0)))
+
+            self.size = np.array([farthest_vh_dist*2]*2) if self.size is None else self.size
 
     def __len__(self)->int:
         return len(self.rgjs)
 
-    def __calculate_center_point__(self, return_size = True) -> Union[Point, Tuple[Point, float]]:
-        coords = np.reshape(np.array([rgj.get_center_point() for rgj in self.rgjs]), (-1, 2))
+    def __calculate_center_point__(self, suggest_size = False) -> Union[Point, Tuple[Point, float]]:
+        coords = np.stack([rgj.get_center_point() for rgj in self.rgjs], axis=0)
 
-        cmin, cmax = coords.min(1), coords.max(1)
+        cmin, cmax = coords.min(0), coords.max(0)
         center = (cmin + cmax)/2.0
-        return center if not return_size else (center, np.linalg.norm(cmax - cmin)/2.0 + 1)
+
+        if suggest_size:
+            farthest_vh_dist = max(np.abs(np.concatenate([cmin-center, cmax-center], axis=0)))*2
+            return center, farthest_vh_dist
+        
+        return center
     
-    def calculate_center(self, toggle=True):
+    def reload_center_point(self, toggle=True) -> Point:
         self.__reload_center = toggle
         if toggle and len(self.rgjs) > 0:
             self.center_point = self.__calculate_center_point__()
+
+        return self.center_point
     
     def get_extent(self) -> List[float]:
         size2 = self.size/2.0

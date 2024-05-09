@@ -192,7 +192,7 @@ class MultiLineStringRGJ(LineStringRGJ):
         self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
         
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
-        self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1) #TODO: Check correctness
+        self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
 
     def get_center_point(self) -> np.ndarray:
 
@@ -324,7 +324,7 @@ class GeometryCollectionRGJ(RGJGeometry):
         _, dist_idxs = self.squared_dist(x, reference_idx=True, **kwargs)
 
         repulsion_vector = self.repulsion_vector(x, min_dist_select = True, **kwargs)
-        return - self.eval(x=x).reshape(-1, 1) * (np.einsum('ijk,ik->ij', self.grad_matrix[dist_idxs], repulsion_vector)) # TODO: check correctness
+        return - self.eval(x=x).reshape(-1, 1) * (np.einsum('ijk,ik->ij', self.grad_matrixes[dist_idxs], repulsion_vector)) # TODO: check correctness
     
     def toRGeoJSON(self) -> RGeoJSONObject:
         if type(self.RGJType) == type(None): 

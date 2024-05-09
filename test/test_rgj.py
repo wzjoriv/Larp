@@ -181,9 +181,17 @@ def test_geometry_collection_rgj():
 
     values = rgj.eval([(80.0, 10.0), (11, 81), (70.0, 80.0), (40, 8)])
 
-    assert ((values[0] - 1)**2).sum() < 1e-5, "Unexpected repulsion vector"
-    assert ((values[1] - 1)**2).sum() < 1e-5, "Unexpected repulsion vector"
-    assert ((values[2] - 1)**2).sum() < 1e-5, "Unexpected repulsion vector"
-    assert ((values[3] - np.exp(-4/9))**2).sum() < 1e-5, "Unexpected repulsion vector"
+    assert ((values[0] - 1)**2).sum() < 1e-5, "Unexpected potential field evaluation"
+    assert ((values[1] - 1)**2).sum() < 1e-5, "Unexpected potential field evaluation"
+    assert ((values[2] - 1)**2).sum() < 1e-5, "Unexpected potential field evaluation"
+    assert ((values[3] - np.exp(-4/9))**2).sum() < 1e-5, "Unexpected potential field evaluation"
+
+    grads = rgj.gradient([(80.0, 10.0), (11, 81), (70.0, 80.0), (40, 8)])
+    grad_line = rgj.rgjs[3].gradient(np.array([(40, 8)]))[0]
+
+    assert ((grads[0] - np.array([0.0]*2))**2).sum() < 1e-5, "Unexpected gradient vector"
+    assert ((grads[1] - np.array([0.0]*2))**2).sum() < 1e-5, "Unexpected gradient vector"
+    assert ((grads[2] - np.array([0.0]*2))**2).sum() < 1e-5, "Unexpected gradient vector"
+    assert ((grads[3] - grad_line)**2).sum() < 1e-5, "Unexpected gradient vector"
 
 test_geometry_collection_rgj()

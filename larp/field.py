@@ -185,7 +185,7 @@ class MultiLineStringRGJ(LineStringRGJ):
     def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, properties:Optional[dict] = None, optional_dim = 2, **kwargs) -> None:
 
         self.coordinates = [np.array(coords) for coords in coordinates]
-        self.repulsion = np.eye(optional_dim) if type(properties) == type(None) else np.array(repulsion)
+        self.repulsion = np.eye(optional_dim) if type(repulsion) == type(None) else np.array(repulsion)
         self.inv_repulsion = np.linalg.inv(self.repulsion)
         self.eye_repulsion = np.eye(len(self.repulsion))
         self.properties = {} if type(properties) == type(None) else properties
@@ -196,8 +196,8 @@ class MultiLineStringRGJ(LineStringRGJ):
 
     def get_center_point(self) -> np.ndarray:
 
-        coords = np.stack([coords.reshape((-1, 2)) for coords in self.coordinates], axis=0)
-        return (coords.min(1) + coords.max(1))/2.0
+        coords = np.concatenate([coords.reshape((-1, 2)) for coords in self.coordinates], axis=0)
+        return (coords.min(0) + coords.max(0))/2.0
 
 class MultiRectangleRGJ(RGJGeometry):
 
@@ -288,7 +288,7 @@ class GeometryCollectionRGJ(RGJGeometry):
 
     def get_center_point(self) -> np.ndarray:
         coords = np.reshape(np.array([rgj.get_center_point() for rgj in self.rgjs]), (-1, 2))
-        return (coords.min(1) + coords.max(1))/2.0
+        return (coords.min(0) + coords.max(0))/2.0
     
     def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, reference_idx=False, **kwargs) -> np.ndarray:
 

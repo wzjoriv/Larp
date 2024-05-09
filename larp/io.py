@@ -38,14 +38,14 @@ def loadGeoJSONFile(file: str):
     """
 
     with open(file=file) as f:
-        rgeojson = json.load(f)
+        geojson = json.load(f)
 
     def __prune_polygons__(geojson:dict):
         if geojson["type"].lower() == "polygon":
 
-            if len(rgeojson["coordinates"]) == 1:
+            if len(geojson["coordinates"]) == 1:
                 geojson["type"] = "LineString"
-                rgeojson["coordinates"] = rgeojson["coordinates"][0]
+                geojson["coordinates"] = geojson["coordinates"][0]
             else:
                 geojson["type"] = "MultiLineString"
 
@@ -53,18 +53,18 @@ def loadGeoJSONFile(file: str):
             geojson["type"] = "MultiLineString"
 
             coords = []
-            for coord in rgeojson["coordinates"]:
+            for coord in geojson["coordinates"]:
                 coords.extend(coord)
-            rgeojson["coordinates"] = coords
+            geojson["coordinates"] = coords
 
         elif geojson["type"].lower() == "geometrycollection":
-            for idx in range(len(rgeojson["geometries"])):
-                __prune_polygons__(rgeojson["geometries"][idx])
+            for idx in range(len(geojson["geometries"])):
+                __prune_polygons__(geojson["geometries"][idx])
 
-    for idx in range(len(rgeojson["features"])):
-        __prune_polygons__(rgeojson["features"][idx]["geometry"])
+    for idx in range(len(geojson["features"])):
+        __prune_polygons__(geojson["features"][idx]["geometry"])
 
-    return fromRGeoJSON(rgeojson)
+    return fromRGeoJSON(geojson)
 
 def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG:26917"):
     raise NotImplementedError

@@ -23,6 +23,15 @@ class RGJGeometry():
         self.properties = {} if type(properties) == type(None) else properties
         self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
 
+    def set_coordinates(self, new_coords):
+        self.coordinates = np.array(new_coords)
+
+    def set_repulsion(self, new_repulsion):
+        self.repulsion = np.array(new_repulsion)
+        self.inv_repulsion = np.linalg.inv(self.repulsion)
+        self.eye_repulsion = np.eye(len(self.repulsion))
+        self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
+
     def get_dist_matrix(self, scaled=True, inverted=True):
 
         if inverted and scaled:
@@ -85,7 +94,12 @@ class LineStringRGJ(RGJGeometry):
 
     def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
-        self.lines_n = len(coordinates) - 1
+        self.lines_n = len(self.coordinates) - 1
+        self.points_in_line_pair = np.stack([self.coordinates[:-1], self.coordinates[1:]], axis=1)
+
+    def set_coordinates(self, new_coords):
+        super().set_coordinates(new_coords)
+        self.lines_n = len(self.coordinates) - 1
         self.points_in_line_pair = np.stack([self.coordinates[:-1], self.coordinates[1:]], axis=1)
     
     def __repulsion_vector_one_line__(self, args) -> np.ndarray:
@@ -124,6 +138,10 @@ class RectangleRGJ(RGJGeometry):
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
         self.x1_abs_x2 = np.abs(self.coordinates[0] - self.coordinates[1])
 
+    def set_coordinates(self, new_coords):
+        super().set_coordinates(new_coords)
+        self.x1_abs_x2 = np.abs(self.coordinates[0] - self.coordinates[1])
+
     def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
         
         return 0.5*np.sign(x-self.coordinates[0])*(np.abs(x-self.coordinates[0]) + np.abs(x-self.coordinates[1]) - self.x1_abs_x2)
@@ -136,6 +154,10 @@ class EllipseRGJ(RGJGeometry):
 
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
         self.shape = shape
+        self.inv_shape = np.linalg.inv(self.shape)
+
+    def set_shape(self, new_shape):
+        self.shape = new_shape
         self.inv_shape = np.linalg.inv(self.shape)
 
     def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
@@ -195,6 +217,11 @@ class MultiLineStringRGJ(LineStringRGJ):
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
         self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
 
+    def set_coordinates(self, new_coords):
+        super().set_coordinates([np.array(coords) for coords in new_coords])
+        self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
+        self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
+
     def get_center_point(self) -> np.ndarray:
 
         coords = np.concatenate([coords.reshape((-1, 2)) for coords in self.coordinates], axis=0)
@@ -206,7 +233,11 @@ class MultiRectangleRGJ(RGJGeometry):
 
     def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
-        self.rect_n = len(coordinates)
+        self.rect_n = len(self.coordinates)
+        
+    def set_coordinates(self, new_coords):
+        super().set_coordinates(new_coords)
+        self.rect_n = len(self.coordinates)
     
     def __repulsion_vector_one_rect__(self, args) -> np.ndarray:
         x, rect = args
@@ -240,6 +271,16 @@ class MultiEllipseRGJ(RGJGeometry):
         self.inv_shape = np.linalg.inv(self.shape)
         self.parameters = list(zip(self.coordinates, self.inv_shape))
         self.ellipse_n = len(self.coordinates)
+
+    def set_coordinates(self, new_coords):
+        super().set_coordinates(new_coords)
+        self.parameters = list(zip(self.coordinates, self.inv_shape))
+        self.ellipse_n = len(self.coordinates)
+
+    def set_shape(self, new_shape):
+        self.shape = new_shape
+        self.inv_shape = np.linalg.inv(self.shape)
+        self.parameters = list(zip(self.coordinates, self.inv_shape))
     
     def __repulsion_vector_one_ellipse__(self, args) -> np.ndarray:
         x, coordinate, inv_shape = args
@@ -277,8 +318,15 @@ class GeometryCollectionRGJ(RGJGeometry):
         self.rgjs:List[RGJGeometry] = [globals()[rgj_dict["type"]+"RGJ"](**rgj_dict) for rgj_dict in geometries]
         self.rgjs_n = len(self.rgjs)
 
-        self.inv_repulsions = self.get_dist_matrix(scaled=True, inverted=True);
+        self.inv_repulsions = self.get_dist_matrix(scaled=True, inverted=True)
         self.grad_matrixes = np.array([rgj.grad_matrix for rgj in self.rgjs])
+
+    def set_coordinates(self, new_coords):
+        raise NotImplementedError
+
+    def set_repulsion(self, new_repulsion):
+        for rgj in self.rgjs:
+            rgj.set_repulsion(new_repulsion)
 
     def get_dist_matrix(self, scaled=True, inverted=True) -> List[np.ndarray]:
 
@@ -321,12 +369,12 @@ class GeometryCollectionRGJ(RGJGeometry):
 
         return vectors
     
-    def gradient(self, x: np.ndarray, **kwargs): # TODO: Get gradiant of sub unit with smallest distance
+    def gradient(self, x: np.ndarray, **kwargs):
 
         _, dist_idxs = self.squared_dist(x, reference_idx=True, **kwargs)
 
         repulsion_vector = self.repulsion_vector(x, min_dist_select = True, **kwargs)
-        return - self.eval(x=x).reshape(-1, 1) * (np.einsum('ijk,ik->ij', self.grad_matrixes[dist_idxs], repulsion_vector)) # TODO: check correctness
+        return - self.eval(x=x).reshape(-1, 1) * (np.einsum('ijk,ik->ij', self.grad_matrixes[dist_idxs], repulsion_vector))
     
     def toRGeoJSON(self) -> RGeoJSONObject:
         if type(self.RGJType) == type(None): 
@@ -346,7 +394,7 @@ class PotentialField():
     Potential field given a subset of RGJs
     """
 
-    def __init__(self, rgjs:Optional[List[RGJDict]] = None, center_point: Optional[Point] = None, size:Optional[Union[FieldSize, float]] = None, properties:Optional[List[dict]] = None, **extra_info):
+    def __init__(self, rgjs:Optional[List[RGJDict]] = None, center_point: Optional[Point] = None, size:Optional[Union[FieldSize, float]] = None, properties:Optional[List[dict]] = None, extra_info={}):
         self.rgjs:List[RGJGeometry] = []
         self.__reload_center = None
         self.center_point = center_point
@@ -380,6 +428,17 @@ class PotentialField():
 
             self.size = np.array([suggest_size]*2) if self.size is None else self.size
 
+    def __iter__(self):
+        self.rgj_idx = 0
+        return self
+    
+    def __next__(self):
+        if self.rgj_idx >= len(self):
+            raise StopIteration
+        out = self.rgjs[self.rgj_idx]
+        self.rgj_idx += 1
+        return out
+
     def __len__(self)->int:
         return len(self.rgjs)
 
@@ -395,10 +454,19 @@ class PotentialField():
         
         return center
     
-    def reload_center_point(self, toggle=True) -> Point:
+    def set_repulsion(self, new_repulsion):
+        new_repulsion = np.array(new_repulsion)
+        for rgj in self.rgjs:
+            rgj.set_repulsion(new_repulsion)
+    
+    def reload_center_point(self, toggle=True, recal_size=False) -> Point:
         self.__reload_center = toggle
         if toggle and len(self.rgjs) > 0:
-            self.center_point = self.__calculate_center_point__()
+            if recal_size:
+                self.center_point, suggest_size = self.__calculate_center_point__(True)
+                self.size = np.array([suggest_size]*2)
+            else:
+                self.center_point = self.__calculate_center_point__(False)
 
         return self.center_point
     

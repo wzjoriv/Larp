@@ -13,23 +13,23 @@ def fromRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
     properties = [feature["properties"] for feature in features]
 
     field = PotentialField(rgjs=rgjs, properties=properties, extra_info={key: rgeojson[key] for key in rgeojson if key.lower() not in ["features", "type"]})
-    field.size += size_offset
+    field.size += size_offset*2
 
     return field
 
-def loadRGeoJSONFile(file: str) -> PotentialField:
+def loadRGeoJSONFile(file: str, size_offset = 0.0) -> PotentialField:
 
     with open(file=file, mode='r') as f:
         rgeojson = json.load(f)
 
-    return fromRGeoJSON(rgeojson)
+    return fromRGeoJSON(rgeojson, size_offset=size_offset)
 
 def saveRGeoJSON(field:PotentialField, file:str, return_bbox=False):
 
     with open("sample.json", "w") as outfile:
         json.dump(field.toRGeoJSON(return_bbox=return_bbox), outfile)
 
-def loadGeoJSONFile(file: str):
+def loadGeoJSONFile(file: str, size_offset = 0.0):
 
     """
     Converts a GeoJSON into an RGeoJSON
@@ -64,7 +64,7 @@ def loadGeoJSONFile(file: str):
     for idx in range(len(geojson["features"])):
         __prune_polygons__(geojson["features"][idx]["geometry"])
 
-    return fromRGeoJSON(geojson)
+    return fromRGeoJSON(geojson, size_offset=size_offset)
 
 def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG:26917"):
     raise NotImplementedError

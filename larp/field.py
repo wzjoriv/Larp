@@ -88,7 +88,8 @@ class LineStringRGJ(RGJGeometry):
         self.lines_n = len(coordinates) - 1
         self.points_in_line_pair = np.stack([self.coordinates[:-1], self.coordinates[1:]], axis=1)
     
-    def __repulsion_vector_one_line__(self, x: np.ndarray, line: np.ndarray) -> np.ndarray:
+    def __repulsion_vector_one_line__(self, args) -> np.ndarray:
+        x, line = args
         x2_d_x1 = line[1:2] - line[0:1]
         x_d_x1 = x - line[0:1]
 
@@ -101,9 +102,9 @@ class LineStringRGJ(RGJGeometry):
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
         if self.lines_n > 20:
             p = Pool(5)
-            vectors:np.ndarray = p.map(lambda line: self.__repulsion_vector_one_line__(x=x, line=line), self.points_in_line_pair)
+            vectors:np.ndarray = p.map(self.__repulsion_vector_one_line__, [(x, line) for line in self.points_in_line_pair])
         else:
-            vectors:np.ndarray = [self.__repulsion_vector_one_line__(x=x, line=line) for line in self.points_in_line_pair]
+            vectors:np.ndarray = [self.__repulsion_vector_one_line__((x, line)) for line in self.points_in_line_pair]
 
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
@@ -207,16 +208,16 @@ class MultiRectangleRGJ(RGJGeometry):
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
         self.rect_n = len(coordinates)
     
-    def __repulsion_vector_one_line__(self, x: np.ndarray, rect: np.ndarray) -> np.ndarray:
-
+    def __repulsion_vector_one_rect__(self, args) -> np.ndarray:
+        x, rect = args
         return 0.5*np.sign(x-rect[0])*(np.abs(x-rect[0]) + np.abs(x-rect[1]) - np.abs(rect[0] - rect[1]))
     
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
         if self.rect_n > 20:
             p = Pool(5)
-            vectors:np.ndarray = p.map(lambda rect: self.__repulsion_vector_one_line__(x=x, rect=rect), self.coordinates)
+            vectors:np.ndarray = p.map(self.__repulsion_vector_one_rect__, [(x, rect) for rect in self.coordinates])
         else:
-            vectors:np.ndarray = [self.__repulsion_vector_one_line__(x=x, rect=rect) for rect in self.coordinates]
+            vectors:np.ndarray = [self.__repulsion_vector_one_rect__((x, rect)) for rect in self.coordinates]
 
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
@@ -240,7 +241,8 @@ class MultiEllipseRGJ(RGJGeometry):
         self.parameters = list(zip(self.coordinates, self.inv_shape))
         self.ellipse_n = len(self.coordinates)
     
-    def __repulsion_vector_one_line__(self, x: np.ndarray, coordinate: np.ndarray, inv_shape: np.ndarray) -> np.ndarray:
+    def __repulsion_vector_one_ellipse__(self, args) -> np.ndarray:
+        x, coordinate, inv_shape = args
         x_d_xh = x - coordinate
         Binvx = x_d_xh@inv_shape.T
 
@@ -251,9 +253,9 @@ class MultiEllipseRGJ(RGJGeometry):
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
         if self.ellipse_n > 10:
             p = Pool(5)
-            vectors:np.ndarray = p.map(lambda parameters: self.__repulsion_vector_one_line__(x=x, coordinate=parameters[0], inv_shape=parameters[1]), self.parameters)
+            vectors:np.ndarray = p.map(self.__repulsion_vector_one_ellipse__, [(x, parameters[0], parameters[1]) for parameters in self.parameters])
         else:
-            vectors:np.ndarray = [self.__repulsion_vector_one_line__(x=x, coordinate=parameters[0], inv_shape=parameters[1]) for parameters in self.parameters]
+            vectors:np.ndarray = [self.__repulsion_vector_one_ellipse__((x, parameters[0], parameters[1])) for parameters in self.parameters]
 
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
@@ -374,9 +376,9 @@ class PotentialField():
             self.__reload_center = False
             coords = np.reshape(np.array([rgj.get_center_point() for rgj in self.rgjs]), (-1, 2))
             bbmin, bbmax = coords.min(0), coords.max(0)
-            farthest_vh_dist = max(np.abs(np.concatenate([bbmin-self.center_point, bbmax-self.center_point], axis=0)))
+            suggest_size = max(np.abs(np.concatenate([bbmin-self.center_point, bbmax-self.center_point], axis=0)))*2
 
-            self.size = np.array([farthest_vh_dist*2]*2) if self.size is None else self.size
+            self.size = np.array([suggest_size]*2) if self.size is None else self.size
 
     def __len__(self)->int:
         return len(self.rgjs)
@@ -388,8 +390,8 @@ class PotentialField():
         center = (cmin + cmax)/2.0
 
         if suggest_size:
-            farthest_vh_dist = max(np.abs(np.concatenate([cmin-center, cmax-center], axis=0)))*2
-            return center, farthest_vh_dist
+            suggest_size = max(np.abs(np.concatenate([cmin-center, cmax-center], axis=0)))*2
+            return center, suggest_size
         
         return center
     

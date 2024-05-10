@@ -6,6 +6,11 @@ import json
 Author: Josue N Rivera
 """
 
+def saveRGeoJSON(field:PotentialField, file:str, return_bbox=False):
+
+    with open(file, "w") as outfile:
+        json.dump(field.toRGeoJSON(return_bbox=return_bbox), outfile)
+
 def fromRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
 
     features = rgeojson["features"]
@@ -23,11 +28,6 @@ def loadRGeoJSONFile(file: str, size_offset = 0.0) -> PotentialField:
         rgeojson = json.load(f)
 
     return fromRGeoJSON(rgeojson, size_offset=size_offset)
-
-def saveRGeoJSON(field:PotentialField, file:str, return_bbox=False):
-
-    with open("sample.json", "w") as outfile:
-        json.dump(field.toRGeoJSON(return_bbox=return_bbox), outfile)
 
 def fromGeoJSON(geojson: dict, size_offset = 0.0):
 

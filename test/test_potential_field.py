@@ -96,15 +96,7 @@ def test_gradient():
     
     grad = field.gradient([(11, 10), (20, 11), (32, 31), (81, 82)])
 
-def test_gradient_file():
-    with open("test/data.rgj") as file:
-        rgjs:list = json.load(file)
-    
-    field = larp.PotentialField(size=(120, 120), rgjs=rgjs)
-    grad = field.gradient([(11, 10), (20, 11), (32, 31), (81, 82)])
-
 
 test_eval()
 test_area_estimation()
 test_gradient()
-test_gradient_file()

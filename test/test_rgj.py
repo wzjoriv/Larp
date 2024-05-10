@@ -114,7 +114,7 @@ def test_multi_rect_rgj():
     
     rgj = larp.MultiRectangleRGJ(coordinates=[[(0, 1), (-1, 0)], [(1, 1), (2, 0)]], repulsion=np.eye(2))
 
-    vectors = rgj.repulsion_vector([(0.15, 0.15), (0.85, 0.15), (0.45, 0.45), (0.65, 0.45)])
+    vectors = rgj.repulsion_vector([(0.15, 0.15), (0.85, 0.15), (0.45, 0.45), (0.55, 0.45)])
 
     assert ((vectors[0] - np.array([ 0.15, 0.0]))**2).sum() < 1e-5, "Unexpected repulsion vector"
     assert ((vectors[1] - np.array([-0.15, 0.0]))**2).sum() < 1e-5, "Unexpected repulsion vector"

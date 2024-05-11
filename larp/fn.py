@@ -2,6 +2,7 @@
 from typing import List, Tuple, Union
 import numpy as np
 from larp.types import Point
+from pyproj import CRS, Transformer
 
 """
 Author: Josue N Rivera
@@ -20,6 +21,17 @@ def route_distance(route:Union[np.ndarray, List[Point]], return_joints = False) 
         return cascade[-1], cascade
     
     return dist.sum()
+
+def project_route(route:Union[List[Point], np.ndarray], from_crs="EPSG:3857", to_crs="EPSG:4326") -> np.ndarray:
+
+    from_crs = CRS(from_crs)
+    to_crs = CRS(to_crs)
+
+    proj = Transformer.from_crs(crs_from=from_crs, crs_to=to_crs)
+    route = np.array(route)
+
+    return np.stack(proj.transform(route[:,0], route[:, 1]), axis=1)
+
 
 def interpolate_along_route(route:Union[List[Point], np.ndarray], step=1e-3, n=0, return_step_n = False) -> Union[np.ndarray, Tuple[np.ndarray, float, int]]:
     """

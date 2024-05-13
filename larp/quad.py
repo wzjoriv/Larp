@@ -51,19 +51,24 @@ class QuadTree():
         n_rgjs = len(filter_idx)
         zones = np.ones(n_rgjs, dtype=int) * self.n_zones
 
-        dist_sqr = self.field.squared_dist_list([center_point], filted_idx=filter_idx, scaled=False).ravel()
+        rep_vectors, refs_idxs = self.field.repulsion_vectors([center_point], filted_idx=filter_idx, min_dist_select=True, reference_idx=True)
+
+        dist_sqr = (rep_vectors*rep_vectors).sum(1)
         zone0_select = dist_sqr <= (size*size)/2.0
         zones[zone0_select] = 0
 
         if sum(zone0_select) < n_rgjs:
             rgjs_idx = filter_idx[~zone0_select]
+            vectors = rep_vectors[~zone0_select]
 
-            dist_sqr = self.field.squared_dist_list([center_point], filted_idx=rgjs_idx, inverted=False).ravel()
-            dist_sqr_bins = (size*size)/2.0 + np.sqrt(2)*size*np.sqrt(self.__zones_rad_ln) + self.__zones_rad_ln
+            vectors = vectors.reshape(-1, 2)
+            uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
-            zones[~zone0_select] = np.digitize(dist_sqr, dist_sqr_bins, right=True) + 1
+            dist_sqr = self.field.squared_dist(center_point - uni_vectors*(size/np.sqrt(2)), filted_idx=rgjs_idx).ravel()
 
-        return zones
+            zones[~zone0_select] = np.digitize(dist_sqr, self.__zones_rad_ln, right=True) + 1
+
+        return zones, rep_vectors, refs_idxs
 
     def build(self) -> Optional[QuadNode]:
         self.leaves:List[QuadNode] = []
@@ -73,7 +78,7 @@ class QuadTree():
             filter_n = len(filter_idx)
 
             if filter_n:
-                zones = self.__approximated_PF_zones__(center_point=center_point, size=size, filter_idx=filter_idx)
+                zones, rep_vectors, refs_idxs = self.__approximated_PF_zones__(center_point=center_point, size=size, filter_idx=filter_idx)
                 quad.boundary_zone = zone = min(zones)
             else:
                 quad.boundary_zone = zone = self.n_zones
@@ -87,13 +92,12 @@ class QuadTree():
                 if zone > 0:
                     # stop subdiving if sphere does not leave zone
                     lower_range = self.ZONEToMinRANGE[zone]
-                    rgjs_idx = filter_idx[zones == zone]
 
-                    vectors, refs_idxs = self.field.repulsion_vectors([center_point], filted_idx=rgjs_idx, min_dist_select=True, reference_idx=True)
+                    vectors, refs_idxs = rep_vectors[zones == zone], refs_idxs[zones == zone]
                     vectors = vectors.reshape(-1, 2)
                     uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
-                    bounds_evals = self.field.eval_per(center_point + uni_vectors*size/np.sqrt(2), idxs=refs_idxs)
+                    bounds_evals = self.field.eval_per(center_point + uni_vectors*(size/np.sqrt(2)), idxs=refs_idxs)
                     if (bounds_evals >= lower_range).any():
                         self.mark_leaf(quad)
                         return quad

@@ -22,6 +22,17 @@ RGJDict = TypedDict('LOIDict', { #super set of GeoJSON geometry
     'repulsion': List[List[float]]
 })
 
+RGeoJSONObject = TypedDict('RGeoJSONObject', { 
+    'type': Literal["Feature"],
+    'properties': dict, 
+    'geometry': RGJDict
+})
+
+RGeoJSONCollection = TypedDict('RGeoJSONCollection', { 
+    'type': Literal["FeatureCollection"],
+    'features': List[RGeoJSONObject]
+})
+
 PointRGJDict = TypedDict('PointLOIDict', {
     'type': str,
     'coordinates': List[float], 

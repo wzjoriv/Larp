@@ -298,7 +298,7 @@ class RouteGraph(Graph):
         return lines
     
     @staticmethod
-    def route_to_lines_collection(pointsA:Point, pointsB:Point, route: List[QuadNode], remapped=False) -> np.ndarray:
+    def route_to_xy_path(pointsA:Point, pointsB:Point, route: List[QuadNode], remapped=False) -> np.ndarray:
         """
         Given a route (i.e. list of quads) and starting and ending location, it returns path of the route
         """

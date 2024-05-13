@@ -114,7 +114,7 @@ class LineStringRGJ(RGJGeometry):
         return x - g
     
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
-        if self.lines_n > 20:
+        if self.lines_n > 50:
             p = Pool(5)
             vectors:np.ndarray = p.map(self.__repulsion_vector_one_line__, [(x, line) for line in self.points_in_line_pair])
         else:
@@ -244,7 +244,7 @@ class MultiRectangleRGJ(RGJGeometry):
         return 0.5*np.sign(x-rect[0])*(np.abs(x-rect[0]) + np.abs(x-rect[1]) - np.abs(rect[0] - rect[1]))
     
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
-        if self.rect_n > 20:
+        if self.rect_n > 50:
             p = Pool(5)
             vectors:np.ndarray = p.map(self.__repulsion_vector_one_rect__, [(x, rect) for rect in self.coordinates])
         else:
@@ -292,7 +292,7 @@ class MultiEllipseRGJ(RGJGeometry):
         return np.maximum(1 - 1/den, 0)*x_d_xh
     
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
-        if self.ellipse_n > 10:
+        if self.ellipse_n > 50:
             p = Pool(5)
             vectors:np.ndarray = p.map(self.__repulsion_vector_one_ellipse__, [(x, parameters[0], parameters[1]) for parameters in self.parameters])
         else:
@@ -352,8 +352,8 @@ class GeometryCollectionRGJ(RGJGeometry):
     
     def repulsion_vector(self, x:np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
 
-        if self.rgjs_n > 10:
-            p = Pool(2)
+        if self.rgjs_n > 50:
+            p = Pool(5)
             vectors:np.ndarray = p.map(lambda rgj: rgj.repulsion_vector(x, min_dist_select=min_dist_select, **kwargs).reshape(-1, 2), self.rgjs)
         else:
             vectors:np.ndarray = [rgj.repulsion_vector(x, min_dist_select=min_dist_select, **kwargs).reshape(-1, 2) for rgj in self.rgjs]
@@ -454,7 +454,7 @@ class PotentialField():
         
         return center
     
-    def set_repulsion(self, new_repulsion):
+    def set_all_repulsion(self, new_repulsion):
         new_repulsion = np.array(new_repulsion)
         for rgj in self.rgjs:
             rgj.set_repulsion(new_repulsion)

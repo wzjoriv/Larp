@@ -275,7 +275,7 @@ class PotentialField():
 
         return evals
     
-    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
@@ -284,6 +284,16 @@ class PotentialField():
         f_eval = scale_transform(self.eval(points=points))
 
         return f_eval.sum()*step
+    
+    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+        route = np.array(route)
+
+        points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
+        points = points if n <= 0 else points[:-1]
+
+        f_eval:np.ndarray = scale_transform(self.eval(points=points))
+
+        return f_eval.max()
     
     def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, reference_idx = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         points = np.array(points)

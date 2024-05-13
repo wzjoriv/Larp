@@ -454,7 +454,7 @@ class PotentialField():
         
         return center
     
-    def set_repulsion(self, new_repulsion):
+    def set_all_repulsion(self, new_repulsion):
         new_repulsion = np.array(new_repulsion)
         for rgj in self.rgjs:
             rgj.set_repulsion(new_repulsion)

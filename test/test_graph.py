@@ -29,7 +29,7 @@ def test_quad_on_simple_pf():
     routing_graph.find_route((45, 45), (60, 65), alg='A*')
     route = routing_graph.find_route((45, 45), (60, 65), alg='Dijkstra')
 
-    route_path = larp.graph.RouteGraph.route_to_lines_collection((45, 45), (60, 65), route, remapped=True)
+    route_path = larp.graph.RouteGraph.route_to_xy_path((45, 45), (60, 65), route, remapped=True)
     
     
 if __name__ == "__main__":

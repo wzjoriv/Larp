@@ -1,0 +1,66 @@
+{
+    "type": "FeatureCollection",
+    "name": "Area Lafayette City Hall",
+    "crs": null,
+    "features": [
+        { "type": "Feature", "properties": {"name": "City Hall"}, "geometry":{
+            "type": "MultiRectangle",
+            "coordinates": [
+                [[215, 265], [270, 460]],
+                [[460, 275], [515, 460]],
+                [[290, 510], [440, 210]], 
+                [[250, 425], [480, 300]]
+            ], 
+            "repulsion": [[1000, 0], [0, 1000]]
+        }},
+        { "type": "Feature", "properties": {"name": "Columbia Street"}, "geometry":{
+            "type": "MultiLineString",
+            "coordinates": [
+                [[0, 75], [65, 75]],
+                [[110, 75], [635, 75]],
+                [[685, 75], [738, 75]]
+            ], 
+            "repulsion": [[200, 0], [0, 200]]
+        }},
+        { "type": "Feature", "properties": {"name": "Building 1"}, "geometry":{
+            "type": "Rectangle",
+            "coordinates": [[20, 600], [-5, 125]], 
+            "repulsion": [[100, 0], [0, 100]]
+        }},
+        { "type": "Feature", "properties": {"name": "Building 2"}, "geometry":{
+            "type": "Rectangle",
+            "coordinates": [[20, 750], [-5, 705]], 
+            "repulsion": [[100, 0], [0, 100]]
+        }},
+        { "type": "Feature", "properties": {"name": "Building 3"}, "geometry":{
+            "type": "Rectangle",
+            "coordinates": [[120, 750], [240, 715]], 
+            "repulsion": [[100, 0], [0, 100]]
+        }},
+        { "type": "Feature", "properties": {"name": "Building 4"}, "geometry":{
+            "type": "Rectangle",
+            "coordinates": [[290, 717], [610, 750]], 
+            "repulsion": [[100, 0], [0, 100]]
+        }},
+        { "type": "Feature", "properties": {"name": "Building 5"}, "geometry":{
+            "type": "Rectangle",
+            "coordinates": [[705, 600], [750, 125]], 
+            "repulsion": [[100, 0], [0, 100]]
+        }},
+        { "type": "Feature", "properties": {"name": "Building 6"}, "geometry":{
+            "type": "Rectangle",
+            "coordinates": [[120, 30], [610, -5]], 
+            "repulsion": [[100, 0], [0, 100]]
+        }},
+        { "type": "Feature", "properties": {"name": "Building 7"}, "geometry":{
+            "type": "Rectangle",
+            "coordinates": [[-5, -5], [20, 15]], 
+            "repulsion": [[100, 0], [0, 100]]
+        }},
+        { "type": "Feature", "properties": {"name": "Building 8"}, "geometry":{
+            "type": "Rectangle",
+            "coordinates": [[700, 707], [750, 750]], 
+            "repulsion": [[100, 0], [0, 100]]
+        }}
+    ]
+}

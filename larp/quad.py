@@ -79,21 +79,27 @@ class QuadTree():
 
             if filter_n:
                 zones, rep_vectors, refs_idxs = self.__approximated_PF_zones__(center_point=center_point, size=size, filter_idx=filter_idx)
-                quad.boundary_zone = zone = min(zones)
+                quad.boundary_zone = min(zones)
+                
+                select = zones < self.n_zones
+                quad.rgj_idx = filter_idx[select]
+                quad.rgj_zones = zones[select]
             else:
-                quad.boundary_zone = zone = self.n_zones
-            quad.boundary_max_range = self.ZONEToMaxRANGE[zone]
+                quad.boundary_zone = self.n_zones
+
+            quad.boundary_max_range = self.ZONEToMaxRANGE[quad.boundary_zone]
             
             if size <= self.max_sector_size:
-                if size <= self.min_sector_size or zone == self.n_zones:
+                if size <= self.min_sector_size or quad.boundary_zone == self.n_zones:
                     # stop subdividing if size is too small or the active zones are too far away
                     self.mark_leaf(quad)
                     return quad
-                if zone > 0:
+                if quad.boundary_zone > 0:
                     # stop subdiving if sphere does not leave zone
-                    lower_range = self.ZONEToMinRANGE[zone]
+                    lower_range = self.ZONEToMinRANGE[quad.boundary_zone]
 
-                    vectors, refs_idxs = rep_vectors[zones == zone], refs_idxs[zones == zone]
+                    select = zones == quad.boundary_zone
+                    vectors, refs_idxs = rep_vectors[select], refs_idxs[select]
                     vectors = vectors.reshape(-1, 2)
                     uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
@@ -104,11 +110,10 @@ class QuadTree():
 
             size2 = size/2.0
             size4 = size2/2.0
-            new_filter_idx = filter_idx[zones < self.n_zones] if filter_n else filter_idx
-            quad['tl'] = dfs(center_point + np.array([-size4, size4]), size2, new_filter_idx)
-            quad['tr'] = dfs(center_point + np.array([ size4, size4]), size2, new_filter_idx)
-            quad['bl'] = dfs(center_point + np.array([-size4,-size4]), size2, new_filter_idx)
-            quad['br'] = dfs(center_point + np.array([ size4,-size4]), size2, new_filter_idx)
+            quad['tl'] = dfs(center_point + np.array([-size4, size4]), size2, quad.rgj_idx)
+            quad['tr'] = dfs(center_point + np.array([ size4, size4]), size2, quad.rgj_idx)
+            quad['bl'] = dfs(center_point + np.array([-size4,-size4]), size2, quad.rgj_idx)
+            quad['br'] = dfs(center_point + np.array([ size4,-size4]), size2, quad.rgj_idx)
 
             return quad
         
@@ -160,6 +165,8 @@ class QuadNode():
 
         self.children = [None]*len(self.chdToIdx)
         self.neighbors = [None]*len(self.nghToIdx)
+        self.rgj_idx = np.array([], dtype=int)
+        self.rgj_zones = np.array([], dtype=int)
 
     def __getitem__(self, idx:Union[str, int, tuple, list]) -> Union[QuadNode, List[QuadNode]]:
 

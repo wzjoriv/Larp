@@ -1,6 +1,6 @@
 from collections import defaultdict
 import heapq
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
@@ -10,6 +10,8 @@ from larp.types import FieldScaleTransform, Point, RoutingAlgorithmStr
 """
 Author: Josue N Rivera
 """
+
+RoutingAlgorithm = Callable[[QuadNode, QuadNode, FieldScaleTransform, dict], Optional[List[QuadNode]]]
 
 class Graph(object):
     """ Graph data structure, undirected by default. 
@@ -114,6 +116,9 @@ class RouteGraph(Graph):
 
         if build_graph:
             self.build()
+
+    def add_routing_algorithm(self, name:str, algorithm:RoutingAlgorithm):
+        self.routing_algs[name.lower()] = algorithm
 
     def __fill_shallow_neighs__(self):
 
@@ -249,7 +254,7 @@ class RouteGraph(Graph):
 
         return None
     
-    def find_path_dijkstra(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x):
+    def find_path_dijkstra(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x)-> Optional[List[QuadNode]]:
         open_set = []
         heapq.heappush(open_set, (0, start_node))
 

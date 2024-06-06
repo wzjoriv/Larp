@@ -106,8 +106,8 @@ class RouteGraph(Graph):
         'l':  ['tr', 'br']
     }
 
-    def __init__(self, quad_tree:QuadTree, directed:bool=False, build_graph:bool=True):
-        self.quad_tree = quad_tree
+    def __init__(self, quadtree:QuadTree, directed:bool=False, build_graph:bool=True):
+        self.quadtree = qquadtree
         super().__init__(directed=directed)
 
         self.routing_algs = defaultdict(lambda: self.find_path_A_star)
@@ -170,7 +170,7 @@ class RouteGraph(Graph):
             for quad_loc in [qtl, qtr, qbl, qbr]:
                 dfs(quad_loc)
         
-        dfs(self.quad_tree.root)
+        dfs(self.quadtree.root)
 
     def __build_graph__(self):
 
@@ -185,7 +185,7 @@ class RouteGraph(Graph):
 
             return neigh_list
 
-        for quad in self.quad_tree.leaves:
+        for quad in self.quadtreeleaves:
             for neigh_str in ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l']:
                 adjacent_neighs = recursive_search(quad[[neigh_str]][0], self.NeighOuterEdges[neigh_str])
                 self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=True)
@@ -282,14 +282,14 @@ class RouteGraph(Graph):
 
     def find_route(self, pointA:Point, pointB:Point, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*'):
         
-        quads = self.quad_tree.find_quads([pointA, pointB])
+        quads = self.quadtree.find_quads([pointA, pointB])
         return self.find_path(quads[0], quads[1], scale_tranform=scale_tranform, alg=alg)
 
     def find_many_routes(self, pointsA:Point, pointsB:Point, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*'):
         pointsA, pointsB = np.array(pointsA), np.array(pointsB)
         n = len(pointsA)
 
-        quads = self.quad_tree.find_quads(np.concatenate([pointsA, pointsB], axis=0))
+        quads = self.quadtree.find_quads(np.concatenate([pointsA, pointsB], axis=0))
 
         return [self.find_path(quads[idx], quads[n+idx], scale_tranform=scale_tranform, alg=alg) for idx in range(n)]
     

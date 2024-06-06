@@ -7,13 +7,16 @@ from larp.graph import RouteGraph
 Author: Josue N Rivera
 """
 
-class Reloader(object):
+class HotReloader(object):
 
-    def __init__(self, field:PotentialField, tree:QuadTree, graph:RouteGraph):
+    def __init__(self, field:PotentialField, quadtree:QuadTree, graph:RouteGraph):
         self.field = field
-        self.tree = tree
+        self.quadtree = quadtree
         self.graph = graph
 
-    def addField(self, new_field):
+    def addField(self, new_field:PotentialField):
+        pass
+
+    def removeRGJ(self, rgj):
         pass
 

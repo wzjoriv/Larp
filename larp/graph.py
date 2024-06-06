@@ -107,7 +107,7 @@ class RouteGraph(Graph):
     }
 
     def __init__(self, quadtree:QuadTree, directed:bool=False, build_graph:bool=True):
-        self.quadtree = qquadtree
+        self.quadtree = quadtree
         super().__init__(directed=directed)
 
         self.routing_algs = defaultdict(lambda: self.find_path_A_star)

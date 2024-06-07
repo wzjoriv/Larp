@@ -394,7 +394,7 @@ class PotentialField():
     Potential field given a subset of RGJs
     """
 
-    def __init__(self, rgjs:Optional[List[RGJDict]] = None, center_point: Optional[Point] = None, size:Optional[Union[FieldSize, float]] = None, properties:Optional[List[dict]] = None, extra_info={}):
+    def __init__(self, rgjs:Optional[Union[List[RGJDict], RGJGeometry]] = None, center_point: Optional[Point] = None, size:Optional[Union[FieldSize, float]] = None, properties:Optional[List[dict]] = None, extra_info={}):
         self.rgjs:List[RGJGeometry] = []
         self.__reload_center = None
         self.center_point = center_point
@@ -407,12 +407,12 @@ class PotentialField():
         else:
             self.size = np.array(size)
 
-        if properties is not None:
+        if properties is not None and properties is not RGJGeometry:
             for rgj, proper in zip(rgjs, properties):
-                self.addRGJ(rgj_dict=rgj, properties=proper)
+                self.addRGJ(rgj=rgj, properties=proper)
         else:
             for rgj in rgjs:
-                self.addRGJ(rgj_dict=rgj)
+                self.addRGJ(rgj=rgj)
 
         if self.center_point is None:
             self.__reload_center = True # whether to recalculate center point if new RGJ are added
@@ -477,11 +477,10 @@ class PotentialField():
                     self.center_point[ax] + size2[ax]
                 ] for ax in range(len(self.center_point))], -1).tolist()
 
-    def addRGJ(self, rgj_dict:RGJDict, properties:Optional[dict] = None, **kward) -> None:
-        rgj:RGJGeometry = globals()[rgj_dict["type"]+"RGJ"](properties=properties, **rgj_dict, **kward)
+    def addRGJ(self, rgj:Union[RGJDict, RGJGeometry], properties:Optional[dict] = None, **kward) -> None:
 
-        if rgj.RGJType != rgj_dict["type"]:
-            raise RuntimeError("RGJ type does not match")
+        if rgj is not RGJGeometry:
+            rgj:RGJGeometry = globals()[rgj["type"]+"RGJ"](properties=properties, **rgj, **kward)
         
         self.rgjs.append(rgj)
 

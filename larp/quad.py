@@ -170,6 +170,10 @@ class QuadNode():
 
     def __getitem__(self, idx:Union[str, int, tuple, list]) -> Union[QuadNode, List[QuadNode]]:
 
+        """
+        If list or tuple given, then neighbors considered. Else, children will be considered.
+        """
+
         if isinstance(idx, (list, tuple)):
             n = len(idx)
             out = [None]*n

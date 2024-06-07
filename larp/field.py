@@ -489,7 +489,7 @@ class PotentialField():
 
     def delRGJ(self, idx:Union[int, List[int]]) -> None:
 
-        idx = [idx] if type(idx) == int else idx
+        idx = [idx] if idx is int else idx
         
         for out in idx:
             del self.rgjs[out]

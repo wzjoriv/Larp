@@ -40,5 +40,6 @@ class HotReloader(object):
                                 boundaries=self.quadtree.boundaries,
                                 size=self.quadtree.size,
                                 build_tree=True)
-        pass
+        
+        self.field.delRGJ(idx=idx)
 

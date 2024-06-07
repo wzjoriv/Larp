@@ -120,7 +120,7 @@ class RouteGraph(Graph):
     def add_routing_algorithm(self, name:str, algorithm:RoutingAlgorithm):
         self.routing_algs[name.lower()] = algorithm
 
-    def __fill_shallow_neighs__(self):
+    def __fill_shallow_neighs__(self, root:Optional[QuadNode] = None):
 
         def outer_edge_fill(quad:QuadNode, child = 'tl', side = 't'):
             child_quad = quad[child]
@@ -170,9 +170,12 @@ class RouteGraph(Graph):
             for quad_loc in [qtl, qtr, qbl, qbr]:
                 dfs(quad_loc)
         
-        dfs(self.quadtree.root)
+        if root is None:
+            root = self.quadtree.root
 
-    def __build_graph__(self):
+        dfs(root)
+
+    def __build_graph__(self, leaves:Optional[List[QuadNode]] = None):
 
         def recursive_search(shallow_neigh:QuadNode, directions:List[str] = ['tl']) -> List[QuadNode]:
             if shallow_neigh is None: return []
@@ -185,7 +188,9 @@ class RouteGraph(Graph):
 
             return neigh_list
 
-        for quad in self.quadtreeleaves:
+        if leaves is None:
+            leaves = self.quadtree.leaves
+        for quad in leaves:
             for neigh_str in ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l']:
                 adjacent_neighs = recursive_search(quad[[neigh_str]][0], self.NeighOuterEdges[neigh_str])
                 self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=True)

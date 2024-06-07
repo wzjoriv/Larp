@@ -23,7 +23,7 @@ def test_add_field():
     quadtree = larp.quad.QuadTree(field=field,
                                   build_tree=True,
                                   minimum_sector_length=5,
-                                  boundaries=np.arange(0.2, 0.8, 0.2), build_tree=True)
+                                  boundaries=np.arange(0.2, 0.8, 0.2))
     quadtree.build()
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     

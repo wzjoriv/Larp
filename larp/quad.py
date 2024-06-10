@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Set, Tuple, Union
 import numpy as np
 from larp import PotentialField
 
@@ -37,15 +37,14 @@ class QuadTree():
         self.ZONEToMinRANGE = np.concatenate([self.boundaries[0:1], self.boundaries, [0.0]])
 
         self.root = None
-        self.leaves:List[QuadNode] = []
+        self.leaves:Set[QuadNode] = set()
 
         if build_tree:
             self.build()
 
     def mark_leaf(self, quad:QuadNode) -> None:
-
-        self.leaves.append(quad)
         quad.leaf = True
+        self.leaves.add(quad)
 
     def __approximated_PF_zones__(self, center_point:Point, size:float, filter_idx:Optional[List[int]] = None) -> Tuple[List[int], np.ndarray]: 
         n_rgjs = len(filter_idx)
@@ -71,7 +70,7 @@ class QuadTree():
         return zones, rep_vectors, refs_idxs
 
     def build(self) -> Optional[QuadNode]:
-        self.leaves:List[QuadNode] = []
+        self.leaves:Set[QuadNode] = set()
 
         def dfs(center_point:Point, size:float, filter_idx:Optional[List[int]]) -> QuadNode:
             quad = QuadNode(center_point=center_point, size=size)
@@ -148,6 +147,21 @@ class QuadTree():
             return subdivide(x, quad=quad[quadstr])
 
         return [subdivide(x=xi, quad=self.root) for xi in x]
+    
+    def __search_leaves__(self, quad:QuadNode):
+        if quad is None: raise TypeError("Branch missing leaf")
+        if quad.leaf: return [quad]
+
+        out = []
+        for child in quad.children:
+            out.extend(self.__search_leaves__(child))
+
+        return out
+
+    def search_leaves(self, quad:Optional[QuadNode] = None) -> Set[QuadNode]:
+        quad = self.root if quad is None else quad
+        return set(self.__search_leaves__(quad))
+    
     def get_quad_zones(self):
         return np.array([quad.boundary_zone for quad in self.leaves], dtype=int)
 

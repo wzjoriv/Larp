@@ -27,7 +27,7 @@ def test_add_field():
     quadtree.build()
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     
-    hloader = larp.hr.HotReloader(field=field, quadtree=quadtree, graph=graph)
+    hloader = larp.hl.HotReloader(field=field, quadtree=quadtree, graph=graph)
     
     
 if __name__ == "__main__":

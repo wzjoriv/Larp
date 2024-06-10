@@ -7,7 +7,7 @@ from larp.graph import RouteGraph
 Author: Josue N Rivera
 """
 
-class HotReloader(object):
+class HotLoader(object):
 
     def __init__(self, field:PotentialField, quadtree:QuadTree, graph:RouteGraph):
         self.field = field

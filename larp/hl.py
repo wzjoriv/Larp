@@ -1,4 +1,5 @@
 
+from typing import List
 import numpy as np
 from larp.field import PotentialField, RGJGeometry
 from larp.quad import QuadTree, QuadNode
@@ -15,7 +16,7 @@ class HotLoader(object):
         self.quadtree = quadtree
         self.graph = graph
 
-    def addField(self, new_field:PotentialField) -> None:
+    def addField(self, new_field:PotentialField) -> List[int]:
         
         new_field.reload_center_point(False)
         new_field.center_point = self.field.center_point
@@ -70,7 +71,7 @@ class HotLoader(object):
                     # mark quad to update in graph
                     graph_active_quad.add(rootquad)
 
-                    # TODO: if original root child quad has rgjs (idx < len(original)), build quad with own rgjs. Else do below
+                    # TODO: if original root child quad has rgjs (idx < len(original)).any(), build quad with own rgjs. Else do below
                     # replace rest of old branch with new branch
                     if rootquad[child] is not None and rootquad[child].leaf:
                         self.quadtree.leaves.remove(rootquad[child])
@@ -86,13 +87,14 @@ class HotLoader(object):
         # TODO: update graph (recalculate neighbors for active quad)
         # Delete node in active quad
 
+        return np.arange(n_original, len(self.field))
+
     def addRGJ(self, rgj:RGJGeometry) -> int:
         """
         Returns index of added rgj
         """
 
-        self.addField(PotentialField([rgj]))
-        return len(self.field) - 1
+        return self.addField(PotentialField([rgj]))[0]
 
     def removeRGJ(self, idx:int):
         rgj = self.field[idx]

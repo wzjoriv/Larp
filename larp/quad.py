@@ -69,7 +69,7 @@ class QuadTree():
 
         return zones, rep_vectors, refs_idxs
 
-    def build(self) -> Optional[QuadNode]:
+    def build(self, aggregasive=False) -> Optional[QuadNode]:
         self.leaves:Set[QuadNode] = set()
 
         def dfs(center_point:Point, size:float, filter_idx:Optional[List[int]]) -> QuadNode:
@@ -93,7 +93,7 @@ class QuadTree():
                     # stop subdividing if size is too small or the active zones are too far away
                     self.mark_leaf(quad)
                     return quad
-                if quad.boundary_zone > 0:
+                if not aggregasive and quad.boundary_zone > 0:
                     # stop subdiving if sphere does not leave zone
                     lower_range = self.ZONEToMinRANGE[quad.boundary_zone]
 

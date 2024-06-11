@@ -21,13 +21,12 @@ def test_add_field():
 
     field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  build_tree=True,
                                   minimum_sector_length=5,
-                                  boundaries=np.arange(0.2, 0.8, 0.2))
-    quadtree.build()
+                                  boundaries=np.arange(0.2, 0.8, 0.2),
+                                  build_tree=True)
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     
-    hloader = larp.hl.HotReloader(field=field, quadtree=quadtree, graph=graph)
+    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, graph=graph)
     
     
 if __name__ == "__main__":

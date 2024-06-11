@@ -68,55 +68,56 @@ class QuadTree():
             zones[~zone0_select] = np.digitize(dist_sqr, self.__zones_rad_ln, right=True) + 1
 
         return zones, rep_vectors, refs_idxs
+    
+    def __build__(self, center_point:Point, size:float, filter_idx:Optional[List[int]], aggressive=False) -> QuadNode:
+         
+        quad = QuadNode(center_point=center_point, size=size)
+        filter_n = len(filter_idx)
 
-    def build(self, aggregasive=False) -> Optional[QuadNode]:
-        self.leaves:Set[QuadNode] = set()
-
-        def dfs(center_point:Point, size:float, filter_idx:Optional[List[int]]) -> QuadNode:
-            quad = QuadNode(center_point=center_point, size=size)
-            filter_n = len(filter_idx)
-
-            if filter_n:
-                zones, rep_vectors, refs_idxs = self.__approximated_PF_zones__(center_point=center_point, size=size, filter_idx=filter_idx)
-                quad.boundary_zone = min(zones)
-                
-                select = zones < self.n_zones
-                quad.rgj_idx = filter_idx[select]
-                quad.rgj_zones = zones[select]
-            else:
-                quad.boundary_zone = self.n_zones
-
-            quad.boundary_max_range = self.ZONEToMaxRANGE[quad.boundary_zone]
+        if filter_n:
+            zones, rep_vectors, refs_idxs = self.__approximated_PF_zones__(center_point=center_point, size=size, filter_idx=filter_idx)
+            quad.boundary_zone = min(zones)
             
-            if size <= self.max_sector_size:
-                if size <= self.min_sector_size or quad.boundary_zone == self.n_zones:
-                    # stop subdividing if size is too small or the active zones are too far away
+            select = zones < self.n_zones
+            quad.rgj_idx = filter_idx[select]
+            quad.rgj_zones = zones[select]
+        else:
+            quad.boundary_zone = self.n_zones
+
+        quad.boundary_max_range = self.ZONEToMaxRANGE[quad.boundary_zone]
+        
+        if size <= self.max_sector_size:
+            if size <= self.min_sector_size or quad.boundary_zone == self.n_zones:
+                # stop subdividing if size is too small or the active zones are too far away
+                self.mark_leaf(quad)
+                return quad
+            if not aggressive and quad.boundary_zone > 0:
+                # stop subdiving if sphere does not leave zone
+                lower_range = self.ZONEToMinRANGE[quad.boundary_zone]
+
+                select = zones == quad.boundary_zone
+                vectors, refs_idxs = rep_vectors[select], refs_idxs[select]
+                vectors = vectors.reshape(-1, 2)
+                uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
+
+                bounds_evals = self.field.eval_per(center_point + uni_vectors*(size/np.sqrt(2)), idxs=refs_idxs)
+                if (bounds_evals >= lower_range).any():
                     self.mark_leaf(quad)
                     return quad
-                if not aggregasive and quad.boundary_zone > 0:
-                    # stop subdiving if sphere does not leave zone
-                    lower_range = self.ZONEToMinRANGE[quad.boundary_zone]
 
-                    select = zones == quad.boundary_zone
-                    vectors, refs_idxs = rep_vectors[select], refs_idxs[select]
-                    vectors = vectors.reshape(-1, 2)
-                    uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
+        size2 = size/2.0
+        size4 = size2/2.0
+        quad['tl'] = self.__build__(center_point + np.array([-size4, size4]), size2, quad.rgj_idx, aggressive=aggressive)
+        quad['tr'] = self.__build__(center_point + np.array([ size4, size4]), size2, quad.rgj_idx, aggressive=aggressive)
+        quad['bl'] = self.__build__(center_point + np.array([-size4,-size4]), size2, quad.rgj_idx, aggressive=aggressive)
+        quad['br'] = self.__build__(center_point + np.array([ size4,-size4]), size2, quad.rgj_idx, aggressive=aggressive)
 
-                    bounds_evals = self.field.eval_per(center_point + uni_vectors*(size/np.sqrt(2)), idxs=refs_idxs)
-                    if (bounds_evals >= lower_range).any():
-                        self.mark_leaf(quad)
-                        return quad
+        return quad
 
-            size2 = size/2.0
-            size4 = size2/2.0
-            quad['tl'] = dfs(center_point + np.array([-size4, size4]), size2, quad.rgj_idx)
-            quad['tr'] = dfs(center_point + np.array([ size4, size4]), size2, quad.rgj_idx)
-            quad['bl'] = dfs(center_point + np.array([-size4,-size4]), size2, quad.rgj_idx)
-            quad['br'] = dfs(center_point + np.array([ size4,-size4]), size2, quad.rgj_idx)
-
-            return quad
+    def build(self, aggressive=False) -> Optional[QuadNode]:
+        self.leaves:Set[QuadNode] = set()
         
-        self.root = dfs(self.field.center_point, self.size, np.arange(len(self.field)))
+        self.root = self.__build__(self.field.center_point, self.size, np.arange(len(self.field)), aggressive=aggressive)
         return self.root
     
     def to_boundary_lines_collection(self, margin=0.1) -> List[np.ndarray]:

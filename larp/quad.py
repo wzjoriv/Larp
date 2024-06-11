@@ -114,7 +114,7 @@ class QuadTree():
 
         return quad
 
-    def build(self, aggressive=False) -> Optional[QuadNode]:
+    def build(self, aggressive=False) -> QuadNode:
         self.leaves:Set[QuadNode] = set()
         
         self.root = self.__build__(self.field.center_point, self.size, np.arange(len(self.field)), aggressive=aggressive)

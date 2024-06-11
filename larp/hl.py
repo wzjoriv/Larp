@@ -41,10 +41,19 @@ class HotLoader(object):
             for child in quad.children:
                 update_idx(child)
         
+        # At the beginning because it is used by all. Needed by quad build and rgj_idx update
         update_idx(new_qtree.root)
 
         # Update quadtree
-        graph_active_quad = set()
+        graph_active_quad_new = set()
+        graph_active_quad_old = set()
+
+        def replace_branch(rootquad, newquad, child):
+            rootquad[child] = newquad[child]
+            new_leaves = set(self.quadtree.search_leaves(rootquad[child]))
+            self.quadtree.leaves.update(new_leaves)
+            graph_active_quad_new.update(new_leaves) # mark quad to update in graph
+
         def update_quad(rootquad:QuadNode, newquad:QuadNode) -> bool:
             """
             Returns whether to update tree or not
@@ -68,28 +77,39 @@ class HotLoader(object):
 
             for child in ['tl', 'tr', 'bl', 'br']:
                 if update_quad(rootquad[child], newquad[child]):
-                    # mark quad to update in graph
-                    graph_active_quad.add(rootquad)
 
                     if rootquad[child] is not None:
-                        self.quadtree.leaves = self.quadtree.leaves - set(self.quadtree.search_leaves(rootquad[child]))
+                        old_leaves = set(self.quadtree.search_leaves(rootquad[child]))
+                        self.quadtree.leaves = self.quadtree.leaves - old_leaves
+                        graph_active_quad_old.update(old_leaves) # mark quad to update in graph
 
-                    if (rootquad[child].rgj_idx < n_original).any(): # if original brarch has rgjs
-                        rootquad[child] = self.quadtree.__build__(rootquad[child].center_point,
-                                                                  rootquad[child].size,
-                                                                  filter_idx=rootquad[child].rgj_idx,
-                                                                  aggressive=True)
+                        if (rootquad[child].rgj_idx < n_original).any(): # if original branch has rgjs
+                            rootquad[child] = self.quadtree.__build__(rootquad[child].center_point,
+                                                                    rootquad[child].size,
+                                                                    filter_idx=rootquad[child].rgj_idx,
+                                                                    aggressive=True)
+                            new_leaves = set(self.quadtree.search_leaves(rootquad[child]))
+                            graph_active_quad_new.update(new_leaves)
+                        else:
+                            replace_branch(rootquad, newquad, child)
                     else:
-                        rootquad[child] = newquad[child]
-                        self.quadtree.leaves.update(self.quadtree.search_leaves(rootquad[child]))
+                        replace_branch(rootquad, newquad, child)
+
+                    # if rootquad[child] is not None:
+                    #    graph_active_quad_new.add(rootquad[child])
 
             return False
 
         update_quad(self.quadtree.root, new_qtree.root)
 
+        # delete old reference
+        for node in graph_active_quad_old:
+            self.graph.remove(node)
+            del node
 
-        # TODO: update graph (recalculate neighbors for active quad)
-        # Delete node in active quad
+        # add new references
+        self.graph.__fill_shallow_neighs__()
+        self.graph.__build_graph__(graph_active_quad_new, overwrite_directed=False)
 
         return np.arange(n_original, len(self.field))
 

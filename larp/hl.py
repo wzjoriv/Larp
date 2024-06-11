@@ -22,10 +22,11 @@ class HotLoader(object):
         new_field.size = self.field.size
         new_qtree = QuadTree(new_field,
                              minimum_sector_length=self.quadtree.min_sector_size,
-                             maximum_sector_length=self.quadtree.max_sector_size,
                              boundaries=self.quadtree.boundaries,
                              size=self.quadtree.size,
                              build_tree=True)
+        
+        n_original = len(self.field)
         
         # Add rgj to field
         for rgj in new_field:
@@ -35,7 +36,7 @@ class HotLoader(object):
         def update_idx(quad:QuadNode):
             if quad is None:
                 return
-            quad.rgj_idx = quad.rgj_idx+self.quadtree.n_zones
+            quad.rgj_idx = quad.rgj_idx+n_original
             for child in quad.children:
                 update_idx(child)
         
@@ -69,7 +70,7 @@ class HotLoader(object):
                     # mark quad to update in graph
                     graph_active_quad.add(rootquad)
 
-                    # TODO: if original root child quad has rgjs (idx < n_zones), build quad with own rgjs. Else do below
+                    # TODO: if original root child quad has rgjs (idx < len(original)), build quad with own rgjs. Else do below
                     # replace rest of old branch with new branch
                     if rootquad[child] is not None and rootquad[child].leaf:
                         self.quadtree.leaves.remove(rootquad[child])
@@ -90,13 +91,13 @@ class HotLoader(object):
         Returns index of added rgj
         """
 
-        self.addField(PotentialField(rgj))
+        self.addField(PotentialField([rgj]))
         return len(self.field) - 1
 
     def removeRGJ(self, idx:int):
         rgj = self.field[idx]
 
-        search_field = PotentialField(rgj)
+        search_field = PotentialField([rgj])
         search_field.reload_center_point(False)
         search_field.center_point = self.field.center_point
         search_field.size = self.field.size

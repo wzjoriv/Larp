@@ -71,13 +71,17 @@ class HotLoader(object):
                     # mark quad to update in graph
                     graph_active_quad.add(rootquad)
 
-                    # TODO: if original root child quad has rgjs (idx < len(original)).any(), build quad with own rgjs. Else do below
-                    # replace rest of old branch with new branch
-                    if rootquad[child] is not None and rootquad[child].leaf:
-                        self.quadtree.leaves.remove(rootquad[child])
-                    
-                    rootquad[child] = newquad[child]
-                    self.quadtree.leaves.update(self.quadtree.search_leaves(rootquad[child]))
+                    if rootquad[child] is not None:
+                        self.quadtree.leaves = self.quadtree.leaves - set(self.quadtree.search_leaves(rootquad[child]))
+
+                    if (rootquad[child].rgj_idx < n_original).any(): # if original brarch has rgjs
+                        rootquad[child] = self.quadtree.__build__(rootquad[child].center_point,
+                                                                  rootquad[child].size,
+                                                                  filter_idx=rootquad[child].rgj_idx,
+                                                                  aggressive=True)
+                    else:
+                        rootquad[child] = newquad[child]
+                        self.quadtree.leaves.update(self.quadtree.search_leaves(rootquad[child]))
 
             return False
 

@@ -172,7 +172,7 @@ class EllipseRGJ(RGJGeometry):
     
     def toRGeoJSON(self) -> RGeoJSONObject:
         out = super().toRGeoJSON()
-        out["geometry"]['shape'] = self.shape.tolist()
+        out["geometry"]['shape'] = self.shape.tolist() # type: ignore
         return out
 
 class MultiPointRGJ(RGJGeometry):

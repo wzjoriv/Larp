@@ -44,12 +44,12 @@ class Graph(object):
         self._graph[node1].update(nodes)
         if not self._directed and not overwrite_directed:
             for node2 in nodes:
-                self.add(node1, node2)
+                self._graph[node2].add(node1)
 
     def remove(self, node):
         """ Remove all references to node """
 
-        for n, cxns in self._graph.items():  # python3: items(); python2: iteritems()
+        for _, cxns in self._graph.items():  # python3: items(); python2: iteritems()
             try:
                 cxns.remove(node)
             except KeyError:
@@ -175,7 +175,7 @@ class RouteGraph(Graph):
 
         dfs(root)
 
-    def __build_graph__(self, leaves:Optional[List[QuadNode]] = None):
+    def __build_graph__(self, leaves:Optional[List[QuadNode]] = None, overwrite_directed=True):
 
         def recursive_search(shallow_neigh:QuadNode, directions:List[str] = ['tl']) -> List[QuadNode]:
             if shallow_neigh is None: return []
@@ -193,7 +193,7 @@ class RouteGraph(Graph):
         for quad in leaves:
             for neigh_str in ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l']:
                 adjacent_neighs = recursive_search(quad[[neigh_str]][0], self.NeighOuterEdges[neigh_str])
-                self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=True)
+                self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=overwrite_directed)
 
     def build(self):
         self.__fill_shallow_neighs__()

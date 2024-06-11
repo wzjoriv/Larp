@@ -83,7 +83,7 @@ class RGJGeometry():
 class PointRGJ(RGJGeometry):
     RGJType = "Point"
 
-    def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
+    def __init__(self, coordinates: Union[np.ndarray, Point], repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
 
     def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
@@ -407,7 +407,7 @@ class PotentialField():
         else:
             self.size = np.array(size)
 
-        if properties is not None and properties is not RGJGeometry:
+        if properties is not None and isinstance(rgjs[0], RGJGeometry):
             for rgj, proper in zip(rgjs, properties):
                 self.addRGJ(rgj=rgj, properties=proper)
         else:
@@ -479,7 +479,7 @@ class PotentialField():
 
     def addRGJ(self, rgj:Union[RGJDict, RGJGeometry], properties:Optional[dict] = None, **kward) -> None:
 
-        if rgj is not RGJGeometry:
+        if not isinstance(rgj, RGJGeometry):
             rgj:RGJGeometry = globals()[rgj["type"]+"RGJ"](properties=properties, **rgj, **kward)
         
         self.rgjs.append(rgj)

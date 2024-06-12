@@ -17,10 +17,10 @@ class RGJGeometry():
 
     def __init__(self, coordinates:Union[np.ndarray, List[Point], List[List[Point]], Point], repulsion:Optional[np.ndarray] = None, properties:Optional[dict] = None, optional_dim = 2, **kwargs) -> None:
         self.coordinates = np.array(coordinates)
-        self.repulsion = np.eye(optional_dim) if type(repulsion) == type(None) else np.array(repulsion)
+        self.repulsion = np.eye(optional_dim) if repulsion is None else np.array(repulsion)
         self.inv_repulsion = np.linalg.inv(self.repulsion)
         self.eye_repulsion = np.eye(len(self.repulsion))
-        self.properties = {} if type(properties) == type(None) else properties
+        self.properties = {} if properties is None else properties
         self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
 
     def set_coordinates(self, new_coords):
@@ -66,7 +66,7 @@ class RGJGeometry():
         return np.exp(-self.squared_dist(x))
     
     def toRGeoJSON(self) -> RGeoJSONObject:
-        if type(self.RGJType) == type(None): 
+        if self.RGJType is None: 
             return UserWarning(f"Object doesn't have a RGJType")
         
         return {
@@ -208,10 +208,10 @@ class MultiLineStringRGJ(LineStringRGJ):
     def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, properties:Optional[dict] = None, optional_dim = 2, **kwargs) -> None:
 
         self.coordinates = [np.array(coords) for coords in coordinates]
-        self.repulsion = np.eye(optional_dim) if type(repulsion) == type(None) else np.array(repulsion)
+        self.repulsion = np.eye(optional_dim) if repulsion is None else np.array(repulsion)
         self.inv_repulsion = np.linalg.inv(self.repulsion)
         self.eye_repulsion = np.eye(len(self.repulsion))
-        self.properties = {} if type(properties) == type(None) else properties
+        self.properties = {} if properties is None else properties
         self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
         
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
@@ -314,7 +314,7 @@ class GeometryCollectionRGJ(RGJGeometry):
 
     def __init__(self, geometries: List[RGJDict], properties:Optional[dict] = None, **kwargs) -> None:
         
-        self.properties = {} if type(properties) == type(None) else properties
+        self.properties = {} if properties is None else properties
         self.rgjs:List[RGJGeometry] = [globals()[rgj_dict["type"]+"RGJ"](**rgj_dict) for rgj_dict in geometries]
         self.rgjs_n = len(self.rgjs)
 
@@ -377,7 +377,7 @@ class GeometryCollectionRGJ(RGJGeometry):
         return - self.eval(x=x).reshape(-1, 1) * (np.einsum('ijk,ik->ij', self.grad_matrixes[dist_idxs], repulsion_vector))
     
     def toRGeoJSON(self) -> RGeoJSONObject:
-        if type(self.RGJType) == type(None): 
+        if self.RGJType is None: 
             return UserWarning(f"Object doesn't have a RGJType")
         
         return {

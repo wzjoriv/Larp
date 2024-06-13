@@ -27,6 +27,7 @@ def test_add_field():
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     
     loader = larp.hl.HotLoader(field=field, quadtree=quadtree, graph=graph)
+    added_idx = loader.addRGJ(larp.PointRGJ((55, 55), repulsion=[[10, 0], [0, 10]]))
     
     
 if __name__ == "__main__":

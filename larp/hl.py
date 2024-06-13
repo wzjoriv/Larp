@@ -119,7 +119,7 @@ class HotLoader(object):
 
     def removeRGJ(self, idx:Union[int, List[int]]) -> None:
 
-        idxs = np.array([idx] if idx is int else idx)
+        idxs = np.unique([idx] if idx is int else idx)
         rgjs = [self.field[idx] for idx in idxs]
 
         search_field = PotentialField(rgjs)
@@ -136,26 +136,28 @@ class HotLoader(object):
         self.field.delRGJ(idxs)
         
         # update quadtree
-        def update_quad(rootquad:QuadNode, newquad:QuadNode):
+        def update_quad(rootquad:QuadNode, delquad:QuadNode):
             """
-            Returns whether to merge quads or not 
+            Returns whether to consider merge quads or not 
             """
 
-            if newquad is None:
+            if delquad is None:
                 return False
             
             # update info (remove idxs)
-            select = idxs[newquad.rgj_idx]
+            select = idxs[delquad.rgj_idx]
             rootquad.rgj_idx = np.delete(rootquad.rgj_idx, select)
             rootquad.rgj_zones = np.delete(rootquad.rgj_zones, select)
-            if newquad.boundary_zone == rootquad.boundary_zone:
-                rootquad.boundary_zone = min(rootquad.rgj_zones)
+            if delquad.boundary_zone == rootquad.boundary_zone:
+                rootquad.boundary_zone = min(rootquad.rgj_zones) if len(rootquad.rgj_idx) else self.quadtree.n_zones
 
-            if len(rootquad.rgj_idx) == 0: 
+            if not len(rootquad.rgj_idx): 
                 return True
             
+            # TODO: update indexes in quad
+            
             #TODO: if all true, consider merging smaller quad
-            if all([update_quad(rootquad[child], newquad[child]) for child in ['tl', 'tr', 'bl', 'br']]):
+            if all([update_quad(rootquad[child], delquad[child]) for child in ['tl', 'tr', 'bl', 'br']]):
 
                 #TODO: if maximum size not violated, merge
                 if True:

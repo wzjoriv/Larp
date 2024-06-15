@@ -86,8 +86,9 @@ class QuadTree():
 
         quad.boundary_max_range = self.ZONEToMaxRANGE[quad.boundary_zone]
         
+        size2 = size/2.0
         if size <= self.max_sector_size:
-            if size <= self.min_sector_size or quad.boundary_zone == self.n_zones:
+            if size2 < self.min_sector_size or quad.boundary_zone == self.n_zones:
                 # stop subdividing if size is too small or the active zones are too far away
                 self.mark_leaf(quad)
                 return quad
@@ -105,7 +106,6 @@ class QuadTree():
                     self.mark_leaf(quad)
                     return quad
 
-        size2 = size/2.0
         size4 = size2/2.0
         quad['tl'] = self.__build__(center_point + np.array([-size4, size4]), size2, quad.rgj_idx, aggressive=aggressive)
         quad['tr'] = self.__build__(center_point + np.array([ size4, size4]), size2, quad.rgj_idx, aggressive=aggressive)

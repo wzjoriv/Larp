@@ -117,10 +117,10 @@ class HotLoader(object):
 
         return self.addField(PotentialField([rgj]))[0]
 
-    def removeRGJ(self, idx:Union[int, List[int]]) -> None:
+    def removeRGJ(self, idxs:Union[int, List[int]]) -> None:
 
-        idxs = np.unique([idx] if idx is int else idx)
-        rgjs = [self.field[idx] for idx in idxs]
+        idxs = np.unique([idxs] if idxs is int else idxs)
+        rgjs = [self.field.rgjs[idx] for idx in idxs]
 
         search_field = PotentialField(rgjs)
         search_field.reload_center_point(False)
@@ -136,6 +136,9 @@ class HotLoader(object):
         self.field.delRGJ(idxs)
         
         # update quadtree
+        graph_active_quad_new = set()
+        graph_active_quad_old = set()
+
         def update_quad(rootquad:QuadNode, delquad:QuadNode):
             """
             Returns whether to consider merge quads or not 
@@ -144,35 +147,50 @@ class HotLoader(object):
             if delquad is None:
                 return False
             
-            # update info (remove idxs)
-            select = idxs[delquad.rgj_idx]
-            rootquad.rgj_idx = np.delete(rootquad.rgj_idx, select)
-            rootquad.rgj_zones = np.delete(rootquad.rgj_zones, select)
-            if delquad.boundary_zone == rootquad.boundary_zone:
-                rootquad.boundary_zone = min(rootquad.rgj_zones) if len(rootquad.rgj_idx) else self.quadtree.n_zones
-
-            if not len(rootquad.rgj_idx): 
+            if delquad.boundary_zone == self.quadtree.n_zones:
                 return True
             
-            # TODO: update indexes in quad
+            # update info (remove idxs)
+            mask = ~np.in1d(rootquad.rgj_idx, idxs[delquad.rgj_idx])
+            rootquad.rgj_idx = rootquad.rgj_idx[mask]
+            rootquad.rgj_zones = rootquad.rgj_zones[mask]
+            rootquad.boundary_zone = min(rootquad.rgj_zones) if len(rootquad.rgj_idx) > 0 else self.quadtree.n_zones
+
+            # Update indexes in quad
+            original_idx = rootquad.rgj_idx.copy()
+            for idx in idxs:
+                mask = original_idx >= idx
+                rootquad.rgj_idx[mask] = rootquad.rgj_idx[mask] - 1
+
+            if rootquad.boundary_zone == self.quadtree.n_zones:
+                return True
             
-            #TODO: if all true, consider merging smaller quad
+            #If all true, consider merging smaller quad
             if all([update_quad(rootquad[child], delquad[child]) for child in ['tl', 'tr', 'bl', 'br']]):
 
-                #TODO: if maximum size not violated, merge
-                if True:
-                    pass
+                #If maximum size not violated, merge
+                if rootquad.size <= self.quadtree.max_sector_size:
+                    old_leaves = set(self.quadtree.search_leaves(rootquad))
+                    self.quadtree.leaves = self.quadtree.leaves - old_leaves
+                    graph_active_quad_old.update(old_leaves) # mark quad to update in graph
+
+                    del rootquad.children
+                    rootquad.children = [None]*len(rootquad.chdToIdx)
+                    self.quadtree.mark_leaf(rootquad)
+
+                    graph_active_quad_new.add(rootquad) # mark quad to update in graph
+                    return True
 
             return False
 
         update_quad(self.quadtree.root, search_qtree.root)
 
         # delete old reference
-        #for node in graph_active_quad_old:
-        #    self.graph.remove(node)
-        #    del node
+        for node in graph_active_quad_old:
+           self.graph.remove(node)
+           del node
 
         # add new references
         self.graph.__fill_shallow_neighs__()
-        # self.graph.__build_graph__(graph_active_quad_new, overwrite_directed=False)
+        self.graph.__build_graph__(graph_active_quad_new, overwrite_directed=False)
 

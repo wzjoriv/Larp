@@ -147,29 +147,25 @@ class HotLoader(object):
             if delquad is None:
                 return False
             
-            if delquad.boundary_zone == self.quadtree.n_zones:
-                return True
-            
             # update info (remove idxs)
             mask = ~np.in1d(rootquad.rgj_idx, idxs[delquad.rgj_idx])
             rootquad.rgj_idx = rootquad.rgj_idx[mask]
             rootquad.rgj_zones = rootquad.rgj_zones[mask]
-            rootquad.boundary_zone = min(rootquad.rgj_zones) if len(rootquad.rgj_idx) > 0 else self.quadtree.n_zones
+            if delquad.boundary_zone == rootquad.boundary_zone:
+                rootquad.boundary_zone = min(rootquad.rgj_zones) if len(rootquad.rgj_idx) > 0 else self.quadtree.n_zones
 
             # Update indexes in quad
             original_idx = rootquad.rgj_idx.copy()
             for idx in idxs:
                 mask = original_idx >= idx
                 rootquad.rgj_idx[mask] = rootquad.rgj_idx[mask] - 1
-
-            if rootquad.boundary_zone == self.quadtree.n_zones:
-                return True
             
             #If all true, consider merging smaller quad
             if all([update_quad(rootquad[child], delquad[child]) for child in ['tl', 'tr', 'bl', 'br']]):
 
                 #If maximum size not violated, merge
-                if rootquad.size <= self.quadtree.max_sector_size:
+                if rootquad.size <= self.quadtree.max_sector_size and \
+                (rootquad['tl'].boundary_zone == rootquad['tr'].boundary_zone == rootquad['bl'].boundary_zone == rootquad['br'].boundary_zone):
                     old_leaves = set(self.quadtree.search_leaves(rootquad))
                     self.quadtree.leaves = self.quadtree.leaves - old_leaves
                     graph_active_quad_old.update(old_leaves) # mark quad to update in graph
@@ -180,6 +176,9 @@ class HotLoader(object):
 
                     graph_active_quad_new.add(rootquad) # mark quad to update in graph
                     return True
+                
+            if not len(rootquad.rgj_idx): 
+                return True
 
             return False
 

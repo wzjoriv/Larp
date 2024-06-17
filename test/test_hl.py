@@ -60,7 +60,7 @@ def test_add_rgj_idx_passed():
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     
     loader = larp.hl.HotLoader(field=field, quadtree=quadtree, graph=graph)
-    added_idx = loader.addRGJ(larp.PointRGJ((55, 55), repulsion=[[1, 0], [0, 1]]))
+    loader.addRGJ(larp.PointRGJ((55, 55), repulsion=[[1, 0], [0, 1]]))
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
 
@@ -104,7 +104,7 @@ def test_add_leaf_none_children():
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     
     loader = larp.hl.HotLoader(field=field, quadtree=quadtree, graph=graph)
-    added_idx = loader.addRGJ(larp.PointRGJ((55, 55), repulsion=[[1, 0], [0, 1]]))
+    loader.addRGJ(larp.PointRGJ((55, 55), repulsion=[[1, 0], [0, 1]]))
 
     for quad in quadtree.leaves:
         assert all([child is None for child in quad.children]) == True, f"{str(quad)} is leaf (by list) with non-none children"

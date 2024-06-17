@@ -1,5 +1,6 @@
 from multiprocessing import Pool
 from typing import List, Optional, Tuple, Union
+from itertools import compress
 
 import numpy as np
 import larp.fn as lpf
@@ -490,9 +491,10 @@ class PotentialField():
     def delRGJ(self, idx:Union[int, List[int]]) -> None:
 
         idx = np.unique([idx] if idx is int else idx)
+        idx.sort()
         
-        for out in idx:
-            del self.rgjs[out]
+        for i in range(len(idx)):
+            del self.rgjs[idx[i]-i]
 
         if self.__reload_center:
             self.center_point = self.__calculate_center_point__()

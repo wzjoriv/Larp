@@ -159,9 +159,13 @@ class HotLoader(object):
             for idx in idxs:
                 mask = original_idx >= idx
                 rootquad.rgj_idx[mask] = rootquad.rgj_idx[mask] - 1
+
+            if rootquad.leaf and rootquad.boundary_zone == self.quadtree.n_zones:
+                return True
             
             #If all true, consider merging smaller quad
-            if all([update_quad(rootquad[child], delquad[child]) for child in ['tl', 'tr', 'bl', 'br']]):
+            check = [update_quad(rootquad[child], delquad[child]) for child in ['tl', 'tr', 'bl', 'br']]
+            if all(check):
 
                 #If maximum size not violated, merge
                 if rootquad.size <= self.quadtree.max_sector_size and \
@@ -176,9 +180,6 @@ class HotLoader(object):
 
                     graph_active_quad_new.add(rootquad) # mark quad to update in graph
                     return True
-                
-            if not len(rootquad.rgj_idx): 
-                return True
 
             return False
 

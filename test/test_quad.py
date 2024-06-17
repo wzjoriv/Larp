@@ -71,7 +71,7 @@ def test_rgj_idx_passed():
             return
         
         for child in quad.children:
-            assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child [{str(child)}] rgj idxs are not a subset of {str(quad)}'s"
+            assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child {str(child)} rgj idxs are not a subset of {str(quad)}'s"
 
         for child in quad.children:
             get_rgj_idx(child)
@@ -107,9 +107,11 @@ def test_leaf_none_children():
     graph = larp.graph.RouteGraph(quadtree=quadtree)
 
     for quad in quadtree.leaves:
-        assert all([child is None for child in quad.children]) == True, f"{str(quad)} is leaf (by list) with non-none children"
+        assert all([child is None for child in quad.children]) == True, f"{str(quad)} is leaf (in list) with non-none children"
 
     for quad in quadtree.search_leaves():
         assert all([child is None for child in quad.children]) == True, f"{str(quad)} is leaf (by search) with non-none children"
+
+    assert quadtree.search_leaves() == quadtree.leaves, "Leaves in list are different than those found by search"
 
 test_leaf_none_children()

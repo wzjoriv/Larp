@@ -1,5 +1,5 @@
 
-from typing import List, Union
+from typing import List, Optional, Tuple, Union
 import numpy as np
 from larp.field import PotentialField, RGJGeometry
 from larp.quad import QuadTree, QuadNode
@@ -117,7 +117,7 @@ class HotLoader(object):
 
         return self.addField(PotentialField([rgj]))[0]
 
-    def removeRGJ(self, idxs:Union[int, List[int]]) -> None:
+    def removeRGJ(self, idxs:Union[int, List[int]], pop_field=False, pop_tree=False) -> Optional[Union[PotentialField, QuadTree, Tuple[PotentialField, QuadTree]]]:
 
         idxs = np.unique([idxs] if idxs is int else idxs)
         rgjs = [self.field.rgjs[idx] for idx in idxs]
@@ -158,7 +158,7 @@ class HotLoader(object):
             Returns whether to consider merge quads or not 
             """
 
-            if delquad is None:
+            if delquad is None: # check for none because some farthest zone may be mergeable
                 recursive_update_rgj_index(rootquad)
                 return False
             
@@ -177,8 +177,7 @@ class HotLoader(object):
                 return True
             
             #If all true, consider merging smaller quad
-            check = [update_quad(rootquad[child], delquad[child]) for child in ['tl', 'tr', 'bl', 'br']]
-            if all(check):
+            if all([update_quad(rootquad[child], delquad[child]) for child in ['tl', 'tr', 'bl', 'br']]):
 
                 #If maximum size not violated, merge
                 if rootquad.size <= self.quadtree.max_sector_size and \
@@ -207,3 +206,11 @@ class HotLoader(object):
         self.graph.__fill_shallow_neighs__()
         self.graph.__build_graph__(graph_active_quad_new, overwrite_directed=False)
 
+        if pop_field or pop_tree:
+            if pop_field and not pop_tree:
+                return search_field
+            elif not pop_field and pop_tree:
+                return search_qtree
+            return search_field, search_qtree
+        else:
+            del pop_field, pop_tree

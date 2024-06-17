@@ -150,7 +150,7 @@ class QuadTree():
         return [subdivide(x=xi, quad=self.root) for xi in x]
     
     def __search_leaves__(self, quad:QuadNode):
-        if quad is None: raise TypeError("Branch missing leaf")
+        if quad is None: raise TypeError(f"Branch missing leaf for quad {str(quad)}")
         if quad.leaf: return [quad]
 
         out = []

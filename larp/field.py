@@ -407,12 +407,12 @@ class PotentialField():
         else:
             self.size = np.array(size)
 
-        if properties is not None and isinstance(rgjs[0], RGJGeometry):
-            for rgj, proper in zip(rgjs, properties):
-                self.addRGJ(rgj=rgj, properties=proper)
-        else:
+        if properties is None or isinstance(rgjs[0], RGJGeometry):
             for rgj in rgjs:
                 self.addRGJ(rgj=rgj)
+        else:
+            for rgj, proper in zip(rgjs, properties):
+                self.addRGJ(rgj=rgj, properties=proper)
 
         if self.center_point is None:
             self.__reload_center = True # whether to recalculate center point if new RGJ are added

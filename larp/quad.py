@@ -172,7 +172,7 @@ class QuadNode():
     nghToIdx = __list_to_dict__(['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l'])
     
     def __init__(self, center_point:Point, size:float) -> None:
-        self.center_point = center_point
+        self.center_point = np.array(center_point)
         self.size = size
         self.leaf = False
         self.boundary_zone:int = 0

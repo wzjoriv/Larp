@@ -121,6 +121,7 @@ class HotLoader(object):
 
         idxs = np.unique([idxs] if idxs is int else idxs)
         rgjs = [self.field.rgjs[idx] for idx in idxs]
+        min_idx = min(idxs)
 
         search_field = PotentialField(rgjs)
         search_field.reload_center_point(False)
@@ -139,26 +140,38 @@ class HotLoader(object):
         graph_active_quad_new = set()
         graph_active_quad_old = set()
 
+        def update_rgj_index(quad:QuadNode):
+            original_idx = quad.rgj_idx.copy()
+            for idx in idxs:
+                mask = original_idx >= idx
+                quad.rgj_idx[mask] = quad.rgj_idx[mask] - 1
+
+        def recursive_update_rgj_index(quad:QuadNode):
+            if quad is None or not len(quad.rgj_idx) or all(quad.rgj_idx < min_idx): return
+
+            update_rgj_index(quad)
+            for child in quad.children:
+                recursive_update_rgj_index(child)
+
         def update_quad(rootquad:QuadNode, delquad:QuadNode):
             """
             Returns whether to consider merge quads or not 
             """
 
             if delquad is None:
+                recursive_update_rgj_index(rootquad)
                 return False
             
             # update info (remove idxs)
             mask = ~np.in1d(rootquad.rgj_idx, idxs[delquad.rgj_idx])
+            # save = rootquad.rgj_idx
             rootquad.rgj_idx = rootquad.rgj_idx[mask]
             rootquad.rgj_zones = rootquad.rgj_zones[mask]
             if delquad.boundary_zone == rootquad.boundary_zone:
                 rootquad.boundary_zone = min(rootquad.rgj_zones) if len(rootquad.rgj_idx) > 0 else self.quadtree.n_zones
 
             # Update indexes in quad
-            original_idx = rootquad.rgj_idx.copy()
-            for idx in idxs:
-                mask = original_idx >= idx
-                rootquad.rgj_idx[mask] = rootquad.rgj_idx[mask] - 1
+            update_rgj_index(rootquad)
 
             if rootquad.leaf and rootquad.boundary_zone == self.quadtree.n_zones:
                 return True

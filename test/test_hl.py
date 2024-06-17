@@ -114,7 +114,7 @@ def test_remove_rgj_idx_passed():
             return
         
         for child in quad.children:
-            assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child [{str(child)}] rgj idxs are not a subset of {str(quad)}'s"
+            assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child {str(child)} rgj idxs are not a subset of {str(quad)}'s"
 
         for child in quad.children:
             get_rgj_idx(child)

@@ -69,7 +69,7 @@ class QuadTree():
 
         return zones, rep_vectors, refs_idxs
     
-    def __build__(self, center_point:Point, size:float, filter_idx:Optional[List[int]], aggressive=False) -> QuadNode:
+    def __build__(self, center_point:Point, size:float, filter_idx:np.ndarray, aggressive=False) -> QuadNode:
          
         quad = QuadNode(center_point=center_point, size=size)
         filter_n = len(filter_idx)

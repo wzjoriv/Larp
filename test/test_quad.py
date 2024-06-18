@@ -63,7 +63,6 @@ def test_rgj_idx_passed():
                                   minimum_sector_length=5,
                                   boundaries=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
-    graph = larp.graph.RouteGraph(quadtree=quadtree)
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
 
@@ -105,7 +104,6 @@ def test_leaf_none_children():
                                   minimum_sector_length=5,
                                   boundaries=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
-    graph = larp.graph.RouteGraph(quadtree=quadtree)
 
     for quad in quadtree.leaves:
         assert all([child is None for child in quad.children]) == True, f"{str(quad)} is leaf (in list) with non-none children"

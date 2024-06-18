@@ -68,6 +68,7 @@ def test_add_rgj_idx_passed():
         
         for child in quad.children:
             assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child [{str(child)}] rgj idxs are not a subset of {str(quad)}'s"
+            assert child.boundary_zone >= quad.boundary_zone, f"Child {str(child)} boundary zone is higher than {str(quad)}'s"
 
         for child in quad.children:
             get_rgj_idx(child)
@@ -101,7 +102,7 @@ def test_remove_rgj_idx_passed():
 
     field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  minimum_sector_length=5,
+                                  minimum_sector_length=1,
                                   boundaries=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     graph = larp.graph.RouteGraph(quadtree=quadtree)
@@ -114,6 +115,7 @@ def test_remove_rgj_idx_passed():
             return
         
         for child in quad.children:
+            assert child.boundary_zone >= quad.boundary_zone, f"Child {str(child)} boundary zone is higher than {str(quad)}'s"
             assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child {str(child)} rgj idxs are not a subset of {str(quad)}'s"
 
         for child in quad.children:
@@ -187,7 +189,7 @@ def test_remove_leaf_none_children():
 
     field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  minimum_sector_length=5,
+                                  minimum_sector_length=1,
                                   boundaries=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     graph = larp.graph.RouteGraph(quadtree=quadtree)

@@ -128,7 +128,7 @@ class QuadTree():
     def get_quad_maximum_range(self) -> np.ndarray:
         return np.array([quad.boundary_max_range for quad in self.leaves])
     
-    def find_quads(self, x:np.ndarray) -> List[QuadNode]:
+    def find_quads(self, x:Union[List[Point],np.ndarray]) -> List[QuadNode]:
         """ Finds quad for given points
 
         * Pool parallization not possible because quad memory reference is needed
@@ -137,7 +137,10 @@ class QuadTree():
 
         def subdivide(x:Point, quad:QuadNode) -> List[QuadNode]:
             if quad is None or quad.leaf:
+                print(quad.boundary_zone)
                 return quad
+            
+            print(quad.boundary_zone)
 
             direction = x - quad.center_point
             if direction[1] >= 0.0:

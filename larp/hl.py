@@ -120,8 +120,9 @@ class HotLoader(object):
     def removeRGJ(self, idxs:Union[int, List[int]], pop_field=False, pop_tree=False) -> Optional[Union[PotentialField, QuadTree, Tuple[PotentialField, QuadTree]]]:
 
         idxs = np.unique([idxs] if idxs is int else idxs)
+        idxs.sort()
         rgjs = [self.field.rgjs[idx] for idx in idxs]
-        min_idx = min(idxs)
+        min_idx = idxs[0]
 
         search_field = PotentialField(rgjs)
         search_field.reload_center_point(False)
@@ -155,18 +156,19 @@ class HotLoader(object):
 
         def update_quad(rootquad:QuadNode, delquad:QuadNode):
             """
-            Returns whether to consider merge quads or not 
+            Returns whether to consider merging quads or not 
             """
+            # check for none because some farthest quad may be mergeable and to update zones
+            # If none, no quad that is in delete tree is inside rootquad branch
 
-            if delquad is None: # check for none because some farthest zone may be mergeable
+            if delquad is None:
                 recursive_update_rgj_index(rootquad)
                 return False
             
             # update info (remove idxs)
-            mask = ~np.in1d(rootquad.rgj_idx, idxs[delquad.rgj_idx])
-            # save = rootquad.rgj_idx
+            mask = ~np.in1d(rootquad.rgj_idx, idxs)
             rootquad.rgj_idx = rootquad.rgj_idx[mask]
-            rootquad.rgj_zones = rootquad.rgj_zones[mask]
+            rootquad.rgj_zones = rootquad.rgj_zones[mask] # Check
             if delquad.boundary_zone == rootquad.boundary_zone:
                 rootquad.boundary_zone = min(rootquad.rgj_zones) if len(rootquad.rgj_idx) > 0 else self.quadtree.n_zones
 
@@ -192,7 +194,7 @@ class HotLoader(object):
 
                     graph_active_quad_new.add(rootquad) # mark quad to update in graph
                     return True
-
+                
             return False
 
         update_quad(self.quadtree.root, search_qtree.root)

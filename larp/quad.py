@@ -65,7 +65,7 @@ class QuadTree():
             uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
             # TODO: Ensure squared distance is per rgj
-            dist_sqr = self.field.squared_dist(center_point - uni_vectors*(size/np.sqrt(2)), filted_idx=rgjs_idx).ravel()
+            dist_sqr = self.field.squared_dist_per(center_point - uni_vectors*(size/np.sqrt(2)), idxs=rgjs_idx).ravel()
 
             zones[not_zone0_select] = np.digitize(dist_sqr, self.__zones_rad_ln, right=True) + 1
 

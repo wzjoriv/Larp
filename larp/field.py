@@ -596,6 +596,21 @@ class PotentialField():
 
         return np.min(dists, axis=1)
     
+    def squared_dist_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
+        if len(points) != len(idxs):
+            raise RuntimeError("The number of points doesn't match the number of indexes")
+        
+        points = np.array(points)
+        n = len(points)
+        idxs = np.array(idxs, dtype=int)
+        
+        dists = np.ones(n, dtype=points[0].dtype)
+        for idx in set(idxs):
+            select = idx == idxs
+            dists[select] = self.rgjs[idx].squared_dist(points[select], scaled=True, inverted=True)
+
+        return dists
+    
     def squared_dist_list(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
         points = np.array(points)
         rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs

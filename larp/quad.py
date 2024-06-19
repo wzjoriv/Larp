@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Set, Tuple, Union
 import numpy as np
 from larp import PotentialField
 
@@ -19,33 +19,32 @@ def __list_to_dict__(array:Union[np.ndarray, List[float]]):
 class QuadTree():
 
     def __init__(self, field: PotentialField,
-                 minimum_sector_length:float = 5.0,
-                 maximum_sector_length:float = np.Inf,
-                 boundaries:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
+                 minimum_length_limit:float = 5.0,
+                 maximum_length_limit:float = np.Inf,
+                 edge_bounds:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
                  size:Optional[float] = None,
                  build_tree:bool = False) -> None:
         
         self.field = field
-        self.min_sector_size = minimum_sector_length
-        self.max_sector_size = maximum_sector_length
+        self.min_sector_size = minimum_length_limit
+        self.max_sector_size = maximum_length_limit
         self.size = size if size is not None else np.max(self.field.size)
 
-        self.boundaries = np.sort(np.array(boundaries))[::-1]
-        self.n_zones = len(self.boundaries) + 1
-        self.__zones_rad_ln = -np.log(self.boundaries)
-        self.ZONEToMaxRANGE = np.concatenate([[1.0, 1.0], self.boundaries])
-        self.ZONEToMinRANGE = np.concatenate([self.boundaries[0:1], self.boundaries, [0.0]])
+        self.edge_bounds = np.sort(np.array(edge_bounds))[::-1]
+        self.n_zones = len(self.edge_bounds) + 1
+        self.__zones_rad_ln = -np.log(self.edge_bounds)
+        self.ZONEToMaxRANGE = np.concatenate([[1.0, 1.0], self.edge_bounds])
+        self.ZONEToMinRANGE = np.concatenate([self.edge_bounds[0:1], self.edge_bounds, [0.0]])
 
         self.root = None
-        self.leaves:List[QuadNode] = []
+        self.leaves:Set[QuadNode] = set()
 
         if build_tree:
             self.build()
 
     def mark_leaf(self, quad:QuadNode) -> None:
-
-        self.leaves.append(quad)
         quad.leaf = True
+        self.leaves.add(quad)
 
     def __approximated_PF_zones__(self, center_point:Point, size:float, filter_idx:Optional[List[int]] = None) -> Tuple[List[int], np.ndarray]: 
         n_rgjs = len(filter_idx)
@@ -58,61 +57,69 @@ class QuadTree():
         zones[zone0_select] = 0
 
         if sum(zone0_select) < n_rgjs:
-            rgjs_idx = filter_idx[~zone0_select]
-            vectors = rep_vectors[~zone0_select]
+            not_zone0_select = ~zone0_select
+            rgjs_idx = filter_idx[not_zone0_select]
+            vectors = rep_vectors[not_zone0_select]
 
             vectors = vectors.reshape(-1, 2)
             uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
-            dist_sqr = self.field.squared_dist(center_point - uni_vectors*(size/np.sqrt(2)), filted_idx=rgjs_idx).ravel()
+            # TODO: Ensure squared distance is per rgj
+            dist_sqr = self.field.squared_dist_per(center_point - uni_vectors*(size/np.sqrt(2)), idxs=rgjs_idx).ravel()
 
-            zones[~zone0_select] = np.digitize(dist_sqr, self.__zones_rad_ln, right=True) + 1
+            zones[not_zone0_select] = np.digitize(dist_sqr, self.__zones_rad_ln, right=True) + 1
 
         return zones, rep_vectors, refs_idxs
+    
+    def __build__(self, center_point:Point, size:float, filter_idx:np.ndarray, conservative=False) -> QuadNode:
+         
+        quad = QuadNode(center_point=center_point, size=size)
+        filter_n = len(filter_idx)
 
-    def build(self) -> Optional[QuadNode]:
-        self.leaves:List[QuadNode] = []
-
-        def dfs(center_point:Point, size:float, filter_idx:Optional[List[int]]) -> QuadNode:
-            quad = QuadNode(center_point=center_point, size=size)
-            filter_n = len(filter_idx)
-
-            if filter_n:
-                zones, rep_vectors, refs_idxs = self.__approximated_PF_zones__(center_point=center_point, size=size, filter_idx=filter_idx)
-                quad.boundary_zone = zone = min(zones)
-            else:
-                quad.boundary_zone = zone = self.n_zones
-            quad.boundary_max_range = self.ZONEToMaxRANGE[zone]
+        if filter_n:
+            zones, rep_vectors, refs_idxs = self.__approximated_PF_zones__(center_point=center_point, size=size, filter_idx=filter_idx)
+            quad.boundary_zone = min(zones)
             
-            if size <= self.max_sector_size:
-                if size <= self.min_sector_size or zone == self.n_zones:
-                    # stop subdividing if size is too small or the active zones are too far away
+            select = zones < self.n_zones
+            quad.rgj_idx = filter_idx[select]
+            quad.rgj_zones = zones[select]
+        else:
+            quad.boundary_zone = self.n_zones
+
+        quad.boundary_max_range = self.ZONEToMaxRANGE[quad.boundary_zone]
+        
+        size2 = size/2.0
+        if size <= self.max_sector_size:
+            if size2 < self.min_sector_size or quad.boundary_zone == self.n_zones:
+                # stop subdividing if size is too small or the active zones are too far away
+                self.mark_leaf(quad)
+                return quad
+            if conservative and quad.boundary_zone > 0:
+                # stop subdiving if sphere does not leave zone
+                lower_range = self.ZONEToMinRANGE[quad.boundary_zone]
+
+                select = zones == quad.boundary_zone
+                vectors, refs_idxs = rep_vectors[select], refs_idxs[select]
+                vectors = vectors.reshape(-1, 2)
+                uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
+
+                bounds_evals = self.field.eval_per(center_point + uni_vectors*(size/np.sqrt(2)), idxs=refs_idxs)
+                if (bounds_evals >= lower_range).any():
                     self.mark_leaf(quad)
                     return quad
-                if zone > 0:
-                    # stop subdiving if sphere does not leave zone
-                    lower_range = self.ZONEToMinRANGE[zone]
 
-                    vectors, refs_idxs = rep_vectors[zones == zone], refs_idxs[zones == zone]
-                    vectors = vectors.reshape(-1, 2)
-                    uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
+        size4 = size2/2.0
+        quad['tl'] = self.__build__(center_point + np.array([-size4, size4]), size2, quad.rgj_idx, conservative=conservative)
+        quad['tr'] = self.__build__(center_point + np.array([ size4, size4]), size2, quad.rgj_idx, conservative=conservative)
+        quad['bl'] = self.__build__(center_point + np.array([-size4,-size4]), size2, quad.rgj_idx, conservative=conservative)
+        quad['br'] = self.__build__(center_point + np.array([ size4,-size4]), size2, quad.rgj_idx, conservative=conservative)
 
-                    bounds_evals = self.field.eval_per(center_point + uni_vectors*(size/np.sqrt(2)), idxs=refs_idxs)
-                    if (bounds_evals >= lower_range).any():
-                        self.mark_leaf(quad)
-                        return quad
+        return quad
 
-            size2 = size/2.0
-            size4 = size2/2.0
-            new_filter_idx = filter_idx[zones < self.n_zones] if filter_n else filter_idx
-            quad['tl'] = dfs(center_point + np.array([-size4, size4]), size2, new_filter_idx)
-            quad['tr'] = dfs(center_point + np.array([ size4, size4]), size2, new_filter_idx)
-            quad['bl'] = dfs(center_point + np.array([-size4,-size4]), size2, new_filter_idx)
-            quad['br'] = dfs(center_point + np.array([ size4,-size4]), size2, new_filter_idx)
-
-            return quad
+    def build(self, conservative=True) -> QuadNode:
+        self.leaves:Set[QuadNode] = set()
         
-        self.root = dfs(self.field.center_point, self.size, np.arange(len(self.field)))
+        self.root = self.__build__(self.field.center_point, self.size, np.arange(len(self.field)), conservative=conservative)
         return self.root
     
     def to_boundary_lines_collection(self, margin=0.1) -> List[np.ndarray]:
@@ -123,7 +130,7 @@ class QuadTree():
     def get_quad_maximum_range(self) -> np.ndarray:
         return np.array([quad.boundary_max_range for quad in self.leaves])
     
-    def find_quads(self, x:np.ndarray) -> List[QuadNode]:
+    def find_quads(self, x:Union[List[Point],np.ndarray]) -> List[QuadNode]:
         """ Finds quad for given points
 
         * Pool parallization not possible because quad memory reference is needed
@@ -143,6 +150,21 @@ class QuadTree():
             return subdivide(x, quad=quad[quadstr])
 
         return [subdivide(x=xi, quad=self.root) for xi in x]
+    
+    def __search_leaves__(self, quad:QuadNode):
+        if quad is None: raise TypeError(f"Branch missing leaf for quad {str(quad)}")
+        if quad.leaf: return [quad]
+
+        out = []
+        for child in quad.children:
+            out.extend(self.__search_leaves__(child))
+
+        return out
+
+    def search_leaves(self, quad:Optional[QuadNode] = None) -> Set[QuadNode]:
+        quad = self.root if quad is None else quad
+        return set(self.__search_leaves__(quad))
+    
     def get_quad_zones(self):
         return np.array([quad.boundary_zone for quad in self.leaves], dtype=int)
 
@@ -152,7 +174,7 @@ class QuadNode():
     nghToIdx = __list_to_dict__(['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l'])
     
     def __init__(self, center_point:Point, size:float) -> None:
-        self.center_point = center_point
+        self.center_point = np.array(center_point)
         self.size = size
         self.leaf = False
         self.boundary_zone:int = 0
@@ -160,8 +182,14 @@ class QuadNode():
 
         self.children = [None]*len(self.chdToIdx)
         self.neighbors = [None]*len(self.nghToIdx)
+        self.rgj_idx = np.array([], dtype=int)
+        self.rgj_zones = np.array([], dtype=int)
 
     def __getitem__(self, idx:Union[str, int, tuple, list]) -> Union[QuadNode, List[QuadNode]]:
+
+        """
+        If list or tuple given, then neighbors considered. Else, children will be considered.
+        """
 
         if isinstance(idx, (list, tuple)):
             n = len(idx)

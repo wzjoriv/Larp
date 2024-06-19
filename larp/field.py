@@ -565,7 +565,7 @@ class PotentialField():
         n = len(points)
         idxs = np.array(idxs, dtype=int)
         
-        evals = np.ones(n, dtype=float)
+        evals = np.ones(n, dtype=points[0].dtype)
         for idx in set(idxs):
             select = idx == idxs
             evals[select] = self.rgjs[idx].eval(points[select])

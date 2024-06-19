@@ -57,19 +57,21 @@ class QuadTree():
         zones[zone0_select] = 0
 
         if sum(zone0_select) < n_rgjs:
-            rgjs_idx = filter_idx[~zone0_select]
-            vectors = rep_vectors[~zone0_select]
+            not_zone0_select = ~zone0_select
+            rgjs_idx = filter_idx[not_zone0_select]
+            vectors = rep_vectors[not_zone0_select]
 
             vectors = vectors.reshape(-1, 2)
             uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
+            # TODO: Ensure squared distance is per rgj
             dist_sqr = self.field.squared_dist(center_point - uni_vectors*(size/np.sqrt(2)), filted_idx=rgjs_idx).ravel()
 
-            zones[~zone0_select] = np.digitize(dist_sqr, self.__zones_rad_ln, right=True) + 1
+            zones[not_zone0_select] = np.digitize(dist_sqr, self.__zones_rad_ln, right=True) + 1
 
         return zones, rep_vectors, refs_idxs
     
-    def __build__(self, center_point:Point, size:float, filter_idx:np.ndarray, aggressive=False) -> QuadNode:
+    def __build__(self, center_point:Point, size:float, filter_idx:np.ndarray, conservative=False) -> QuadNode:
          
         quad = QuadNode(center_point=center_point, size=size)
         filter_n = len(filter_idx)
@@ -92,7 +94,7 @@ class QuadTree():
                 # stop subdividing if size is too small or the active zones are too far away
                 self.mark_leaf(quad)
                 return quad
-            if not aggressive and quad.boundary_zone > 0:
+            if conservative and quad.boundary_zone > 0:
                 # stop subdiving if sphere does not leave zone
                 lower_range = self.ZONEToMinRANGE[quad.boundary_zone]
 
@@ -107,17 +109,17 @@ class QuadTree():
                     return quad
 
         size4 = size2/2.0
-        quad['tl'] = self.__build__(center_point + np.array([-size4, size4]), size2, quad.rgj_idx, aggressive=aggressive)
-        quad['tr'] = self.__build__(center_point + np.array([ size4, size4]), size2, quad.rgj_idx, aggressive=aggressive)
-        quad['bl'] = self.__build__(center_point + np.array([-size4,-size4]), size2, quad.rgj_idx, aggressive=aggressive)
-        quad['br'] = self.__build__(center_point + np.array([ size4,-size4]), size2, quad.rgj_idx, aggressive=aggressive)
+        quad['tl'] = self.__build__(center_point + np.array([-size4, size4]), size2, quad.rgj_idx, conservative=conservative)
+        quad['tr'] = self.__build__(center_point + np.array([ size4, size4]), size2, quad.rgj_idx, conservative=conservative)
+        quad['bl'] = self.__build__(center_point + np.array([-size4,-size4]), size2, quad.rgj_idx, conservative=conservative)
+        quad['br'] = self.__build__(center_point + np.array([ size4,-size4]), size2, quad.rgj_idx, conservative=conservative)
 
         return quad
 
-    def build(self, aggressive=False) -> QuadNode:
+    def build(self, conservative=True) -> QuadNode:
         self.leaves:Set[QuadNode] = set()
         
-        self.root = self.__build__(self.field.center_point, self.size, np.arange(len(self.field)), aggressive=aggressive)
+        self.root = self.__build__(self.field.center_point, self.size, np.arange(len(self.field)), conservative=conservative)
         return self.root
     
     def to_boundary_lines_collection(self, margin=0.1) -> List[np.ndarray]:

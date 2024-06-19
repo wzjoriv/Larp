@@ -87,7 +87,7 @@ class HotLoader(object):
                             rootquad[child] = self.quadtree.__build__(rootquad[child].center_point,
                                                                     rootquad[child].size,
                                                                     filter_idx=rootquad[child].rgj_idx,
-                                                                    aggressive=True)
+                                                                    conservative=False)
                             new_leaves = set(self.quadtree.search_leaves(rootquad[child]))
                             graph_active_quad_new.update(new_leaves)
                         else:

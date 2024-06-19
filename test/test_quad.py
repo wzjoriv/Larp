@@ -22,9 +22,9 @@ def test_quad_on_simple_pf():
     field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   build_tree=True,
-                                  minimum_sector_length=2,
-                                  maximum_sector_length=5,
-                                  boundaries=np.arange(0.2, 0.8, 0.2))
+                                  minimum_length_limit=2,
+                                  maximum_length_limit=5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2))
     
     quadtree.build()
 
@@ -60,8 +60,8 @@ def test_rgj_idx_passed():
 
     field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  minimum_sector_length=5,
-                                  boundaries=np.arange(0.2, 0.8, 0.2),
+                                  minimum_length_limit=5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
@@ -101,8 +101,8 @@ def test_leaf_none_children():
 
     field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  minimum_sector_length=5,
-                                  boundaries=np.arange(0.2, 0.8, 0.2),
+                                  minimum_length_limit=5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
 
     for quad in quadtree.leaves:

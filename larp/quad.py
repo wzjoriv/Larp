@@ -19,22 +19,22 @@ def __list_to_dict__(array:Union[np.ndarray, List[float]]):
 class QuadTree():
 
     def __init__(self, field: PotentialField,
-                 minimum_sector_length:float = 5.0,
-                 maximum_sector_length:float = np.Inf,
-                 boundaries:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
+                 minimum_length_limit:float = 5.0,
+                 maximum_length_limit:float = np.Inf,
+                 edge_bounds:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
                  size:Optional[float] = None,
                  build_tree:bool = False) -> None:
         
         self.field = field
-        self.min_sector_size = minimum_sector_length
-        self.max_sector_size = maximum_sector_length
+        self.min_sector_size = minimum_length_limit
+        self.max_sector_size = maximum_length_limit
         self.size = size if size is not None else np.max(self.field.size)
 
-        self.boundaries = np.sort(np.array(boundaries))[::-1]
-        self.n_zones = len(self.boundaries) + 1
-        self.__zones_rad_ln = -np.log(self.boundaries)
-        self.ZONEToMaxRANGE = np.concatenate([[1.0, 1.0], self.boundaries])
-        self.ZONEToMinRANGE = np.concatenate([self.boundaries[0:1], self.boundaries, [0.0]])
+        self.edge_bounds = np.sort(np.array(edge_bounds))[::-1]
+        self.n_zones = len(self.edge_bounds) + 1
+        self.__zones_rad_ln = -np.log(self.edge_bounds)
+        self.ZONEToMaxRANGE = np.concatenate([[1.0, 1.0], self.edge_bounds])
+        self.ZONEToMinRANGE = np.concatenate([self.edge_bounds[0:1], self.edge_bounds, [0.0]])
 
         self.root = None
         self.leaves:Set[QuadNode] = set()
@@ -139,10 +139,7 @@ class QuadTree():
 
         def subdivide(x:Point, quad:QuadNode) -> List[QuadNode]:
             if quad is None or quad.leaf:
-                print(quad.boundary_zone)
                 return quad
-            
-            print(quad.boundary_zone)
 
             direction = x - quad.center_point
             if direction[1] >= 0.0:

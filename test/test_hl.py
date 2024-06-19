@@ -21,8 +21,8 @@ def test_add_remove_field():
 
     field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  minimum_sector_length=5,
-                                  boundaries=np.arange(0.2, 0.8, 0.2),
+                                  minimum_length_limit=5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     
@@ -54,8 +54,8 @@ def test_add_rgj_idx_passed():
 
     field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  minimum_sector_length=5,
-                                  boundaries=np.arange(0.2, 0.8, 0.2),
+                                  minimum_length_limit=5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     
@@ -102,8 +102,8 @@ def test_remove_rgj_idx_passed():
 
     field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  minimum_sector_length=1,
-                                  boundaries=np.arange(0.2, 0.8, 0.2),
+                                  minimum_length_limit=0.5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     
@@ -146,8 +146,8 @@ def test_add_leaf_none_children():
 
     field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  minimum_sector_length=5,
-                                  boundaries=np.arange(0.2, 0.8, 0.2),
+                                  minimum_length_limit=5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     
@@ -189,8 +189,8 @@ def test_remove_leaf_none_children():
 
     field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
-                                  minimum_sector_length=1,
-                                  boundaries=np.arange(0.2, 0.8, 0.2),
+                                  minimum_length_limit=1,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     graph = larp.graph.RouteGraph(quadtree=quadtree)
     

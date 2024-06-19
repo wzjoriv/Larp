@@ -22,8 +22,8 @@ class HotLoader(object):
         new_field.center_point = self.field.center_point
         new_field.size = self.field.size
         new_qtree = QuadTree(new_field,
-                             minimum_sector_length=self.quadtree.min_sector_size,
-                             boundaries=self.quadtree.boundaries,
+                             minimum_length_limit=self.quadtree.min_sector_size,
+                             edge_bounds=self.quadtree.edge_bounds,
                              size=self.quadtree.size,
                              build_tree=True)
         
@@ -129,10 +129,11 @@ class HotLoader(object):
         search_field.center_point = self.field.center_point
         search_field.size = self.field.size
         search_qtree = QuadTree(search_field,
-                                minimum_sector_length=self.quadtree.min_sector_size,
-                                boundaries=self.quadtree.boundaries,
+                                minimum_length_limit=self.quadtree.min_sector_size,
+                                edge_bounds=self.quadtree.edge_bounds,
                                 size=self.quadtree.size,
-                                build_tree=True)
+                                build_tree=False)
+        search_qtree.build(conservative=False)
         
         # Remove rgj from field
         self.field.delRGJ(idxs)
@@ -144,8 +145,16 @@ class HotLoader(object):
         def update_rgj_index(quad:QuadNode):
             original_idx = quad.rgj_idx.copy()
             for idx in idxs:
-                mask = original_idx >= idx
+
+                mask = original_idx > idx
                 quad.rgj_idx[mask] = quad.rgj_idx[mask] - 1
+
+                mask = original_idx == idx # To account for conservative approaches and vice versa
+                if any(mask):
+                    inv_mask = ~mask 
+                    quad.rgj_idx = quad.rgj_idx[inv_mask] 
+                    quad.rgj_zones = quad.rgj_zones[inv_mask]
+                    quad.boundary_zone = min(quad.rgj_zones) if len(quad.rgj_idx) > 0 else self.quadtree.n_zones
 
         def recursive_update_rgj_index(quad:QuadNode):
             if quad is None or not len(quad.rgj_idx) or all(quad.rgj_idx < min_idx): return
@@ -161,7 +170,7 @@ class HotLoader(object):
             # check for none because some farthest quad may be mergeable and to update zones
             # If none, no quad that is in delete tree is inside rootquad branch
 
-            if delquad is None:
+            if delquad is None or rootquad is None:
                 recursive_update_rgj_index(rootquad)
                 return False
             
@@ -171,6 +180,8 @@ class HotLoader(object):
             rootquad.rgj_zones = rootquad.rgj_zones[mask] # Check
             if delquad.boundary_zone == rootquad.boundary_zone:
                 rootquad.boundary_zone = min(rootquad.rgj_zones) if len(rootquad.rgj_idx) > 0 else self.quadtree.n_zones
+            elif not len(rootquad.rgj_idx):
+                rootquad.boundary_zone = self.quadtree.n_zones
 
             # Update indexes in quad
             update_rgj_index(rootquad)
@@ -183,13 +194,14 @@ class HotLoader(object):
 
                 #If maximum size not violated, merge
                 if rootquad.size <= self.quadtree.max_sector_size and \
-                (rootquad['tl'].boundary_zone == rootquad['tr'].boundary_zone == rootquad['bl'].boundary_zone == rootquad['br'].boundary_zone):
+                (rootquad['tl'].boundary_zone == rootquad['tr'].boundary_zone == rootquad['bl'].boundary_zone == rootquad['br'].boundary_zone == rootquad.boundary_zone == self.quadtree.n_zones):
                     old_leaves = set(self.quadtree.search_leaves(rootquad))
                     self.quadtree.leaves = self.quadtree.leaves - old_leaves
                     graph_active_quad_old.update(old_leaves) # mark quad to update in graph
 
                     del rootquad.children
                     rootquad.children = [None]*len(rootquad.chdToIdx)
+                    rootquad.neighbors = [None]*len(rootquad.nghToIdx)
                     self.quadtree.mark_leaf(rootquad)
 
                     graph_active_quad_new.add(rootquad) # mark quad to update in graph

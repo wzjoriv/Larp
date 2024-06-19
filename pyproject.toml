@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "larp"
-version = "0.1.0"
+version = "0.2.0"
 authors = [
   { name="Josue N Rivera", email="josue.n.rivera@outlook.com" },
 ]
-description = "Larp (/lärp/): Last-Mile Aerial Routing Path Planning"
+description = "Larp (/lärp/): Last-Mile Restrictive Path Planning "
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = ['numpy']

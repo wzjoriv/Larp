@@ -1,6 +1,6 @@
 from collections import defaultdict
 import heapq
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
@@ -10,6 +10,8 @@ from larp.types import FieldScaleTransform, Point, RoutingAlgorithmStr
 """
 Author: Josue N Rivera
 """
+
+RoutingAlgorithm = Callable[[QuadNode, QuadNode, FieldScaleTransform, dict], Optional[List[QuadNode]]]
 
 class Graph(object):
     """ Graph data structure, undirected by default. 
@@ -42,12 +44,12 @@ class Graph(object):
         self._graph[node1].update(nodes)
         if not self._directed and not overwrite_directed:
             for node2 in nodes:
-                self.add(node1, node2)
+                self._graph[node2].add(node1)
 
     def remove(self, node):
         """ Remove all references to node """
 
-        for n, cxns in self._graph.items():  # python3: items(); python2: iteritems()
+        for _, cxns in self._graph.items():  # python3: items(); python2: iteritems()
             try:
                 cxns.remove(node)
             except KeyError:
@@ -104,8 +106,8 @@ class RouteGraph(Graph):
         'l':  ['tr', 'br']
     }
 
-    def __init__(self, quad_tree:QuadTree, directed:bool=False, build_graph:bool=True):
-        self.quad_tree = quad_tree
+    def __init__(self, quadtree:QuadTree, directed:bool=False, build_graph:bool=True):
+        self.quadtree = quadtree
         super().__init__(directed=directed)
 
         self.routing_algs = defaultdict(lambda: self.find_path_A_star)
@@ -115,7 +117,10 @@ class RouteGraph(Graph):
         if build_graph:
             self.build()
 
-    def __fill_shallow_neighs__(self):
+    def add_routing_algorithm(self, name:str, algorithm:RoutingAlgorithm):
+        self.routing_algs[name.lower()] = algorithm
+
+    def __fill_shallow_neighs__(self, root:Optional[QuadNode] = None):
 
         def outer_edge_fill(quad:QuadNode, child = 'tl', side = 't'):
             child_quad = quad[child]
@@ -165,9 +170,12 @@ class RouteGraph(Graph):
             for quad_loc in [qtl, qtr, qbl, qbr]:
                 dfs(quad_loc)
         
-        dfs(self.quad_tree.root)
+        if root is None:
+            root = self.quadtree.root
 
-    def __build_graph__(self):
+        dfs(root)
+
+    def __build_graph__(self, leaves:Optional[List[QuadNode]] = None, overwrite_directed=True):
 
         def recursive_search(shallow_neigh:QuadNode, directions:List[str] = ['tl']) -> List[QuadNode]:
             if shallow_neigh is None: return []
@@ -180,10 +188,12 @@ class RouteGraph(Graph):
 
             return neigh_list
 
-        for quad in self.quad_tree.leaves:
+        if leaves is None:
+            leaves = self.quadtree.leaves
+        for quad in leaves:
             for neigh_str in ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l']:
                 adjacent_neighs = recursive_search(quad[[neigh_str]][0], self.NeighOuterEdges[neigh_str])
-                self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=True)
+                self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=overwrite_directed)
 
     def build(self):
         self.__fill_shallow_neighs__()
@@ -249,7 +259,7 @@ class RouteGraph(Graph):
 
         return None
     
-    def find_path_dijkstra(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x):
+    def find_path_dijkstra(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x)-> Optional[List[QuadNode]]:
         open_set = []
         heapq.heappush(open_set, (0, start_node))
 
@@ -277,14 +287,14 @@ class RouteGraph(Graph):
 
     def find_route(self, pointA:Point, pointB:Point, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*'):
         
-        quads = self.quad_tree.find_quads([pointA, pointB])
+        quads = self.quadtree.find_quads([pointA, pointB])
         return self.find_path(quads[0], quads[1], scale_tranform=scale_tranform, alg=alg)
 
     def find_many_routes(self, pointsA:Point, pointsB:Point, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*'):
         pointsA, pointsB = np.array(pointsA), np.array(pointsB)
         n = len(pointsA)
 
-        quads = self.quad_tree.find_quads(np.concatenate([pointsA, pointsB], axis=0))
+        quads = self.quadtree.find_quads(np.concatenate([pointsA, pointsB], axis=0))
 
         return [self.find_path(quads[idx], quads[n+idx], scale_tranform=scale_tranform, alg=alg) for idx in range(n)]
     

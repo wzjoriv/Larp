@@ -22,10 +22,10 @@ def test_quad_on_simple_pf():
     field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   build_tree=True,
-                                  minimum_sector_length=5,
-                                  boundaries=np.arange(0.2, 0.8, 0.2))
+                                  minimum_length_limit=5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2))
     quadtree.build()
-    routing_graph = larp.graph.RouteGraph(quad_tree=quadtree)
+    routing_graph = larp.graph.RouteGraph(quadtree=quadtree)
     routing_graph.find_route((45, 45), (60, 65), alg='A*')
     route = routing_graph.find_route((45, 45), (60, 65), alg='Dijkstra')
 

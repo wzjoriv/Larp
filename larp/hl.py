@@ -1,9 +1,10 @@
 
 from typing import List, Optional, Tuple, Union
+import warnings
 import numpy as np
 from larp.field import PotentialField, RGJGeometry
 from larp.quad import QuadTree, QuadNode
-from larp.graph import RouteGraph
+from larp.network import RoutingNetwork
 
 """
 Author: Josue N Rivera
@@ -11,12 +12,17 @@ Author: Josue N Rivera
 
 class HotLoader(object):
 
-    def __init__(self, field:PotentialField, quadtree:QuadTree, graph:RouteGraph):
+    def __init__(self, field:PotentialField, quadtree:QuadTree, network:RoutingNetwork):
         self.field = field
         self.quadtree = quadtree
-        self.graph = graph
+        self.quadtree.conservative = False
+        self.network = network
 
     def addField(self, new_field:PotentialField) -> List[int]:
+        if self.quadtree.conservative:
+            warnings.warn("Quadtree made not conservative")
+
+        self.quadtree.conservative = False
         
         new_field.reload_center_point(False)
         new_field.center_point = self.field.center_point
@@ -52,7 +58,7 @@ class HotLoader(object):
             rootquad[child] = newquad[child]
             new_leaves = set(self.quadtree.search_leaves(rootquad[child]))
             self.quadtree.leaves.update(new_leaves)
-            graph_active_quad_new.update(new_leaves) # mark quad to update in graph
+            graph_active_quad_new.update(new_leaves) # mark quad to update in network
 
         def update_quad(rootquad:QuadNode, newquad:QuadNode) -> bool:
             """
@@ -63,8 +69,8 @@ class HotLoader(object):
             if newquad is None or newquad.boundary_zone == self.quadtree.n_zones: 
                 return False
             
-            if rootquad is None:
-                return True
+            #if rootquad is None:
+            #    return True
             
             # update info
             if newquad.boundary_zone < rootquad.boundary_zone:
@@ -81,13 +87,12 @@ class HotLoader(object):
                     if rootquad[child] is not None:
                         old_leaves = set(self.quadtree.search_leaves(rootquad[child]))
                         self.quadtree.leaves = self.quadtree.leaves - old_leaves
-                        graph_active_quad_old.update(old_leaves) # mark quad to update in graph
+                        graph_active_quad_old.update(old_leaves) # mark quad to update in network
 
                         if (rootquad[child].rgj_idx < n_original).any(): # if original branch has rgjs
                             rootquad[child] = self.quadtree.__build__(rootquad[child].center_point,
                                                                     rootquad[child].size,
-                                                                    filter_idx=rootquad[child].rgj_idx,
-                                                                    conservative=False)
+                                                                    filter_idx=rootquad[child].rgj_idx)
                             new_leaves = set(self.quadtree.search_leaves(rootquad[child]))
                             graph_active_quad_new.update(new_leaves)
                         else:
@@ -101,12 +106,12 @@ class HotLoader(object):
 
         # delete old reference
         for node in graph_active_quad_old:
-            self.graph.remove(node)
+            self.network.remove(node)
             del node
 
         # add new references
-        self.graph.__fill_shallow_neighs__()
-        self.graph.__build_graph__(graph_active_quad_new, overwrite_directed=False)
+        self.network.__fill_shallow_neighs__()
+        self.network.__build_graph__(graph_active_quad_new, overwrite_directed=False)
 
         return np.arange(n_original, len(self.field))
 
@@ -118,6 +123,10 @@ class HotLoader(object):
         return self.addField(PotentialField([rgj]))[0]
 
     def removeRGJ(self, idxs:Union[int, List[int]], pop_field=False, pop_tree=False) -> Optional[Union[PotentialField, QuadTree, Tuple[PotentialField, QuadTree]]]:
+        if self.quadtree.conservative:
+            warnings.warn("Quadtree made not conservative")
+
+        self.quadtree.conservative = False
 
         idxs = np.unique([idxs] if idxs is int else idxs)
         idxs.sort()
@@ -133,7 +142,7 @@ class HotLoader(object):
                                 edge_bounds=self.quadtree.edge_bounds,
                                 size=self.quadtree.size,
                                 build_tree=False)
-        search_qtree.build(conservative=False)
+        search_qtree.build()
         
         # Remove rgj from field
         self.field.delRGJ(idxs)
@@ -197,14 +206,14 @@ class HotLoader(object):
                 (rootquad['tl'].boundary_zone == rootquad['tr'].boundary_zone == rootquad['bl'].boundary_zone == rootquad['br'].boundary_zone == rootquad.boundary_zone == self.quadtree.n_zones):
                     old_leaves = set(self.quadtree.search_leaves(rootquad))
                     self.quadtree.leaves = self.quadtree.leaves - old_leaves
-                    graph_active_quad_old.update(old_leaves) # mark quad to update in graph
+                    graph_active_quad_old.update(old_leaves) # mark quad to update in network
 
                     del rootquad.children
                     rootquad.children = [None]*len(rootquad.chdToIdx)
                     rootquad.neighbors = [None]*len(rootquad.nghToIdx)
                     self.quadtree.mark_leaf(rootquad)
 
-                    graph_active_quad_new.add(rootquad) # mark quad to update in graph
+                    graph_active_quad_new.add(rootquad) # mark quad to update in network
                     return True
                 
             return False
@@ -213,12 +222,12 @@ class HotLoader(object):
 
         # delete old reference
         for node in graph_active_quad_old:
-           self.graph.remove(node)
+           self.network.remove(node)
            del node
 
         # add new references
-        self.graph.__fill_shallow_neighs__()
-        self.graph.__build_graph__(graph_active_quad_new, overwrite_directed=False)
+        self.network.__fill_shallow_neighs__()
+        self.network.__build_graph__(graph_active_quad_new, overwrite_directed=False)
 
         if pop_field or pop_tree:
             if pop_field and not pop_tree:

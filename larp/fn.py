@@ -24,14 +24,19 @@ def route_distance(route:Union[np.ndarray, List[Point]], return_joints = False) 
 
 def project_route(route:Union[List[Point], np.ndarray], from_crs="EPSG:3857", to_crs="EPSG:4326") -> np.ndarray:
 
+    return project_points(points=route, from_crs=from_crs, to_crs=to_crs)
+
+def project_points(points:Union[Point, List[Point], np.ndarray], from_crs="EPSG:3857", to_crs="EPSG:4326") -> np.ndarray:
+
     from_crs = CRS(from_crs)
     to_crs = CRS(to_crs)
 
     proj = Transformer.from_crs(crs_from=from_crs, crs_to=to_crs)
-    route = np.array(route)
+    
+    points = np.array(points)
+    points = np.expand_dims(points, axis=0) if points.ndim < 2 else points
 
-    return np.stack(proj.transform(route[:,0], route[:, 1]), axis=1)
-
+    return np.stack(proj.transform(points[:,0], points[:, 1]), axis=1)
 
 def interpolate_along_route(route:Union[List[Point], np.ndarray], step=1e-3, n=0, return_step_n = False) -> Union[np.ndarray, Tuple[np.ndarray, float, int]]:
     """

@@ -24,9 +24,9 @@ def test_add_remove_field():
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
-    graph = larp.graph.RouteGraph(quadtree=quadtree)
+    network = larp.network.RoutingNetwork(quadtree=quadtree)
     
-    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, graph=graph)
+    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, network=network)
     added_idx = loader.addRGJ(larp.PointRGJ((55, 55), repulsion=[[10, 0], [0, 10]]))
 
     loader.removeRGJ(added_idx)
@@ -57,9 +57,9 @@ def test_add_rgj_idx_passed():
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
-    graph = larp.graph.RouteGraph(quadtree=quadtree)
+    network = larp.network.RoutingNetwork(quadtree=quadtree)
     
-    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, graph=graph)
+    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, network=network)
     loader.addRGJ(larp.PointRGJ((55, 55), repulsion=[[25, 0], [0, 25]]))
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
@@ -105,9 +105,9 @@ def test_remove_rgj_idx_passed():
                                   minimum_length_limit=0.5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
-    graph = larp.graph.RouteGraph(quadtree=quadtree)
+    network = larp.network.RoutingNetwork(quadtree=quadtree)
     
-    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, graph=graph)
+    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, network=network)
     loader.removeRGJ([2, 3])
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
@@ -149,9 +149,9 @@ def test_add_leaf_none_children():
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
-    graph = larp.graph.RouteGraph(quadtree=quadtree)
+    network = larp.network.RoutingNetwork(quadtree=quadtree)
     
-    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, graph=graph)
+    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, network=network)
     loader.addRGJ(larp.PointRGJ((55, 55), repulsion=[[25, 0], [0, 25]]))
 
     for quad in quadtree.leaves:
@@ -192,9 +192,9 @@ def test_remove_leaf_none_children():
                                   minimum_length_limit=1,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
-    graph = larp.graph.RouteGraph(quadtree=quadtree)
+    network = larp.network.RoutingNetwork(quadtree=quadtree)
     
-    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, graph=graph)
+    loader = larp.hl.HotLoader(field=field, quadtree=quadtree, network=network)
     loader.removeRGJ([2, 3])
 
     for quad in quadtree.leaves:

@@ -1,3 +1,3 @@
 from larp.field import *
 from larp.fn import *
-import larp.quad as quad, larp.graph as graph, larp.hl as hl
+import larp.quad as quad, larp.network as network, larp.hl as hl

@@ -1,6 +1,5 @@
-from multiprocessing import Pool
 from typing import List, Optional, Tuple, Union
-from itertools import compress
+import warnings
 
 import numpy as np
 import larp.fn as lpf
@@ -115,11 +114,7 @@ class LineStringRGJ(RGJGeometry):
         return x - g
     
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
-        if self.lines_n > 50:
-            p = Pool(5)
-            vectors:np.ndarray = p.map(self.__repulsion_vector_one_line__, [(x, line) for line in self.points_in_line_pair])
-        else:
-            vectors:np.ndarray = [self.__repulsion_vector_one_line__((x, line)) for line in self.points_in_line_pair]
+        vectors:np.ndarray = [self.__repulsion_vector_one_line__((x, line)) for line in self.points_in_line_pair]
 
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
@@ -245,11 +240,7 @@ class MultiRectangleRGJ(RGJGeometry):
         return 0.5*np.sign(x-rect[0])*(np.abs(x-rect[0]) + np.abs(x-rect[1]) - np.abs(rect[0] - rect[1]))
     
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
-        if self.rect_n > 50:
-            p = Pool(5)
-            vectors:np.ndarray = p.map(self.__repulsion_vector_one_rect__, [(x, rect) for rect in self.coordinates])
-        else:
-            vectors:np.ndarray = [self.__repulsion_vector_one_rect__((x, rect)) for rect in self.coordinates]
+        vectors:np.ndarray = [self.__repulsion_vector_one_rect__((x, rect)) for rect in self.coordinates]
 
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
@@ -293,11 +284,7 @@ class MultiEllipseRGJ(RGJGeometry):
         return np.maximum(1 - 1/den, 0)*x_d_xh
     
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
-        if self.ellipse_n > 50:
-            p = Pool(5)
-            vectors:np.ndarray = p.map(self.__repulsion_vector_one_ellipse__, [(x, parameters[0], parameters[1]) for parameters in self.parameters])
-        else:
-            vectors:np.ndarray = [self.__repulsion_vector_one_ellipse__((x, parameters[0], parameters[1])) for parameters in self.parameters]
+        vectors:np.ndarray = [self.__repulsion_vector_one_ellipse__((x, parameters[0], parameters[1])) for parameters in self.parameters]
 
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
@@ -353,11 +340,7 @@ class GeometryCollectionRGJ(RGJGeometry):
     
     def repulsion_vector(self, x:np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
 
-        if self.rgjs_n > 50:
-            p = Pool(5)
-            vectors:np.ndarray = p.map(lambda rgj: rgj.repulsion_vector(x, min_dist_select=min_dist_select, **kwargs).reshape(-1, 2), self.rgjs)
-        else:
-            vectors:np.ndarray = [rgj.repulsion_vector(x, min_dist_select=min_dist_select, **kwargs).reshape(-1, 2) for rgj in self.rgjs]
+        vectors:np.ndarray = [rgj.repulsion_vector(x, min_dist_select=min_dist_select, **kwargs).reshape(-1, 2) for rgj in self.rgjs]
 
         vectors = np.stack(vectors, axis=0)
 
@@ -582,9 +565,20 @@ class PotentialField():
 
         return f_eval.sum()*step
     
+    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+        route = np.array(route)
+
+        points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
+        points = points if n <= 0 else points[:-1]
+
+        f_eval:np.ndarray = scale_transform(self.eval(points=points))
+
+        return f_eval.max()
+    
     def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, reference_idx = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         points = np.array(points)
         if not len(self):
+            warnings.warn("There are not any RGJs elements in the field")
             if reference_idx:
                 return points.sum(1)*np.Inf, -np.ones_like(points.sum(1))
             return points.sum(1)*np.Inf
@@ -597,11 +591,18 @@ class PotentialField():
         return np.min(dists, axis=1)
     
     def squared_dist_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
-        if len(points) != len(idxs):
-            raise RuntimeError("The number of points doesn't match the number of indexes")
+
+        idxs = [] if idxs is None else idxs
+        n = len(points)
+
+        if n != len(idxs):
+            if not len(idxs):
+                raise RuntimeError("The number of points doesn't match the number of indexes")
+            else:
+                warnings.warn("The number of points doesn't match the number of indexes. Each point matched with each rgj")
+                idxs = np.arange(n)
         
         points = np.array(points)
-        n = len(points)
         idxs = np.array(idxs, dtype=int)
         
         dists = np.ones(n, dtype=points[0].dtype)
@@ -616,6 +617,7 @@ class PotentialField():
         rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
 
         if not len(self):
+            warnings.warn("There are not any RGJs elements in the field")
             return np.ones((len(points), len(rgjs)))*np.Inf
 
         return np.stack([rgj.squared_dist(points, scaled=scaled, inverted=inverted) for rgj in rgjs], axis=1)

@@ -214,7 +214,7 @@ class MultiLineStringRGJ(LineStringRGJ):
         self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
 
     def set_coordinates(self, new_coords):
-        super().set_coordinates([np.array(coords) for coords in new_coords])
+        self.coordinates = [np.array(coords) for coords in new_coords]
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
         self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
 

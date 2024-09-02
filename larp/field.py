@@ -22,6 +22,7 @@ class RGJGeometry():
         self.eye_repulsion = np.eye(len(self.repulsion))
         self.properties = {} if properties is None else properties
         self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
+        self.bbox = np.array([self.coordinates.reshape(-1, 2).min(0), self.coordinates.reshape(-1, 2).max(0)])
 
     def set_coordinates(self, new_coords):
         self.coordinates = np.array(new_coords)
@@ -48,6 +49,15 @@ class RGJGeometry():
         coords = np.reshape(self.coordinates, (-1, 2))
 
         return (coords.min(0) + coords.max(0))/2.0
+    
+    def in_bbox(self, x:Point) -> bool:
+
+        bboxes = self.bbox.reshape((-1, 2))
+        for i in range(0, len(bboxes), 2):
+            if all(x >= bboxes[i]) and all(x <= bboxes[i+1]):
+                return True
+
+        return False
 
     def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, **kwargs) -> np.ndarray:
         nvector = self.repulsion_vector(x, min_dist_select = True)
@@ -152,6 +162,11 @@ class EllipseRGJ(RGJGeometry):
         self.shape = shape
         self.inv_shape = np.linalg.inv(self.shape)
 
+        eval, evec  = np.linalg.eig(self.shape)
+        vectors = evec * np.sqrt(eval) @ np.linalg.inv(evec)
+        bounds = np.concatenate([self.coordinates + vectors, self.coordinates - vectors])
+        self.bbox = np.array([bounds.min(0), bounds.max(0)])
+
     def set_shape(self, new_shape):
         self.shape = new_shape
         self.inv_shape = np.linalg.inv(self.shape)
@@ -176,6 +191,7 @@ class MultiPointRGJ(RGJGeometry):
 
     def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion)
+        self.bbox = self.coordinates.copy()
 
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
         x = np.array(x)
@@ -212,6 +228,8 @@ class MultiLineStringRGJ(LineStringRGJ):
         
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
         self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
+        
+        self.bbox = np.array([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
 
     def set_coordinates(self, new_coords):
         self.coordinates = [np.array(coords) for coords in new_coords]
@@ -230,6 +248,7 @@ class MultiRectangleRGJ(RGJGeometry):
     def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
         self.rect_n = len(self.coordinates)
+        self.bbox = np.array([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
         
     def set_coordinates(self, new_coords):
         super().set_coordinates(new_coords)
@@ -263,6 +282,16 @@ class MultiEllipseRGJ(RGJGeometry):
         self.inv_shape = np.linalg.inv(self.shape)
         self.parameters = list(zip(self.coordinates, self.inv_shape))
         self.ellipse_n = len(self.coordinates)
+
+        self.bbox = []
+
+        for sp in self.shape:
+            eval, evec  = np.linalg.eig(sp)
+            vectors = evec * np.sqrt(eval) @ np.linalg.inv(evec)
+            bounds = np.concatenate([self.coordinates + vectors, self.coordinates - vectors])
+            self.bbox.append(np.array([bounds.min(0), bounds.max(0)]))
+
+        self.bbox = np.array(self.bbox)
 
     def set_coordinates(self, new_coords):
         super().set_coordinates(new_coords)
@@ -315,6 +344,9 @@ class GeometryCollectionRGJ(RGJGeometry):
     def set_repulsion(self, new_repulsion):
         for rgj in self.rgjs:
             rgj.set_repulsion(new_repulsion)
+
+    def in_bbox(self, x:Point) -> bool:
+        return any([rgj.in_bbox(x) for rgj in self.rgjs])
 
     def get_dist_matrix(self, scaled=True, inverted=True) -> List[np.ndarray]:
 
@@ -406,7 +438,7 @@ class PotentialField():
             self.size = np.array([suggest_size]*2) if self.size is None else self.size
         else:
             self.__reload_center = False
-            coords = np.reshape(np.array([rgj.get_center_point() for rgj in self.rgjs]), (-1, 2))
+            coords = np.concatenate([rgj.bbox.reshape((-1, 2)) for rgj in self.rgjs])
             bbmin, bbmax = coords.min(0), coords.max(0)
             suggest_size = max(np.abs(np.concatenate([bbmin-self.center_point, bbmax-self.center_point], axis=0)))*2
 
@@ -495,6 +527,14 @@ class PotentialField():
             rgeojson["bbox"] = extent[::2] + extent[1::2]
 
         return rgeojson
+    
+    def in_bbox(self, point:Point) -> bool:
+        point = np.array(point)
+        return any([rgj.in_bbox(point) for rgj in self.rgjs])
+    
+    def find_bbox(self, point:Point) -> np.ndarray:
+        point = np.array(point)
+        return np.nonzero([rgj.in_bbox(point) for rgj in self.rgjs])[0]
     
     def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, reference_idx = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
         points = np.array(points)

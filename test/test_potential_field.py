@@ -96,7 +96,38 @@ def test_gradient():
     
     grad = field.gradient([(11, 10), (20, 11), (32, 31), (81, 82)])
 
+def test_bbox():
+    rgjs = [
+        {
+            "type": "Point",
+            "coordinates": [50, 50], 
+            "repulsion": [[1, 0], [0, 1]]
+        },
+        {
+            "type": "LineString",
+            "coordinates": [[10, 10], [10, 20], [20, 20], [20, 10]], 
+            "repulsion": [[2, 0], [0, 2]]
+        },
+        {
+            "type": "Rectangle",
+            "coordinates": [[30, 30], [25, 25]], 
+            "repulsion": [[1, 0], [0, 1]]
+        },
+        {
+            "type": "Ellipse",
+            "coordinates": [80, 80], 
+            "repulsion": [[4, 0], [0, 4]],
+            "shape": [[2, 0], [0, 2]]
+        }
+    ]
+
+    field = larp.PotentialField(size=(100, 100), rgjs=rgjs)
+
+    assert field.rgjs[1].in_bbox([15, 15]),   "Error determining bbox for linestring"
+    assert field.find_bbox([81, 80])[0] == 3, "Error finding bbox for ellipse"
+    assert field.find_bbox([15, 15])[0] == 1, "Error finding bbox for linestring"
 
 test_eval()
 test_area_estimation()
 test_gradient()
+test_bbox()

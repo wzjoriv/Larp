@@ -26,6 +26,7 @@ class RGJGeometry():
 
     def set_coordinates(self, new_coords):
         self.coordinates = np.array(new_coords)
+        self.bbox = np.array([self.coordinates.reshape(-1, 2).min(0), self.coordinates.reshape(-1, 2).max(0)])
 
     def set_repulsion(self, new_repulsion):
         self.repulsion = np.array(new_repulsion)
@@ -167,6 +168,14 @@ class EllipseRGJ(RGJGeometry):
         bounds = np.concatenate([self.coordinates + vectors, self.coordinates - vectors])
         self.bbox = np.array([bounds.min(0), bounds.max(0)])
 
+    def set_coordinates(self, new_coords):
+        super().set_coordinates(new_coords)
+
+        eval, evec  = np.linalg.eig(self.shape)
+        vectors = evec * np.sqrt(eval) @ np.linalg.inv(evec)
+        bounds = np.concatenate([self.coordinates + vectors, self.coordinates - vectors])
+        self.bbox = np.array([bounds.min(0), bounds.max(0)])
+
     def set_shape(self, new_shape):
         self.shape = new_shape
         self.inv_shape = np.linalg.inv(self.shape)
@@ -192,6 +201,9 @@ class MultiPointRGJ(RGJGeometry):
     def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion)
         self.bbox = self.coordinates.copy()
+
+    def in_bbox(self, x:Point) -> bool:
+        return any(self.bbox == x)
 
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
         x = np.array(x)
@@ -235,6 +247,7 @@ class MultiLineStringRGJ(LineStringRGJ):
         self.coordinates = [np.array(coords) for coords in new_coords]
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
         self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
+        self.bbox = np.array([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
 
     def get_center_point(self) -> np.ndarray:
 
@@ -297,6 +310,15 @@ class MultiEllipseRGJ(RGJGeometry):
         super().set_coordinates(new_coords)
         self.parameters = list(zip(self.coordinates, self.inv_shape))
         self.ellipse_n = len(self.coordinates)
+
+        self.bbox = []
+        for sp in self.shape:
+            eval, evec  = np.linalg.eig(sp)
+            vectors = evec * np.sqrt(eval) @ np.linalg.inv(evec)
+            bounds = np.concatenate([self.coordinates + vectors, self.coordinates - vectors])
+            self.bbox.append(np.array([bounds.min(0), bounds.max(0)]))
+
+        self.bbox = np.array(self.bbox)
 
     def set_shape(self, new_shape):
         self.shape = new_shape

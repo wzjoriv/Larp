@@ -22,11 +22,14 @@ class RGJGeometry():
         self.eye_repulsion = np.eye(len(self.repulsion))
         self.properties = {} if properties is None else properties
         self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
-        self.bbox = np.array([self.coordinates.reshape(-1, 2).min(0), self.coordinates.reshape(-1, 2).max(0)])
+        
+        bbox = self.coordinates.reshape(-1, 2)
+        self.bbox = np.array([bbox.min(0), bbox.max(0)])
 
     def set_coordinates(self, new_coords):
         self.coordinates = np.array(new_coords)
-        self.bbox = np.array([self.coordinates.reshape(-1, 2).min(0), self.coordinates.reshape(-1, 2).max(0)])
+        bbox = self.coordinates.reshape(-1, 2)
+        self.bbox = np.array([bbox.min(0), bbox.max(0)])
 
     def set_repulsion(self, new_repulsion):
         self.repulsion = np.array(new_repulsion)
@@ -240,14 +243,14 @@ class MultiLineStringRGJ(LineStringRGJ):
         
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
         self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
-        
-        self.bbox = np.array([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
+
+        self.bbox = np.concatenate([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
 
     def set_coordinates(self, new_coords):
         self.coordinates = [np.array(coords) for coords in new_coords]
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
         self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
-        self.bbox = np.array([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
+        self.bbox = np.concatenate([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
 
     def get_center_point(self) -> np.ndarray:
 
@@ -360,6 +363,9 @@ class GeometryCollectionRGJ(RGJGeometry):
         self.inv_repulsions = self.get_dist_matrix(scaled=True, inverted=True)
         self.grad_matrixes = np.array([rgj.grad_matrix for rgj in self.rgjs])
 
+        bbox = np.concatenate([rgj.bbox for rgj in self.rgjs], 0).reshape(-1, 2)
+        self.bbox = np.array([bbox.min(0), bbox.max(0)])
+
     def set_coordinates(self, new_coords):
         raise NotImplementedError
 
@@ -456,15 +462,14 @@ class PotentialField():
             self.__reload_center = True # whether to recalculate center point if new RGJ are added
             if len(rgjs) > 0:
                 self.center_point, suggest_size = self.__calculate_center_point__(suggest_size=True)
-
-            self.size = np.array([suggest_size]*2) if self.size is None else self.size
+                self.size = np.array([suggest_size]*2) if self.size is None else self.size
         else:
             self.__reload_center = False
-            coords = np.concatenate([rgj.bbox.reshape((-1, 2)) for rgj in self.rgjs])
-            bbmin, bbmax = coords.min(0), coords.max(0)
-            suggest_size = max(np.abs(np.concatenate([bbmin-self.center_point, bbmax-self.center_point], axis=0)))*2
+            if len(rgjs) > 0:
+                self.reload_bbox()
+                suggest_size = np.array([max(np.abs(self.bbox - self.center_point).reshape(-1))*2]*2)
 
-            self.size = np.array([suggest_size]*2) if self.size is None else self.size
+                self.size = suggest_size if self.size is None else self.size
 
     def __iter__(self):
         self.rgj_idx = 0
@@ -481,13 +486,11 @@ class PotentialField():
         return len(self.rgjs)
 
     def __calculate_center_point__(self, suggest_size = False) -> Union[Point, Tuple[Point, float]]:
-        coords = np.stack([rgj.get_center_point() for rgj in self.rgjs], axis=0)
-
-        cmin, cmax = coords.min(0), coords.max(0)
-        center = (cmin + cmax)/2.0
+        self.reload_bbox()
+        center = np.sum(self.bbox, 0)/2.0
 
         if suggest_size:
-            suggest_size = max(np.abs(np.concatenate([cmin-center, cmax-center], axis=0)))*2
+            suggest_size = max(self.bbox[1] - center)*2
             return center, suggest_size
         
         return center
@@ -496,6 +499,10 @@ class PotentialField():
         new_repulsion = np.array(new_repulsion)
         for rgj in self.rgjs:
             rgj.set_repulsion(new_repulsion)
+
+    def reload_bbox(self):
+        bbox = np.concatenate([rgj.bbox for rgj in self.rgjs], 0).reshape(-1, 2)
+        self.bbox = np.array([bbox.min(0), bbox.max(0)])
     
     def reload_center_point(self, toggle=True, recal_size=False) -> Point:
         self.__reload_center = toggle
@@ -684,16 +691,26 @@ class PotentialField():
 
         return np.stack([rgj.squared_dist(points, scaled=scaled, inverted=inverted) for rgj in rgjs], axis=1)
     
-    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None) -> np.ndarray:
+    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, filted_idx:Optional[List[int]] = None) -> np.ndarray:
 
-        if center_point is not None:
-            self.center_point = np.array(center_point)
+        if center_point is None:
+            if self.center_point is None:
+                raise RuntimeError('center point for field has not been defined')
+            
+            center_point = self.center_point
 
-        n2 = self.size/2.0
+        if size is None:
+            if self.size is None:
+                raise RuntimeError('size of field has not been defined')
 
-        loc_tl = np.array(self.center_point) + np.array([-n2[0]-margin, n2[1]+margin])
-        loc_br = np.array(self.center_point) + np.array([n2[0]+margin, -n2[1]-margin])
+            size = self.size
+        else:
+            size = np.array(size)
 
+        n2 = size/2.0
+
+        loc_tl = np.array(center_point) + np.array([-n2[0]-margin, n2[1]+margin])
+        loc_br = np.array(center_point) + np.array([n2[0]+margin, -n2[1]-margin])
 
         y_resolution = int(resolution*abs(loc_tl[1] - loc_br[1])/abs(loc_br[0] - loc_tl[0]))
         xaxis = np.linspace(loc_tl[0], loc_br[0], resolution)
@@ -702,5 +719,5 @@ class PotentialField():
         xgrid, ygrid = np.meshgrid(xaxis, yaxis)
         points = np.vstack([xgrid.ravel(), ygrid.ravel()]).T
 
-        return self.eval(points).reshape((y_resolution, resolution))
+        return self.eval(points, filted_idx=filted_idx).reshape((y_resolution, resolution))
         

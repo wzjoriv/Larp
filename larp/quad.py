@@ -169,6 +169,17 @@ class QuadTree():
     
     def get_quad_zones(self):
         return np.array([quad.boundary_zone for quad in self.leaves], dtype=int)
+    
+    def quad_to_image(self, quad:Optional[QuadNode] = None, resolution:int = 200, margin:float = 0.0) -> np.ndarray:
+
+        if quad is None:
+            quad = self.root
+
+        return self.field.to_image(resolution=resolution,
+                                   margin=margin,
+                                   center_point=quad.center_point,
+                                   size=[quad.size]*2,
+                                   filted_idx=quad.rgj_idx)
 
 class QuadNode():
 

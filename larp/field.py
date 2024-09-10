@@ -515,11 +515,11 @@ class PotentialField():
 
         return self.center_point
     
-    def get_extent(self) -> List[float]:
+    def get_extent(self, margin:float = 0.0) -> List[float]:
         size2 = self.size/2.0
         return np.reshape([[
-                    self.center_point[ax] - size2[ax],
-                    self.center_point[ax] + size2[ax]
+                    self.center_point[ax] - size2[ax] - margin,
+                    self.center_point[ax] + size2[ax] + margin
                 ] for ax in range(len(self.center_point))], -1).tolist()
 
     def addRGJ(self, rgj:Union[RGJDict, RGJGeometry], properties:Optional[dict] = None, **kward) -> None:

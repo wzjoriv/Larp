@@ -19,4 +19,9 @@ def test_load_gj():
     field = lpio.loadGeoJSONFile("test/data2.geojson")
     field.eval([[0.0, 0.0]])
 
-test_load_gj()
+def test_load_quadtree():
+    quadtree = lpio.loadQuadTreeFile('test/data.quad.larp')
+    field = quadtree.field
+    field.eval([[55.0, 55.0]])
+
+test_load_quadtree()

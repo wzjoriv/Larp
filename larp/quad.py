@@ -1,4 +1,5 @@
 from __future__ import annotations
+from os import PathLike
 from typing import List, Optional, Set, Tuple, Union
 import numpy as np
 from larp import PotentialField
@@ -169,6 +170,72 @@ class QuadTree():
     
     def get_quad_zones(self):
         return np.array([quad.boundary_zone for quad in self.leaves], dtype=int)
+    
+    def toDict(self):
+        def __save_quad__(quad:Optional[QuadNode]) -> dict:
+
+            if quad is None:
+                return None
+            
+            data = {
+                'center_point': quad.center_point,
+                'size': quad.size,
+                'leaf': quad.leaf,
+                'boundary_zone': quad.boundary_zone,
+                'boundary_max_range': quad.boundary_max_range,
+                'rgj_idx': quad.rgj_idx,
+                'rgj_zones': quad.rgj_zones,
+                'children': [__save_quad__(child) for child in quad.children]
+            }
+
+            return data
+
+        data = {
+            'field': self.field.toRGeoJSON(),
+            'min_sector_size': self.min_sector_size,
+            'max_sector_size': self.max_sector_size,
+            'size': self.size,
+            'edge_bounds': self.edge_bounds,
+            'n_zones': self.n_zones,
+            '__zones_rad_ln': self.__zones_rad_ln,
+            'ZONEToMaxRANGE': self.ZONEToMaxRANGE,
+            'ZONEToMinRANGE': self.ZONEToMinRANGE,
+            'conservative': self.conservative,
+            'root': __save_quad__(self.root)
+        }
+
+        return data
+
+    def fromDict(self, data:dict):
+
+        def __load_quad__(quad_data:Optional[dict]) -> Optional[QuadNode]:
+
+            if quad_data is None:
+                return None
+            
+            quad = QuadNode(center_point = quad_data['center_point'],
+                            size = quad_data['size'])
+            
+            quad.leaf = quad_data['leaf']
+            quad.boundary_zone = quad_data['boundary_zone']
+            quad.boundary_max_range = quad_data['boundary_max_range']
+            quad.rgj_idx = quad_data['rgj_idx']
+            quad.rgj_zones = quad_data['rgj_zones']
+            quad.children = [__load_quad__(child) for child in quad_data['children']]
+
+            return quad
+
+        self.min_sector_size = data['min_sector_size'] 
+        self.max_sector_size = data['max_sector_size'] 
+        self.size = data['size'] 
+        self.edge_bounds = data['edge_bounds'] 
+        self.n_zones = data['n_zones'] 
+        self.__zones_rad_ln = data['__zones_rad_ln'] 
+        self.ZONEToMaxRANGE = data['ZONEToMaxRANGE'] 
+        self.ZONEToMinRANGE = data['ZONEToMinRANGE']
+        self.root = __load_quad__(data['root'])
+        self.leaves = self.search_leaves()
+
 
 class QuadNode():
 
@@ -182,10 +249,11 @@ class QuadNode():
         self.boundary_zone:int = 0
         self.boundary_max_range:float = 1.0
 
-        self.children = [None]*len(self.chdToIdx)
-        self.neighbors = [None]*len(self.nghToIdx)
         self.rgj_idx = np.array([], dtype=int)
         self.rgj_zones = np.array([], dtype=int)
+
+        self.children = [None]*len(self.chdToIdx)
+        self.neighbors = [None]*len(self.nghToIdx)
 
     def __getitem__(self, idx:Union[str, int, tuple, list]) -> Union[QuadNode, List[QuadNode]]:
 

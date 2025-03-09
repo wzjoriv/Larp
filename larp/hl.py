@@ -184,7 +184,7 @@ class HotLoader(object):
                 return False
             
             # update info (remove idxs)
-            mask = ~np.in1d(rootquad.rgj_idx, idxs)
+            mask = ~np.isin(rootquad.rgj_idx, idxs)
             rootquad.rgj_idx = rootquad.rgj_idx[mask]
             rootquad.rgj_zones = rootquad.rgj_zones[mask] # Check
             if delquad.boundary_zone == rootquad.boundary_zone:

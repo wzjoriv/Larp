@@ -20,7 +20,7 @@ class QuadTree():
 
     def __init__(self, field: PotentialField,
                  minimum_length_limit:float = 5.0,
-                 maximum_length_limit:float = np.Inf,
+                 maximum_length_limit:float = np.inf,
                  edge_bounds:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
                  size:Optional[float] = None,
                  conservative:bool = False,

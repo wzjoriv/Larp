@@ -199,9 +199,9 @@ class RoutingNetwork(Network):
         self.__fill_shallow_neighs__()
         self.__build_graph__()
 
-    def calculate_distance(self, node_from:QuadNode, node_to:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, scaled=True):
+    def calculate_distance(self, node_from:QuadNode, node_to:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, scaled=True, penalty: float = 10.0):
         if scaled:
-            multipler = np.Inf if node_to.boundary_zone == 0 else scale_tranform(node_to.boundary_max_range)
+            multipler = penalty if node_to.boundary_zone == 0 else scale_tranform(node_to.boundary_max_range)
         else:
             multipler = 1.0
 
@@ -215,7 +215,7 @@ class RoutingNetwork(Network):
             total_path.append(current)
         return total_path[::-1]
     
-    def find_path(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*', **kwargs):
+    def find_path(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*', penalty: float = 10.0):
         """Routing Algorithms
 
         Options:
@@ -224,9 +224,9 @@ class RoutingNetwork(Network):
         * [Any algorithm included by user]
         """
 
-        return self.routing_algs[alg.lower()](start_node=start_node, end_node=end_node, scale_tranform=scale_tranform, **kwargs)
+        return self.routing_algs[alg.lower()](start_node=start_node, end_node=end_node, scale_tranform=scale_tranform, penalty=penalty)
     
-    def find_path_A_star(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x) -> Optional[List[QuadNode]]:
+    def find_path_A_star(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, penalty: float = 10.0) -> Optional[List[QuadNode]]:
         """ find path (A*) 
         
         Returns None if no path found
@@ -235,10 +235,10 @@ class RoutingNetwork(Network):
         heapq.heappush(open_set, (0, start_node))
 
         came_from = {}
-        g_score = defaultdict(lambda: np.Inf)
+        g_score = defaultdict(lambda: np.inf)
         g_score[start_node] = 0
 
-        f_score = defaultdict(lambda: np.Inf)
+        f_score = defaultdict(lambda: np.inf)
         f_score[start_node] = self.calculate_distance(start_node, end_node, scaled=False)
 
         while open_set:
@@ -248,7 +248,7 @@ class RoutingNetwork(Network):
                 return self.__reconstruct_path__(came_from, current)
 
             for neighbor in self._graph[current]:
-                tentative_g_score = g_score[current] + self.calculate_distance(current, neighbor, scale_tranform=scale_tranform)
+                tentative_g_score = g_score[current] + self.calculate_distance(current, neighbor, scale_tranform=scale_tranform, penalty=penalty)
 
                 if tentative_g_score < g_score[neighbor]:
                     came_from[neighbor] = current
@@ -260,7 +260,7 @@ class RoutingNetwork(Network):
 
         return None
     
-    def find_path_dijkstra(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x)-> Optional[List[QuadNode]]:
+    def find_path_dijkstra(self, start_node:QuadNode, end_node:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, penalty: float = 10.0)-> Optional[List[QuadNode]]:
         """ find path (Dijkstra) 
         
         Returns None if no path found
@@ -269,7 +269,7 @@ class RoutingNetwork(Network):
         heapq.heappush(open_set, (0, start_node))
 
         came_from = {}
-        dist = defaultdict(lambda: np.Inf)
+        dist = defaultdict(lambda: np.inf)
         dist[start_node] = 0
 
         while open_set:
@@ -279,7 +279,7 @@ class RoutingNetwork(Network):
                 return self.__reconstruct_path__(came_from, current)
 
             for neighbor in self._graph[current]:
-                tentative_dist = dist[current] + self.calculate_distance(current, neighbor, scale_tranform=scale_tranform)
+                tentative_dist = dist[current] + self.calculate_distance(current, neighbor, scale_tranform=scale_tranform, penalty=penalty)
 
                 if tentative_dist < dist[neighbor]:
                     came_from[neighbor] = current
@@ -290,10 +290,10 @@ class RoutingNetwork(Network):
 
         return None
 
-    def find_route(self, pointA:Point, pointB:Point, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*'):
+    def find_route(self, pointA:Point, pointB:Point, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*', penalty:float=10.0):
         
         quads = self.quadtree.find_quads([pointA, pointB])
-        return self.find_path(quads[0], quads[1], scale_tranform=scale_tranform, alg=alg)
+        return self.find_path(quads[0], quads[1], scale_tranform=scale_tranform, alg=alg, penalty=penalty)
 
     def find_many_routes(self, pointsA:Point, pointsB:Point, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*'):
         pointsA, pointsB = np.array(pointsA), np.array(pointsB)

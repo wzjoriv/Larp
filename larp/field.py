@@ -568,7 +568,7 @@ class PotentialField():
     def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, reference_idx = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
         points = np.array(points)
         if not len(self):
-            return points*np.Inf
+            return points*np.inf
         filted_idx = filted_idx if not filted_idx is None else list(range(len(self)))
 
         if reference_idx:
@@ -650,8 +650,8 @@ class PotentialField():
         if not len(self):
             warnings.warn("There are not any RGJs elements in the field")
             if reference_idx:
-                return points.sum(1)*np.Inf, -np.ones_like(points.sum(1))
-            return points.sum(1)*np.Inf
+                return points.sum(1)*np.inf, -np.ones_like(points.sum(1))
+            return points.sum(1)*np.inf
 
         dists = self.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted)
         if reference_idx:
@@ -688,7 +688,7 @@ class PotentialField():
 
         if not len(self):
             warnings.warn("There are not any RGJs elements in the field")
-            return np.ones((len(points), len(rgjs)))*np.Inf
+            return np.ones((len(points), len(rgjs)))*np.inf
 
         return np.stack([rgj.squared_dist(points, scaled=scaled, inverted=inverted) for rgj in rgjs], axis=1)
     

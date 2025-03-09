@@ -32,4 +32,4 @@ py -m twine upload --repository pypi dist/*
 
 ## Notes 
 
-1. The code was tested on Python 3.8. No other version is supported.
+1. The code is tested for Python 3.13. No other version is supported.

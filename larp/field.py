@@ -454,10 +454,12 @@ class PotentialField():
 
         if properties is None or isinstance(rgjs[0], RGJGeometry):
             for rgj in rgjs:
-                self.addRGJ(rgj=rgj)
+                self.addRGJ(rgj=rgj, reload_bbox=False)
         else:
             for rgj, proper in zip(rgjs, properties):
-                self.addRGJ(rgj=rgj, properties=proper)
+                self.addRGJ(rgj=rgj, properties=proper, reload_bbox=False)
+        
+        self.reload_bbox()
 
         if self.center_point is None:
             self.__reload_center = True # whether to recalculate center point if new RGJ are added
@@ -467,7 +469,6 @@ class PotentialField():
         else:
             self.__reload_center = False
             if len(rgjs) > 0:
-                self.reload_bbox()
                 suggest_size = np.array([max(np.abs(self.bbox - self.center_point).reshape(-1))*2]*2)
 
                 self.size = suggest_size if self.size is None else self.size
@@ -487,7 +488,6 @@ class PotentialField():
         return len(self.rgjs)
 
     def __calculate_center_point__(self, suggest_size = False) -> Union[Point, Tuple[Point, float]]:
-        self.reload_bbox()
         center = np.sum(self.bbox, 0)/2.0
 
         if suggest_size:
@@ -502,8 +502,13 @@ class PotentialField():
             rgj.set_repulsion(new_repulsion)
 
     def reload_bbox(self):
-        bbox = np.concatenate([rgj.bbox for rgj in self.rgjs], 0).reshape(-1, 2)
-        self.bbox = np.array([bbox.min(0), bbox.max(0)])
+        if len(self):
+            bbox = np.concatenate([rgj.bbox for rgj in self.rgjs], 0).reshape(-1, 2)
+            self.bbox = np.array([bbox.min(0), bbox.max(0)])
+        else:
+            self.bbox = np.array([None, None, None, None])
+
+        return self.bbox
     
     def reload_center_point(self, toggle=True, recal_size=False) -> Point:
         self.__reload_center = toggle
@@ -523,17 +528,19 @@ class PotentialField():
                     self.center_point[ax] + size2[ax] + margin
                 ] for ax in range(len(self.center_point))], -1).tolist()
 
-    def addRGJ(self, rgj:Union[RGJDict, RGJGeometry], properties:Optional[dict] = None, **kward) -> None:
+    def addRGJ(self, rgj:Union[RGJDict, RGJGeometry], properties:Optional[dict] = None, reload_bbox = True, **kward) -> None:
 
         if not isinstance(rgj, RGJGeometry):
             rgj:RGJGeometry = globals()[rgj["type"]+"RGJ"](properties=properties, **rgj, **kward)
         
         self.rgjs.append(rgj)
+        if reload_bbox:
+            self.reload_bbox()
 
         if self.__reload_center:
             self.center_point = self.__calculate_center_point__()
 
-    def delRGJ(self, idx:Union[int, List[int]]) -> None:
+    def delRGJ(self, idx:Union[int, List[int]], reload_bbox = True) -> None:
 
         idx = np.unique([idx] if idx is int else idx)
         idx.sort()
@@ -543,6 +550,9 @@ class PotentialField():
 
         if self.__reload_center:
             self.center_point = self.__calculate_center_point__()
+
+        if reload_bbox:
+            self.reload_bbox()
 
     def toRGeoJSON(self, return_bbox=False) -> RGeoJSONCollection:\
     

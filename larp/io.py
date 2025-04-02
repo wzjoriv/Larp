@@ -123,3 +123,4 @@ def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG
 
     if recalculate:
         field.reload_center_point(toggle=True, recal_size=True)
+        field.reload_bbox()

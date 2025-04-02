@@ -92,6 +92,9 @@ class RGJGeometry():
                 "repulsion": self.repulsion.tolist()
             }
         }
+    
+    def __str__(self):
+        return str(self.toRGeoJSON())
 
 
 class PointRGJ(RGJGeometry):
@@ -443,7 +446,7 @@ class PotentialField():
         self.__reload_center = None
         self.center_point = center_point
         self.extra_info = extra_info
-        self.bbox = np.array([None, None, None, None])
+        self.bbox = np.array([[None, None], [None, None]])
 
         if size is None:
             self.size = size
@@ -506,7 +509,7 @@ class PotentialField():
             bbox = np.concatenate([rgj.bbox for rgj in self.rgjs], 0).reshape(-1, 2)
             self.bbox = np.array([bbox.min(0), bbox.max(0)])
         else:
-            self.bbox = np.array([None, None, None, None])
+            self.bbox = np.array([[None, None], [None, None]])
 
         return self.bbox
     

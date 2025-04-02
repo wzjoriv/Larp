@@ -443,6 +443,7 @@ class PotentialField():
         self.__reload_center = None
         self.center_point = center_point
         self.extra_info = extra_info
+        self.bbox = np.array([None, None, None, None])
 
         if size is None:
             self.size = size

@@ -22,7 +22,7 @@ def test_load_gj():
 test_load_gj()
 
 def test_load_quadtree():
-    quadtree = lpio.loadQuadTreeFile('test/data.quad.larp')
+    quadtree = lpio.loadQuadTreeFile('test/data.quad.lp')
     field = quadtree.field
     field.eval([[55.0, 55.0]])
 

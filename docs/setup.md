@@ -26,7 +26,7 @@ pip install matplotlib pytest
 py -m build
 ```
 
-### Update PiPy
+### Upload to PyPI
 ```bash
 py -m twine upload --repository pypi dist/*
 ```

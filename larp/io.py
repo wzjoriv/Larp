@@ -41,7 +41,7 @@ def loadRGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0) -> Potential
 
     return fromRGeoJSON(rgeojson, size_offset=size_offset)
 
-def loadQuadTreeFile(file: Union[str, PathLike], size_offset = 0.0, return_field = True) -> QuadTree:
+def loadQuadTreeFile(file: Union[str, PathLike], size_offset = 0.0, return_field = False) -> QuadTree:
 
     with open(file=file, mode='rb') as f:
         data:dict = pickle.load(f)

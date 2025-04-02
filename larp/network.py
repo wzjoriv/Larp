@@ -199,7 +199,8 @@ class RoutingNetwork(Network):
         self.__fill_shallow_neighs__()
         self.__build_graph__()
 
-    def calculate_distance(self, node_from:QuadNode, node_to:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, scaled=True, max_penalty: float = np.inf):
+    @staticmethod
+    def calculate_distance(node_from:QuadNode, node_to:QuadNode, scale_tranform:FieldScaleTransform=lambda x: 1.0 + x, scaled=True, max_penalty: float = np.inf):
         if scaled:
             multipler = max_penalty if node_to.boundary_zone == 0 else scale_tranform(node_to.boundary_max_range)
         else:
@@ -207,7 +208,7 @@ class RoutingNetwork(Network):
 
         diff = node_to.center_point - node_from.center_point
         return multipler*np.linalg.norm(diff)
-
+    
     def __reconstruct_path__(self, came_from, current):
         total_path = [current]
         while current in came_from.keys():

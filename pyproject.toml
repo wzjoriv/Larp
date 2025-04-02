@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "larp"
-version = "0.2.6"
+version = "0.2.7"
 authors = [
   { name="Josue N Rivera", email="josue.n.rivera@outlook.com" },
 ]
 description = "Larp (/lärp/): Last-Mile Restrictive Path Planning "
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ['numpy']
+dependencies = ['numpy', 'pyproj']
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",

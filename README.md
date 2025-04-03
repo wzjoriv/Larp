@@ -16,7 +16,7 @@ pip install larp
 
 ## Citations
 
-```
+```bibtex
 @article{rivera2024multi,
   title={Multi-Scale Cell Decomposition for Path Planning using Restrictive Routing Potential Fields},
   author={Rivera, Josue N and Sun, Dengfeng},

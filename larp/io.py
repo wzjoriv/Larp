@@ -96,7 +96,7 @@ def loadGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0):
 
     return fromGeoJSON(geojson, size_offset=size_offset)
 
-def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG:3857", recalculate=True):
+def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG:3857", recal_size=True):
 
     from_crs = CRS(from_crs)
     to_crs = CRS(to_crs)
@@ -124,6 +124,6 @@ def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG
     for rgj in field:
         __prune_coords__(rgj)
 
-    if recalculate:
+    if recal_size:
         field.reload_bbox()
         field.reload_center_point(toggle=True, recal_size=True)

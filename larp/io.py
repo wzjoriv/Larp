@@ -13,7 +13,7 @@ Author: Josue N Rivera
 
 def saveRGeoJSON(field:PotentialField, file:Union[str, PathLike], return_bbox=False):
 
-    with open(file, "w") as outfile:
+    with open(file, "w", encoding='utf-8') as outfile:
         json.dump(field.toRGeoJSON(return_bbox=return_bbox), outfile)
 
 def saveQuadTree(tree:QuadTree, file:str):
@@ -36,7 +36,7 @@ def fromRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
 
 def loadRGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0) -> PotentialField:
 
-    with open(file=file, mode='r') as f:
+    with open(file=file, mode='r', encoding='utf-8') as f:
         rgeojson = json.load(f)
 
     return fromRGeoJSON(rgeojson, size_offset=size_offset)
@@ -90,8 +90,8 @@ def fromGeoJSON(geojson: dict, size_offset = 0.0):
     return fromRGeoJSON(geojson, size_offset=size_offset)
 
 def loadGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0):
-
-    with open(file=file) as f:
+    
+    with open(file=file, mode='r', encoding='utf-8') as f:
         geojson = json.load(f)
 
     return fromGeoJSON(geojson, size_offset=size_offset)

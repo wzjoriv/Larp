@@ -15,6 +15,7 @@ Then, open a new terminal and activate environment
 
 ```bash
 pip install -r requirements.txt
+pip install matplotlib pytest ipykernel
 ```
 
 ## Deployment
@@ -25,7 +26,7 @@ pip install -r requirements.txt
 py -m build
 ```
 
-### Update PiPy
+### Upload to PyPI
 ```bash
 py -m twine upload --repository pypi dist/*
 ```

@@ -13,7 +13,7 @@ Author: Josue N Rivera
 
 def saveRGeoJSON(field:PotentialField, file:Union[str, PathLike], return_bbox=False):
 
-    with open(file, "w") as outfile:
+    with open(file, "w", encoding='utf-8') as outfile:
         json.dump(field.toRGeoJSON(return_bbox=return_bbox), outfile)
 
 def saveQuadTree(tree:QuadTree, file:str):
@@ -36,12 +36,12 @@ def fromRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
 
 def loadRGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0) -> PotentialField:
 
-    with open(file=file, mode='r') as f:
+    with open(file=file, mode='r', encoding='utf-8') as f:
         rgeojson = json.load(f)
 
     return fromRGeoJSON(rgeojson, size_offset=size_offset)
 
-def loadQuadTreeFile(file: Union[str, PathLike], size_offset = 0.0) -> QuadTree:
+def loadQuadTreeFile(file: Union[str, PathLike], size_offset = 0.0, return_field = False) -> QuadTree:
 
     with open(file=file, mode='rb') as f:
         data:dict = pickle.load(f)
@@ -49,6 +49,9 @@ def loadQuadTreeFile(file: Union[str, PathLike], size_offset = 0.0) -> QuadTree:
     field = fromRGeoJSON(data.pop('field'), size_offset=size_offset)
     tree = QuadTree(field=field)
     tree.fromDict(data=data)
+
+    if return_field:
+        return tree, field
 
     return tree
 
@@ -87,13 +90,13 @@ def fromGeoJSON(geojson: dict, size_offset = 0.0):
     return fromRGeoJSON(geojson, size_offset=size_offset)
 
 def loadGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0):
-
-    with open(file=file) as f:
+    
+    with open(file=file, mode='r', encoding='utf-8') as f:
         geojson = json.load(f)
 
     return fromGeoJSON(geojson, size_offset=size_offset)
 
-def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG:3857", recalculate=True):
+def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG:3857", recal_size=True):
 
     from_crs = CRS(from_crs)
     to_crs = CRS(to_crs)
@@ -121,5 +124,6 @@ def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG
     for rgj in field:
         __prune_coords__(rgj)
 
-    if recalculate:
+    if recal_size:
+        field.reload_bbox()
         field.reload_center_point(toggle=True, recal_size=True)

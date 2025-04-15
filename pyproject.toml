@@ -10,8 +10,7 @@ authors = [
 ]
 description = "Larp (/lärp/): Last-Mile Restrictive Path Planning "
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = ['numpy', 'pyproj']
+dependencies = ['numpy>=2.0.0', 'pyproj']
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -20,3 +19,6 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/wzjoriv/Larp"
 Issues = "https://github.com/wzjoriv/Larp/issues"
+
+[tool.ruff.lint]
+select = ["NPY201"]

@@ -44,6 +44,22 @@ class QuadTree():
         if build_tree:
             self.build()
 
+    def __iter__(self):
+        self.quad_idx = 0
+        self.leaves_list = list(self.leaves)
+        return self
+    
+    def __next__(self):
+        if self.quad_idx >= len(self):
+            raise StopIteration
+        
+        out = self.leaves_list[self.quad_idx]
+        self.quad_idx += 1
+        return out
+
+    def __len__(self)->int:
+        return len(self.leaves)
+
     def mark_leaf(self, quad:QuadNode) -> None:
         quad.leaf = True
         self.leaves.add(quad)

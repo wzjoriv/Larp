@@ -114,3 +114,73 @@ def test_leaf_none_children():
     assert quadtree.search_leaves() == quadtree.leaves, "Leaves in list are different than those found by search"
 
 test_leaf_none_children()
+
+def test_iter_quadtree():
+
+    point_rgjs = [{
+        'type': "Point",
+        'coordinates': [50, 50], 
+        'repulsion': [[5, 0], [0, 5]]
+    },{
+        'type': "Point",
+        'coordinates': [60, 60], 
+        'repulsion': [[5, 0], [0, 5]]
+    },{
+        'type': "Point",
+        'coordinates': [60, 50], 
+        'repulsion': [[5, 0], [0, 5]]
+    },{
+        'type': "Point",
+        'coordinates': [50, 60], 
+        'repulsion': [[5, 0], [0, 5]]
+    }]
+
+    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    quadtree = larp.quad.QuadTree(field=field,
+                                  minimum_length_limit=5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
+                                  build_tree=True)
+    
+    for quad in quadtree:
+        assert all([child is None for child in quad.children]) == True, f"{str(quad)} is leaf (in list) with non-none children"
+
+    for quad in quadtree.search_leaves():
+        assert all([child is None for child in quad.children]) == True, f"{str(quad)} is leaf (by search) with non-none children"
+
+    assert quadtree.search_leaves() == quadtree.leaves, "Leaves in list are different than those found by search"
+
+test_iter_quadtree()
+
+def test_quad_link():
+
+    point_rgjs = [{
+        'type': "Point",
+        'coordinates': [50, 50], 
+        'repulsion': [[5, 0], [0, 5]]
+    },{
+        'type': "Point",
+        'coordinates': [60, 60], 
+        'repulsion': [[5, 0], [0, 5]]
+    },{
+        'type': "Point",
+        'coordinates': [60, 50], 
+        'repulsion': [[5, 0], [0, 5]]
+    },{
+        'type': "Point",
+        'coordinates': [50, 60], 
+        'repulsion': [[5, 0], [0, 5]]
+    }]
+
+    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    quadtree = larp.quad.QuadTree(field=field,
+                                  minimum_length_limit=5,
+                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
+                                  build_tree=True)
+    
+    quad_chain = quadtree.find_quads_chain([[50.1, 50.1]])[0]
+
+    assert len(quad_chain) == 4, "The expected number of quads in the chain is different than the number found"
+
+    assert all([quad.boundary_zone == 0 for quad in quad_chain]), "The expected number of quads in the chain is different than the number found"
+
+test_iter_quadtree()

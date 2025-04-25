@@ -148,15 +148,16 @@ class QuadTree():
     def get_quad_maximum_range(self) -> np.ndarray:
         return np.array([quad.boundary_max_range for quad in self.leaves])
     
-    def find_quads(self, x:Union[List[Point],np.ndarray]) -> List[QuadNode]:
+    def find_quads(self, x:Union[List[Point],np.ndarray], max_depth = 1000) -> List[QuadNode]:
         """ Finds quad for given points
 
         * Pool parallization not possible because quad memory reference is needed
         """
         x = np.array(x)
+        depth = 0
 
-        def subdivide(x:Point, quad:QuadNode) -> List[QuadNode]:
-            if quad is None or quad.leaf:
+        def subdivide(x:Point, quad:QuadNode, depth:int) -> List[QuadNode]:
+            if quad is None or quad.leaf or depth >= max_depth:
                 return quad
 
             direction = x - quad.center_point
@@ -165,9 +166,31 @@ class QuadTree():
             else:
                 quadstr = "br" if direction[0] >= 0.0 else "bl"
 
-            return subdivide(x, quad=quad[quadstr])
+            return subdivide(x, quad=quad[quadstr], depth=depth+1)
 
-        return [subdivide(x=xi, quad=self.root) for xi in x]
+        return [subdivide(x=xi, quad=self.root, depth=depth) for xi in x]
+    
+    def find_quads_chain(self, x:Union[List[Point],np.ndarray], max_depth = 1000) -> List[List[QuadNode]]:
+        """ Finds all quads at all depths (chain) for each given points
+
+        * Pool parallization not possible because quad memory reference is needed
+        """
+        x = np.array(x)
+        depth = 0
+
+        def subdivide(x:Point, quad:QuadNode, depth:int) -> List[QuadNode]:
+            if quad is None or quad.leaf or depth >= max_depth:
+                return [quad]
+
+            direction = x - quad.center_point
+            if direction[1] >= 0.0:
+                quadstr = "tr" if direction[0] >= 0.0 else "tl"
+            else:
+                quadstr = "br" if direction[0] >= 0.0 else "bl"
+
+            return [quad] + subdivide(x, quad=quad[quadstr], depth=depth+1)
+
+        return [subdivide(x=xi, quad=self.root, depth=depth) for xi in x]
     
     def __search_leaves__(self, quad:QuadNode):
         if quad is None: raise TypeError(f"Branch missing leaf for quad {str(quad)}")

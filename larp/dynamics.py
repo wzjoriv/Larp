@@ -37,7 +37,7 @@ class Dynamics():
     
     def split_first(self, first:np.ndarray):
 
-        return tuple([first[:, i:i+1] for i in range(first.size(1))])
+        return tuple([first[:, i:i+1] for i in range(first.shape[1])])
     
     def f(self,
           time: np.ndarray, 
@@ -97,10 +97,9 @@ class WMRDynamics(Dynamics):
 
         super().__init__(constants=constants,
                          state_derivative_orders=[0, 0, 0],
-                         control_derivative_orders=[0, 0],
-                         invariant_state_mask=[True, True])
+                         control_derivative_orders=[0, 0])
         
-        self.wd = self.constants['wheel distance']
+        self.wd = self.constants['wheels distance']
         
     def extract_wheel_speed(self, first_order_control):
         v, w = self.split_first(first_order_control)
@@ -199,8 +198,7 @@ class QuadcopterDynamics(Dynamics):
 
         super().__init__(constants,
                          state_derivative_orders=[1]*6,
-                         control_derivative_orders=[0]*4,
-                         invariant_state_mask=[True, True, True, False, False, False])
+                         control_derivative_orders=[0]*4,)
         
         self.m = self.constants['mass']
         self.Ct = self.constants['translational drag']
@@ -218,7 +216,7 @@ class QuadcopterDynamics(Dynamics):
                                        [1/(4*self.b),                   0, 1/(2*self.l*self.b),  1/(4*self.d)],
                                        [1/(4*self.b), 1/(2*self.l*self.b),                   0, -1/(4*self.d)]])
 
-    def extract_w(self, first_order_control:np.ndarray):
+    def extract_w(self, first_order_control:np.ndarray) -> np.ndarray:
         return np.sqrt(np.matmul(first_order_control, self.control_to_w))
     
     def f(self,
@@ -226,16 +224,16 @@ class QuadcopterDynamics(Dynamics):
           first_order_state: np.ndarray,
           first_order_control: np.ndarray) -> np.ndarray:
         
-        x, dx, y, dy, z, dz, phi, dphi, theta, dtheta, psi, dpsi = tuple([first_order_state[:, i:i+1] for i in range(first_order_state.size(1))])
+        x, dx, y, dy, z, dz, phi, dphi, theta, dtheta, psi, dpsi = tuple([first_order_state[:, i:i+1] for i in range(first_order_state.shape[1])])
 
-        u1, u2, u3, u4 = tuple([first_order_control[:, i:i+1] for i in range(first_order_control.size(1))])
+        u1, u2, u3, u4 = tuple([first_order_control[:, i:i+1] for i in range(first_order_control.shape[1])])
 
         ux = np.cos(psi)*np.sin(theta)*np.cos(phi) + np.sin(psi)*np.sin(phi)
 
         uy = np.cos(phi)*np.sin(psi)*np.sin(theta) - np.cos(psi)*np.sin(phi)
 
         ws = self.extract_w(first_order_control)
-        w1, w2, w3, w4 = tuple([ws[:, i:i+1] for i in range(ws.size(1))])
+        w1, w2, w3, w4 = tuple([ws[:, i:i+1] for i in range(ws.shape[1])])
 
         omega_r = w1 - w2 + w3 - w4
 

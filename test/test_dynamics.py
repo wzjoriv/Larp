@@ -7,10 +7,6 @@ import larp.dynamics
 import numpy as np
 import scipy.integrate as integrate
 
-import matplotlib
-import matplotlib.pyplot as plt
-matplotlib.use('tkagg')
-
 """
 Author: Josue N Rivera
 

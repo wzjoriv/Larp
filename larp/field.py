@@ -556,21 +556,7 @@ class PotentialField():
 
         if reload_bbox:
             self.reload_bbox()
-
-    def toRGeoJSON(self, return_bbox=False) -> RGeoJSONCollection:\
-    
-        rgeojson = {
-            'type': 'FeatureCollection',
-            '_version_': "2D",
-            'features': [rgj.toRGeoJSON() for rgj in self.rgjs],
-            **self.extra_info
-        }
-        if return_bbox:
-            extent = self.get_extent()
-            rgeojson["bbox"] = extent[::2] + extent[1::2]
-
-        return rgeojson
-    
+   
     def in_bbox(self, point:Point) -> bool:
         point = np.array(point)
         return any([rgj.in_bbox(point) for rgj in self.rgjs])
@@ -639,26 +625,6 @@ class PotentialField():
 
         return evals
     
-    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
-        route = np.array(route)
-
-        points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
-        points = points if n <= 0 else points[:-1]
-
-        f_eval = scale_transform(self.eval(points=points))
-
-        return f_eval.sum()*step
-    
-    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
-        route = np.array(route)
-
-        points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
-        points = points if n <= 0 else points[:-1]
-
-        f_eval:np.ndarray = scale_transform(self.eval(points=points))
-
-        return f_eval.max()
-    
     def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, reference_idx = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         points = np.array(points)
         if not len(self):
@@ -706,6 +672,26 @@ class PotentialField():
 
         return np.stack([rgj.squared_dist(points, scaled=scaled, inverted=inverted) for rgj in rgjs], axis=1)
     
+    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+        route = np.array(route)
+
+        points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
+        points = points if n <= 0 else points[:-1]
+
+        f_eval = scale_transform(self.eval(points=points))
+
+        return f_eval.sum()*step
+    
+    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+        route = np.array(route)
+
+        points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
+        points = points if n <= 0 else points[:-1]
+
+        f_eval:np.ndarray = scale_transform(self.eval(points=points))
+
+        return f_eval.max()
+
     def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, filted_idx:Optional[List[int]] = None) -> np.ndarray:
 
         if center_point is None:
@@ -734,5 +720,19 @@ class PotentialField():
         xgrid, ygrid = np.meshgrid(xaxis, yaxis)
         points = np.vstack([xgrid.ravel(), ygrid.ravel()]).T
 
-        return self.eval(points, filted_idx=filted_idx).reshape((y_resolution, resolution))
-        
+        return self.eval(points, filted_idx=filted_idx).reshape((y_resolution, resolution))  
+    
+    def toRGeoJSON(self, return_bbox=False) -> RGeoJSONCollection:\
+    
+        rgeojson = {
+            'type': 'FeatureCollection',
+            '_version_': "2D",
+            'features': [rgj.toRGeoJSON() for rgj in self.rgjs],
+            **self.extra_info
+        }
+        if return_bbox:
+            extent = self.get_extent()
+            rgeojson["bbox"] = extent[::2] + extent[1::2]
+
+        return rgeojson
+ 

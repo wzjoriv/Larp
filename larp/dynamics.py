@@ -211,13 +211,21 @@ class QuadcopterDynamics(Dynamics):
         self.d = self.constants['torque constant']
         self.l = self.constants['arm length']
 
-        self.control_to_w = np.array([[1/(4*self.b),                   0,-1/(2*self.l*self.b),  1/(4*self.d)],
-                                       [1/(4*self.b),-1/(2*self.l*self.b),                   0, -1/(4*self.d)],
-                                       [1/(4*self.b),                   0, 1/(2*self.l*self.b),  1/(4*self.d)],
-                                       [1/(4*self.b), 1/(2*self.l*self.b),                   0, -1/(4*self.d)]])
+        self.w2_to_control = np.array([
+            [self.b, self.b, self.b, self.b],
+            [0, -self.b * self.l, 0, self.b * self.l],
+            [-self.b * self.l, 0, self.b * self.l, 0],
+            [self.d, -self.d, self.d, -self.d]
+        ])
+
+        self.control_to_w2 = np.linalg.inv(self.w2_to_control)
 
     def extract_w(self, first_order_control:np.ndarray) -> np.ndarray:
-        return np.sqrt(np.matmul(first_order_control, self.control_to_w))
+
+        w_squared = first_order_control @ self.control_to_w2.T
+
+        w_squared = np.clip(w_squared, a_min=0.0, a_max=None)
+        return np.sqrt(w_squared)
     
     def f(self,
           time: np.ndarray, 

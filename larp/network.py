@@ -49,7 +49,7 @@ class Network(object):
     def remove(self, node):
         """ Remove all references to node """
 
-        for _, cxns in self._graph.items():  # python3: items(); python2: iteritems()
+        for _, cxns in self._graph.items():  # python3: items()
             try:
                 cxns.remove(node)
             except KeyError:
@@ -190,6 +190,7 @@ class RoutingNetwork(Network):
 
         if leaves is None:
             leaves = self.quadtree.leaves
+
         for quad in leaves:
             for neigh_str in ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l']:
                 adjacent_neighs = recursive_search(quad[[neigh_str]][0], self.NeighOuterEdges[neigh_str])
@@ -198,6 +199,19 @@ class RoutingNetwork(Network):
     def build(self):
         self.__fill_shallow_neighs__()
         self.__build_graph__()
+
+    def refresh(self):
+        # delete old reference
+        remove_from_nodes = self._graph.keys - self.quadtree.leaves
+        add_to_nodes = self.quadtree.leaves - self._graph.keys
+
+        for node in remove_from_nodes:
+            self.remove(node)
+            del node
+
+        # add new references
+        self.__fill_shallow_neighs__()
+        self.__build_graph__(add_to_nodes, overwrite_directed=False)
 
     @staticmethod
     def calculate_distance(node_from:QuadNode, node_to:QuadNode, penalty_transform:FieldScaleTransform=lambda x: 1.0 + x, scaled=True, max_penalty: float = np.inf):

@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple, Union
 import warnings
+from __future__ import annotations
 
 import numpy as np
 import larp.fn as lpf
@@ -534,26 +535,72 @@ class PotentialField():
     def addRGJ(self, rgj:Union[RGJDict, RGJGeometry], properties:Optional[dict] = None, reload_bbox = True, **kward) -> None:
 
         if not isinstance(rgj, RGJGeometry):
-            rgj:RGJGeometry = globals()[rgj["type"]+"RGJ"](properties=properties, **rgj, **kward)
+            if not isinstance(rgj, dict) or "type" not in rgj:
+                raise ValueError("RGJ must be an RGJGeometry.")
+            
+            cls = globals().get(rgj["type"] + "RGJ")
+            if cls is None:
+                raise ValueError(f"No RGJ class found for type {rgj['type']}")
+            
+            rgj = cls(properties=properties, **rgj, **kward)
         
         self.rgjs.append(rgj)
+
         if reload_bbox:
             self.reload_bbox()
 
         if self.__reload_center:
             self.center_point = self.__calculate_center_point__()
 
-    def delRGJ(self, idx:Union[int, List[int]], reload_bbox = True) -> None:
+    def addField(self, new_field:PotentialField, reload_bbox = True):
 
-        idx = np.unique([idx] if idx is int else idx)
-        idx.sort()
+        """
+        Adds all RGJs from another potential field to this field.
+
+        Args:
+            new_field (PotentialField): A potential field containing RGJs to add.
+            reload_bbox (bool, optional): Whether to recompute the bounding box after addition.
+                                        Defaults to True.
+        """
+        og_reload_center = self.__reload_center
+        self.__reload_center = False
         
-        for i in range(len(idx)):
-            del self.rgjs[idx[i]-i]
+        # Add rgj to field
+        try:
+            for rgj in new_field:
+                self.addRGJ(rgj=rgj, reload_bbox=False)
+        finally:
+            self.__reload_center = og_reload_center
+
+        if reload_bbox:
+            self.reload_bbox()
 
         if self.__reload_center:
             self.center_point = self.__calculate_center_point__()
 
+    def delRGJ(self, idxs: Union[int, List[int]], reload_bbox=True) -> None:
+        """
+        Removes one or more RGJs from the field by their index.
+
+        Args:
+            idxs (Union[int, List[int]]): A single index or list of indices to remove.
+            reload_bbox (bool, optional): Whether to recompute the bounding box after deletion.
+                                        Defaults to True.
+        """
+        # Ensure idxs is a list of unique, sorted integers in reverse order
+        if isinstance(idxs, int):
+            idxs = [idxs]
+        idxs = sorted(set(idxs), reverse=True)
+
+        # Delete RGJs from highest to lowest index to avoid reindexing errors
+        for idx in idxs:
+            del self.rgjs[idx]
+
+        # Optionally recalculate the center point if enabled
+        if self.__reload_center:
+            self.center_point = self.__calculate_center_point__()
+
+        # Optionally recompute the bounding box
         if reload_bbox:
             self.reload_bbox()
    
@@ -594,7 +641,7 @@ class PotentialField():
             return points*0.0
         _, grad_idxs = self.squared_dist(points=points, reference_idx=True)
 
-        grad = np.ones((len(points), 2), dtype=float)
+        grad = np.zeros((len(points), 2), dtype=float)
         for idx in set(grad_idxs):
             select = idx == grad_idxs
             grad[select] = self.rgjs[idx].gradient(points[select], min_dist_select=min_dist_select)
@@ -666,7 +713,7 @@ class PotentialField():
         points = np.array(points)
         rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
 
-        if not len(self):
+        if not len(rgjs):
             warnings.warn("There are not any RGJs elements in the field")
             return np.ones((len(points), len(rgjs)))*np.inf
 

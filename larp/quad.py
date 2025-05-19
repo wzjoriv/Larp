@@ -6,8 +6,9 @@ from collections import defaultdict
 import numpy as np
 from larp import PotentialField
 
+import larp.fn as lpf
 from larp.field import RGJGeometry
-from larp.types import Point, RGJDict, RepulsionVectorsAndRef
+from larp.types import FieldScaleTransform, FieldSize, Point, RGJDict, RepulsionVectorsAndRef
 
 """
 Author: Josue N Rivera
@@ -70,8 +71,8 @@ class QuadTree():
                  maximum_length_limit:float = np.inf,
                  edge_bounds:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
                  size:Optional[float] = None,
-                 conservative:bool = False,
-                 build_tree:bool = False) -> None:
+                 conservative:bool = True,
+                 build_tree:bool = True) -> None:
         
         self.field = field
         self.min_sector_size = minimum_length_limit
@@ -195,7 +196,7 @@ class QuadTree():
     def replace_branch(self, rootquad:QuadNode, child:str, branch:QuadNode):
             
             if rootquad[child] is not None:
-                self.leaves = self.leaves - self.search_leaves(rootquad[child])
+                self.leaves -= self.search_leaves(rootquad[child])
 
             rootquad[child] = branch
             new_leaves = self.search_leaves(rootquad[child])
@@ -368,6 +369,55 @@ class QuadTree():
         self.root = __load_quad__(data['root'])
         self.leaves = self.search_leaves()
 
+    def to_image(self, resolution: int = 200, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
+        """
+        Render a top-down raster image of the quadtree zoning layout.
+
+        Args:
+            resolution (int): Desired resolution of the square output image.
+            return_extent (bool): Whether to return the real-world coordinate extent.
+
+        Returns:
+            image (np.ndarray): 2D array with zone values.
+            extent (Optional[List[float]]): [xmin, xmax, ymin, ymax] real-world bounds if return_extent is True.
+        """
+        # Minimum resolution to represent smallest sectors
+        min_resolution = np.ceil(self.root.size / self.min_sector_size)
+        resolution = max(resolution, min_resolution)
+
+        image = np.ones((resolution, resolution), dtype=int) * self.n_zones
+
+        half_size = self.root.size / 2.0
+        lower_bound = self.root.center_point - half_size
+        upper_bound = self.root.center_point + half_size
+
+        world_width = self.root.size
+        pixel_size = world_width / resolution
+
+        for quad in self.leaves:
+            if quad.boundary_zone == self.n_zones:
+                continue
+
+            quad_half = quad.size / 2.0
+            quad_left = quad.center_point[0] - quad_half
+            quad_top = quad.center_point[1] + quad_half
+
+            # Image coordinates: origin is top-left
+            x_idx = int((quad_left - lower_bound[0]) / pixel_size)
+            y_idx = int((upper_bound[1] - quad_top) / pixel_size)
+            block_size = max(1, int(quad.size / pixel_size))
+
+            # Ensure bounds don't overflow image dimensions
+            x_end = min(x_idx + block_size, resolution)
+            y_end = min(y_idx + block_size, resolution)
+
+            image[y_idx:y_end, x_idx:x_end] = quad.boundary_zone
+
+        if return_extent:
+            return image, [lower_bound[0], upper_bound[0], lower_bound[1], upper_bound[1]]
+        return image
+
+
     def quad_to_image(self, quad:Optional[QuadNode] = None, resolution:int = 200, margin:float = 0.0) -> np.ndarray:
 
         if quad is None:
@@ -472,12 +522,42 @@ class QPotentailField():
 
     def __len__(self)->int:
         return len(self.field)
+    
+    def __group_points_by_quads_with_rgjs(self, points: np.ndarray, max_depth: int = 2):
+        """
+        Assign points to the deepest quad containing RGJs and group indices per quad.
 
-    def __calculate_center_point__(self, suggest_size = False) -> Union[Point, Tuple[Point, float]]:
-        return self.field.__calculate_center_point__(suggest_size=suggest_size)
+        Args:
+            points (np.ndarray): Array of points, shape (N, 2).
+            max_depth (int): Maximum quadtree depth to traverse.
+
+        Returns:
+            unique_quads (List[QuadNode]): Unique quads with RGJs.
+            quad_to_point_indices (Dict[int, List[int]]): Map from quad idx to list of point indices.
+        """
+
+        points = np.atleast_2d(points)
+        quad_chains = self.quadtree.find_quads_chain(points, max_depth=max_depth)
+
+        final_quads = []
+        for chain in quad_chains:
+            for node in reversed(chain):
+                if node.rgj_idx:
+                    final_quads.append(node)
+                    break
+            else:
+                final_quads.append(chain[0])  # fallback if no RGJs found
+
+        unique_quads, point_to_quad_idx = __deduplicate_with_index_map__(final_quads)
+        quad_to_point_indices = defaultdict(list)
+        for pt_idx, quad_idx in enumerate(point_to_quad_idx):
+            quad_to_point_indices[quad_idx].append(pt_idx)
+
+        return unique_quads, quad_to_point_indices
     
     def set_all_repulsion(self, new_repulsion):
         self.field.set_all_repulsion(new_repulsion=new_repulsion)
+        self.quadtree.build()
 
     def reload_bbox(self):
         self.field.reload_bbox()
@@ -692,10 +772,46 @@ class QPotentailField():
 
         del pop_field, pop_tree
 
-    def in_bbox(self, point:Point) -> bool:
-        return self.field.in_bbox(point=point)
+    def in_bbox(self, point: Point, max_depth: int = 2) -> bool:
+        """
+        Check if the point lies within the bounding box of any RGJ using the quadtree.
+
+        Args:
+            point (Point): The 2D point to check.
+            max_depth (int): Maximum depth to search in the quadtree.
+
+        Returns:
+            bool: True if the point lies in any RGJ bounding box.
+        """
+        point = np.array(point, dtype=np.float64)
+        quad_chain = self.quadtree.find_quads_chain([point], max_depth=max_depth)[0]
+
+        for node in reversed(quad_chain):
+            if node.rgj_idx:
+                return self.field.in_bbox(point, filted_idx=node.rgj_idx)
+
+        # fallback: search entire field if no relevant RGJs found
+        return self.field.in_bbox(point)
     
-    def find_bbox(self, point:Point) -> np.ndarray:
+    def find_bbox(self, point: Point, max_depth: int = 2) -> np.ndarray:
+        """
+        Return indices of RGJs whose bounding boxes contain the point, using the quadtree.
+
+        Args:
+            point (Point): The 2D point to check.
+            max_depth (int): Maximum depth of the quadtree to consider.
+
+        Returns:
+            np.ndarray: Indices of RGJs (global) whose bounding boxes contain the point.
+        """
+        point = np.array(point, dtype=np.float64)
+        quad_chain = self.quadtree.find_quads_chain([point], max_depth=max_depth)[0]
+
+        for node in reversed(quad_chain):
+            if node.rgj_idx:
+                return self.field.find_bbox(point, filted_idx=node.rgj_idx)
+
+        # fallback: search whole field if no relevant RGJs found
         return self.field.find_bbox(point)
     
     def repulsion_vectors(
@@ -726,29 +842,10 @@ class QPotentailField():
         """
         points = np.atleast_2d(np.array(points, dtype=np.float64))
         n_points = len(points)
-
-        # Step 1: Traverse quad chains for each point
-        quad_chains = self.quadtree.find_quads_chain(points, max_depth=max_depth)
-
-        # Step 2: Assign each point to deepest quad with RGJs
-        final_quads = []
-        for chain in quad_chains:
-            for node in reversed(chain):
-                if node.rgj_idx:
-                    final_quads.append(node)
-                    break
-            else:
-                final_quads.append(chain[0])  # fallback if all RGJ lists are empty
-
-        # Step 3: Group points by resolved quad
-        unique_quads, point_to_quad_idx = __deduplicate_with_index_map__(final_quads)
-        quad_to_point_indices = defaultdict(list)
-        for pt_idx, quad_idx in enumerate(point_to_quad_idx):
-            quad_to_point_indices[quad_idx].append(pt_idx)
-
-        # Step 4: Compute repulsion vectors per group and track RGJ references
         repulsion_vectors = np.zeros((n_points, 2), dtype=np.float64)
         rgj_reference_ids = np.zeros(n_points, dtype=int) if reference_idx else None
+
+        unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
 
         for quad_idx, pt_indices in quad_to_point_indices.items():
             quad = unique_quads[quad_idx]
@@ -778,44 +875,65 @@ class QPotentailField():
         else:
             return repulsion_vectors
         
-    def gradient(self, points: Union[np.ndarray, List[Point]], min_dist_select=True, max_depth = 1) -> np.ndarray:
-        points = np.array(points)
-        if not len(self):
-            return points*0.0
-        _, grad_idxs = self.squared_dist(points=points, reference_idx=True)
+    def gradient(self, points, min_dist_select=True, max_depth=2):
+        points = np.atleast_2d(np.array(points, dtype=np.float64))
+        n_points = len(points)
 
-        grad = np.ones((len(points), 2), dtype=float)
-        for idx in set(grad_idxs):
-            select = idx == grad_idxs
-            grad[select] = self.rgjs[idx].gradient(points[select], min_dist_select=min_dist_select)
+        if len(self.field) == 0:
+            return np.zeros((n_points, 2), dtype=float)
+
+        grad = np.zeros((n_points, 2), dtype=float)
+
+        unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
+
+        for quad_idx, pt_indices in quad_to_point_indices.items():
+            quad = unique_quads[quad_idx]
+            points_in_quad = points[pt_indices]
+
+            for rgj_idx in quad.rgj_idx:
+                grad_vecs = self.field.rgjs[rgj_idx].gradient(points_in_quad, min_dist_select=min_dist_select)
+                grad[pt_indices] += grad_vecs
 
         return grad
 
-    def eval(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
-        points = np.array(points)
-        rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
+    def eval(self, points: Union[np.ndarray, List['Point']], max_depth=2) -> np.ndarray:
+        """
+        Evaluate the potential field at given points using quadtree
+        to filter relevant RGJs efficiently.
 
-        if not len(rgjs):
-            return points.sum(1)*0.0
-        
-        return np.max(np.stack([rgj.eval(points) for rgj in rgjs], axis=1), axis=1)
+        Args:
+            points (Union[np.ndarray, List[Point]]): Points to evaluate (Nx2).
+
+        Returns:
+            np.ndarray: Evaluated potential values at each point.
+        """
+        points = np.atleast_2d(np.array(points, dtype=np.float64))
+        n_points = len(points)
+
+        if not len(self.rgjs):
+            return np.zeros(n_points, dtype=float)
+
+        unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
+
+        results = np.zeros(n_points, dtype=float)
+
+        for quad_idx, pt_indices in quad_to_point_indices.items():
+            quad = unique_quads[quad_idx]
+            rgj_indices = quad.rgj_idx
+            group_points = points[pt_indices]
+
+            if not rgj_indices:
+                results[pt_indices] = 0.0
+            else:
+                results[pt_indices] = self.field.eval(group_points, filted_idx=rgj_indices)
+
+        return results
     
     def eval_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None) -> np.ndarray:
-        if len(points) != len(idxs):
-            raise RuntimeError("The number of points doesn't match the number of indexes")
-        
-        points = np.array(points)
-        n = len(points)
-        idxs = np.array(idxs, dtype=int)
-        
-        evals = np.ones(n, dtype=points[0].dtype)
-        for idx in set(idxs):
-            select = idx == idxs
-            evals[select] = self.rgjs[idx].eval(points[select])
-
-        return evals
+        return self.field.eval_per(points=points, idxs=idxs)
     
-    def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, reference_idx = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    def squared_dist(self, points:Union[np.ndarray, List[Point]], scaled=True, inverted=True, max_depth=2, reference_idx = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+
         points = np.array(points)
         if not len(self):
             warnings.warn("There are not any RGJs elements in the field")
@@ -823,7 +941,7 @@ class QPotentailField():
                 return points.sum(1)*np.inf, -np.ones_like(points.sum(1))
             return points.sum(1)*np.inf
 
-        dists = self.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted)
+        dists = self.squared_dist_list(points=points, scaled=scaled, inverted=inverted, max_depth=max_depth)
         if reference_idx:
             min_idxs = np.argmin(dists, axis=1)
             return dists[np.arange(len(dists)), min_idxs], min_idxs
@@ -831,37 +949,60 @@ class QPotentailField():
         return np.min(dists, axis=1)
     
     def squared_dist_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
-
-        idxs = [] if idxs is None else idxs
-        n = len(points)
-
-        if n != len(idxs):
-            if not len(idxs):
-                raise RuntimeError("The number of points doesn't match the number of indexes")
-            else:
-                warnings.warn("The number of points doesn't match the number of indexes. Each point matched with each rgj")
-                idxs = np.arange(n)
-        
-        points = np.array(points)
-        idxs = np.array(idxs, dtype=int)
-        
-        dists = np.ones(n, dtype=points[0].dtype)
-        for idx in set(idxs):
-            select = idx == idxs
-            dists[select] = self.rgjs[idx].squared_dist(points[select], scaled=True, inverted=True)
-
-        return dists
+        return self.field.squared_dist_per(points=points, idxs=idxs, scaled=scaled, inverted=inverted)
     
-    def squared_dist_list(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
-        points = np.array(points)
-        rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
+    def squared_dist_list(
+        self,
+        points: Union[np.ndarray, List['Point']],
+        scaled: bool = True,
+        inverted: bool = True,
+        max_depth: int = 2
+    ) -> np.ndarray:
+        """
+        Compute squared distances from each point to all RGJs in the field, but only
+        evaluate the ones relevant per point using the quadtree. Non-relevant RGJs will
+        be set to np.inf to maintain consistent output shape.
 
-        if not len(self):
-            warnings.warn("There are not any RGJs elements in the field")
-            return np.ones((len(points), len(rgjs)))*np.inf
+        Args:
+            points (Union[np.ndarray, List[Point]]): Input points, shape (N, 2).
+            scaled (bool): Whether to scale distances.
+            inverted (bool): Whether to invert distance values.
+            max_depth (int): Max depth of quadtree search.
 
-        return np.stack([rgj.squared_dist(points, scaled=scaled, inverted=inverted) for rgj in rgjs], axis=1)
-    
+        Returns:
+            np.ndarray: Squared distances of shape (N, M), where M = total RGJs.
+        """
+        points = np.atleast_2d(np.array(points, dtype=np.float64))
+        n_points = len(points)
+        total_rgjs = len(self.field.rgjs)
+
+        if total_rgjs == 0:
+            warnings.warn("There are no RGJs in the field.")
+            return np.ones((n_points, 1)) * np.inf
+
+        dist_matrix = np.ones((n_points, total_rgjs), dtype=np.float64) * np.inf
+
+        # Group by quads that contain RGJs
+        unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
+
+        for quad_idx, pt_indices in quad_to_point_indices.items():
+            quad = unique_quads[quad_idx]
+            rgj_indices = quad.rgj_idx
+            if not rgj_indices:
+                continue
+
+            group_points = points[pt_indices]
+            group_dists = np.stack([
+                self.field.rgjs[i].squared_dist(group_points, scaled=scaled, inverted=inverted)
+                for i in rgj_indices
+            ], axis=1)
+
+            for i, pt_i in enumerate(pt_indices):
+                for j, rgj_i in enumerate(rgj_indices):
+                    dist_matrix[pt_i, rgj_i] = group_dists[i, j]
+
+        return dist_matrix
+
     def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
         route = np.array(route)
 
@@ -882,19 +1023,19 @@ class QPotentailField():
 
         return f_eval.max()
 
-    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, filted_idx:Optional[List[int]] = None) -> np.ndarray:
+    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None) -> np.ndarray:
 
         if center_point is None:
-            if self.center_point is None:
+            if self.field.center_point is None:
                 raise RuntimeError('center point for field has not been defined')
             
-            center_point = self.center_point
+            center_point = self.field.center_point
 
         if size is None:
-            if self.size is None:
+            if self.field.size is None:
                 raise RuntimeError('size of field has not been defined')
 
-            size = self.size
+            size = self.field.size
         else:
             size = np.array(size)
 
@@ -910,18 +1051,5 @@ class QPotentailField():
         xgrid, ygrid = np.meshgrid(xaxis, yaxis)
         points = np.vstack([xgrid.ravel(), ygrid.ravel()]).T
 
-        return self.eval(points, filted_idx=filted_idx).reshape((y_resolution, resolution))  
+        return self.eval(points).reshape((y_resolution, resolution))  
     
-    def toRGeoJSON(self, return_bbox=False) -> RGeoJSONCollection:\
-    
-        rgeojson = {
-            'type': 'FeatureCollection',
-            '_version_': "2D",
-            'features': [rgj.toRGeoJSON() for rgj in self.rgjs],
-            **self.extra_info
-        }
-        if return_bbox:
-            extent = self.get_extent()
-            rgeojson["bbox"] = extent[::2] + extent[1::2]
-
-        return rgeojson

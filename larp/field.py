@@ -524,13 +524,6 @@ class PotentialField():
                 self.center_point = self.__calculate_center_point__(False)
 
         return self.center_point
-    
-    def get_extent(self, margin:float = 0.0) -> List[float]:
-        size2 = self.size/2.0
-        return np.reshape([[
-                    self.center_point[ax] - size2[ax] - margin,
-                    self.center_point[ax] + size2[ax] + margin
-                ] for ax in range(len(self.center_point))], -1).tolist()
 
     def addRGJ(self, rgj:Union[RGJDict, RGJGeometry], properties:Optional[dict] = None, reload_bbox = True, **kward) -> None:
 
@@ -604,13 +597,39 @@ class PotentialField():
         if reload_bbox:
             self.reload_bbox()
    
-    def in_bbox(self, point:Point) -> bool:
+    def in_bbox(self, point: Point, filted_idx: Optional[List[int]] = None) -> bool:
+        """
+        Check if the point lies within the bounding box of any RGJ.
+
+        Args:
+            point (Point): The 2D point to check.
+            filted_idx (Optional[List[int]]): Optional subset of RGJ indices to filter.
+
+        Returns:
+            bool: True if the point is in any RGJ's bounding box.
+        """
         point = np.array(point)
-        return any([rgj.in_bbox(point) for rgj in self.rgjs])
+        rgjs = [self.rgjs[idx] for idx in filted_idx] if filted_idx is not None else self.rgjs
+
+        return any(rgj.in_bbox(point) for rgj in rgjs)
     
-    def find_bbox(self, point:Point) -> np.ndarray:
+    def find_bbox(self, point: Point, filted_idx: Optional[List[int]] = None) -> np.ndarray:
+        """
+        Return indices of RGJs whose bounding boxes contain the given point.
+
+        Args:
+            point (Point): The 2D point to check.
+            filted_idx (Optional[List[int]]): Optional subset of RGJ indices to filter.
+
+        Returns:
+            np.ndarray: Indices of RGJs (in global index space) containing the point.
+        """
         point = np.array(point)
-        return np.nonzero([rgj.in_bbox(point) for rgj in self.rgjs])[0]
+
+        if filted_idx is not None:
+            return np.array([idx for idx in filted_idx if self.rgjs[idx].in_bbox(point)])
+        else:
+            return np.nonzero([rgj.in_bbox(point) for rgj in self.rgjs])[0]
     
     def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, reference_idx = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
         points = np.array(points)
@@ -634,18 +653,23 @@ class PotentialField():
         else:
             rgjs = [self.rgjs[idx] for idx in filted_idx]
             return np.concatenate([rgj.repulsion_vector(points, min_dist_select=min_dist_select).reshape(-1, 2) for rgj in rgjs], axis=0)
-        
+    
     def gradient(self, points: Union[np.ndarray, List[Point]], min_dist_select=True) -> np.ndarray:
+
         points = np.array(points)
         if not len(self):
-            return points*0.0
-        _, grad_idxs = self.squared_dist(points=points, reference_idx=True)
-
+            return points * 0.0
+        
         grad = np.zeros((len(points), 2), dtype=float)
-        for idx in set(grad_idxs):
-            select = idx == grad_idxs
-            grad[select] = self.rgjs[idx].gradient(points[select], min_dist_select=min_dist_select)
 
+        # Use closest RGJ per point to compute gradient
+        _, grad_idxs = self.squared_dist(points=points, reference_idx=True)
+        unique_idxs = set(grad_idxs)
+        
+        for idx in unique_idxs:
+            select = (grad_idxs == idx)
+            grad[select] = self.rgjs[idx].gradient(points[select], min_dist_select=min_dist_select)
+        
         return grad
 
     def eval(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
@@ -681,9 +705,10 @@ class PotentialField():
             return points.sum(1)*np.inf
 
         dists = self.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted)
+
         if reference_idx:
             min_idxs = np.argmin(dists, axis=1)
-            return dists[np.arange(len(dists)), min_idxs], min_idxs
+            return dists[np.arange(len(dists)), min_idxs], self.arange(len(self))[min_idxs]
 
         return np.min(dists, axis=1)
     
@@ -705,7 +730,7 @@ class PotentialField():
         dists = np.ones(n, dtype=points[0].dtype)
         for idx in set(idxs):
             select = idx == idxs
-            dists[select] = self.rgjs[idx].squared_dist(points[select], scaled=True, inverted=True)
+            dists[select] = self.rgjs[idx].squared_dist(points[select], scaled=scaled, inverted=inverted)
 
         return dists
     
@@ -739,17 +764,17 @@ class PotentialField():
 
         return f_eval.max()
 
-    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, filted_idx:Optional[List[int]] = None) -> np.ndarray:
+    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, filted_idx:Optional[List[int]] = None, return_extent=True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
 
         if center_point is None:
             if self.center_point is None:
-                raise RuntimeError('center point for field has not been defined')
+                raise RuntimeError('Center point for field has not been defined')
             
             center_point = self.center_point
 
         if size is None:
             if self.size is None:
-                raise RuntimeError('size of field has not been defined')
+                raise RuntimeError('Size of field has not been defined')
 
             size = self.size
         else:
@@ -767,7 +792,13 @@ class PotentialField():
         xgrid, ygrid = np.meshgrid(xaxis, yaxis)
         points = np.vstack([xgrid.ravel(), ygrid.ravel()]).T
 
-        return self.eval(points, filted_idx=filted_idx).reshape((y_resolution, resolution))  
+        image = self.eval(points, filted_idx=filted_idx).reshape((y_resolution, resolution))
+
+        if return_extent:
+            extent = np.reshape([loc_tl[0], loc_br[0], loc_br[1], loc_tl[1]], -1).tolist()
+            return image, extent
+
+        return image
     
     def toRGeoJSON(self, return_bbox=False) -> RGeoJSONCollection:\
     

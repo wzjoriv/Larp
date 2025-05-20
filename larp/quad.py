@@ -71,7 +71,7 @@ class QuadTree():
                  maximum_length_limit:float = np.inf,
                  edge_bounds:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
                  size:Optional[float] = None,
-                 conservative:bool = True,
+                 conservative:bool = False,
                  build_tree:bool = True) -> None:
         
         self.field = field
@@ -130,7 +130,6 @@ class QuadTree():
             vectors = vectors.reshape(-1, 2)
             uni_vectors = vectors/np.linalg.norm(vectors, axis=1, keepdims=True)
 
-            # TODO: Ensure squared distance is per rgj
             dist_sqr = self.field.squared_dist_per(center_point - uni_vectors*(size/np.sqrt(2)), idxs=rgjs_idx).ravel()
 
             zones[not_zone0_select] = np.digitize(dist_sqr, self.__zones_rad_ln, right=True) + 1
@@ -494,7 +493,7 @@ class QuadNode():
     def __str__(self) -> str:
         return f"Qd({self.center_point.tolist()}, {self.size})"
 
-class QPotentailField():
+class QPotentailField(PotentialField):
 
     """ Potential Field class optimized by quadtree and to maintain them linked
     
@@ -542,7 +541,7 @@ class QPotentailField():
         final_quads = []
         for chain in quad_chains:
             for node in reversed(chain):
-                if node.rgj_idx:
+                if len(node.rgj_idx):
                     final_quads.append(node)
                     break
             else:
@@ -570,15 +569,14 @@ class QPotentailField():
     
     def addField(self, new_field: PotentialField, reload_bbox=True):
         """
-        Adds all RGJs from another potential field to this field and update quadtree to replect it.
+        Adds all RGJs from another potential field to this field and updates the quadtree accordingly.
 
         Args:
             new_field (PotentialField): A potential field containing RGJs to add.
-            reload_bbox (bool, optional): Whether to recompute the bounding box after addition.
-                                        Defaults to True.
+            reload_bbox (bool, optional): Whether to recompute the bounding box after addition. Defaults to True.
 
         Returns:
-            np.ndarray: Indices in field corresponding to the newly added RGJs.
+            np.ndarray: Indices in the field corresponding to the newly added RGJs.
         """
 
         if self.quadtree.conservative:
@@ -587,73 +585,75 @@ class QPotentailField():
 
         n_original = len(self.field)
 
-        # Add rgjs to field
+        # Add RGJs to field
+        
         self.field.addField(new_field=new_field, reload_bbox=reload_bbox)
 
+        # Align new_field geometry with main field
         new_field.reload_center_point(False)
         new_field.center_point = self.field.center_point
         new_field.size = self.field.size
 
-        # create new quadtree for new_field
-        new_qtree = QuadTree(new_field,
-                            minimum_length_limit=self.quadtree.min_sector_size,
-                            edge_bounds=self.quadtree.edge_bounds,
-                            size=self.quadtree.size,
-                            build_tree=True)
+        # Build temporary quadtree for new_field (not conservative!)
+        new_qtree = QuadTree(
+            new_field,
+            minimum_length_limit=self.quadtree.min_sector_size,
+            edge_bounds=self.quadtree.edge_bounds,
+            size=self.quadtree.size,
+            build_tree=True,
+            conservative=False
+        )
 
-        # Shift rgj indices in new quadtree by original length
+        # Shift all RGJ indices in new quadtree
         def update_idx(quad: QuadNode):
-            if quad is None:
+            if quad is None or len(quad.rgj_idx) == 0:
                 return
-            quad.rgj_idx = quad.rgj_idx + n_original
+            quad.rgj_idx += n_original
             for child in quad.children:
                 update_idx(child)
 
         update_idx(new_qtree.root)
 
-        def update_quad(rootquad: QuadNode, newquad: QuadNode) -> bool:
-            """
-            Returns whether to update branch of tree or not, and updates if so.
-            """
+        # Merge new quadtree into existing one
+        def update_quad(rootquad: QuadNode, newquad: QuadNode):
             if newquad is None or newquad.boundary_zone == self.quadtree.n_zones:
-                return False
+                return
 
             # Merge zone info
             if newquad.boundary_zone < rootquad.boundary_zone:
                 rootquad.boundary_zone = newquad.boundary_zone
                 rootquad.boundary_max_range = newquad.boundary_max_range
 
-            # Efficiently concatenate rgj indices and zones
+            # Merge RGJ indices and zones
             if len(newquad.rgj_idx) > 0:
                 rootquad.rgj_idx = np.concatenate([rootquad.rgj_idx, newquad.rgj_idx])
                 rootquad.rgj_zones = np.concatenate([rootquad.rgj_zones, newquad.rgj_zones])
 
+            # If root is leaf and new is not, convert to branch
             if rootquad.leaf and not newquad.leaf:
-                return True
+                self.quadtree.leaves.discard(rootquad)
+                rootquad.children = [None] * len(rootquad.chdToIdx)
+                rootquad.neighbors = [None] * len(rootquad.nghToIdx)
+                rootquad.leaf = False
 
+            # Recurse into children
             for child in ['tl', 'tr', 'bl', 'br']:
-                if update_quad(rootquad[child], newquad[child]):
-                    if rootquad[child] is None:
-                        self.quadtree.replace_branch(rootquad, child, newquad)
-                    else:
-                        if (rootquad[child].rgj_idx < n_original).any():
-                            self.quadtree.leaves -= self.quadtree.search_leaves(rootquad[child])
+                nq = newquad[child]
+                rq = rootquad[child]
 
-                            rootquad[child] = self.quadtree.__build__(
-                                rootquad[child].center_point,
-                                rootquad[child].size,
-                                filter_idx=rootquad[child].rgj_idx
-                            )
-                        else:
-                            self.quadtree.replace_branch(rootquad, child, newquad)
+                if nq is None:
+                    continue
 
-            return False
+                if rq is None:
+                    self.quadtree.replace_branch(rootquad, child, newquad)
+                else:
+                    update_quad(rq, nq)
 
         update_quad(self.quadtree.root, new_qtree.root)
 
         return np.arange(n_original, len(self.field))
 
-    def addRGJ(self, rgj:Union[RGJDict, RGJGeometry], properties:Optional[dict] = None, reload_bbox = True, **kward) -> None:
+    def addRGJ(self, rgj:Union[RGJDict, RGJGeometry], properties:Optional[dict] = None, reload_bbox = True, **kward) -> List[int]:
 
         if not isinstance(rgj, RGJGeometry):
             if not isinstance(rgj, dict) or "type" not in rgj:
@@ -667,110 +667,85 @@ class QPotentailField():
         
         new_field = PotentialField([rgj])
 
-        self.addField(new_field=new_field, reload_bbox=reload_bbox)
+        return self.addField(new_field=new_field, reload_bbox=reload_bbox)
 
-    def delRGJ(self, idxs: Union[int, List[int]], pop_field=False, pop_tree=False, reload_bbox=True):
+    def delRGJ(self, idxs: Union[int, List[int]], reload_bbox=True, pop_field=False, pop_tree=False):
         if self.quadtree.conservative:
-            warnings.warn("Quadtree made not conservative")
+            warnings.warn("Quadtree made non-conservative")
             self.quadtree.conservative = False
 
         idxs = np.unique([idxs] if isinstance(idxs, int) else idxs)
         idxs.sort()
+
+        # Step 1: Store deleted RGJs before removing from field
         rgjs = [self.field.rgjs[idx] for idx in idxs]
-        min_idx = idxs[0]
+        self.field.delRGJ(idxs, reload_bbox=reload_bbox)
 
-        search_field = PotentialField(rgjs)
-        search_field.reload_center_point(False)
-        search_field.center_point = self.field.center_point
-        search_field.size = self.field.size
-
-        search_qtree = QuadTree(search_field,
-                                minimum_length_limit=self.quadtree.min_sector_size,
-                                edge_bounds=self.quadtree.edge_bounds,
-                                size=self.quadtree.size,
-                                build_tree=True)
-
-        # Remove rgjs from field
-        self.field.delRGJ(idxs)
-
-        def update_rgj_index(quad: QuadNode):
+        # Step 2: Traverse quadtree and update nodes
+        def clean_quad(quad: QuadNode):
             if quad is None:
-                return
+                return False
 
-            original_idx = quad.rgj_idx.copy()
-            # Boolean masks
-            mask_gt = original_idx > idxs[:, None]  # Broadcast for all idxs
-            mask_eq = np.isin(original_idx, idxs)
+            # --- Early exit if no relevant RGJs in this quad or its children ---
+            if np.intersect1d(quad.rgj_idx, idxs).size == 0:
+                return False
 
-            # Subtract 1 for each index greater than idxs (efficiently handle multiple idxs)
-            shift = np.sum(mask_gt, axis=0)
-            quad.rgj_idx = quad.rgj_idx - shift
-
-            # Remove indices matching those deleted
-            keep_mask = ~mask_eq
+            # --- Remove deleted indices ---
+            keep_mask = ~np.isin(quad.rgj_idx, idxs) #TODO: add assume unique
             quad.rgj_idx = quad.rgj_idx[keep_mask]
             quad.rgj_zones = quad.rgj_zones[keep_mask]
 
-            # Update boundary_zone based on remaining rgj_zones or reset
-            quad.boundary_zone = min(quad.rgj_zones) if len(quad.rgj_idx) > 0 else self.quadtree.n_zones
+            # --- Shift remaining indices downward ---
+            shift = np.searchsorted(idxs, quad.rgj_idx, side="right")
+            quad.rgj_idx = quad.rgj_idx - shift
 
-        def recursive_update_rgj_index(quad: QuadNode):
-            if quad is None or len(quad.rgj_idx) == 0 or all(quad.rgj_idx < min_idx):
-                return
-            update_rgj_index(quad)
-            for child in quad.children:
-                recursive_update_rgj_index(child)
+            # --- Update boundary zone ---
+            quad.boundary_zone = min(quad.rgj_zones) if len(quad.rgj_zones) > 0 else self.quadtree.n_zones
 
-        def update_quad(rootquad: Optional[QuadNode], delquad: Optional[QuadNode]):
-            if rootquad is None:
+            # --- Recurse if not leaf ---
+            removed_all = True
+            if not quad.leaf:
+                for child in ['tl', 'tr', 'bl', 'br']:
+                    if not clean_quad(quad[child]):
+                        removed_all = False
+
+                # Try merging children if all were removed
+                if removed_all and quad.size <= self.quadtree.max_sector_size:
+                    children = [quad[child] for child in ['tl', 'tr', 'bl', 'br']]
+                    if all(child.boundary_zone == self.quadtree.n_zones for child in children):
+                        self.quadtree.leaves -= self.quadtree.search_leaves(quad)
+                        quad.children = [None] * len(quad.chdToIdx)
+                        quad.neighbors = [None] * len(quad.nghToIdx)
+                        self.quadtree.mark_leaf(quad)
+                        return True
+                    
                 return False
 
-            if delquad is None:
-                recursive_update_rgj_index(rootquad)
-                return False
+            # --- Return whether this leaf is now empty ---
+            return quad.boundary_zone == self.quadtree.n_zones
 
-            # Remove deleted indices from rootquad
-            mask = ~np.isin(rootquad.rgj_idx, idxs)
-            rootquad.rgj_idx = rootquad.rgj_idx[mask]
-            rootquad.rgj_zones = rootquad.rgj_zones[mask]
+        clean_quad(self.quadtree.root)
 
-            # Update boundary zone consistency
-            if delquad.boundary_zone == rootquad.boundary_zone:
-                rootquad.boundary_zone = min(rootquad.rgj_zones) if len(rootquad.rgj_idx) > 0 else self.quadtree.n_zones
-            elif len(rootquad.rgj_idx) == 0:
-                rootquad.boundary_zone = self.quadtree.n_zones
-
-            update_rgj_index(rootquad)
-
-            if rootquad.leaf and rootquad.boundary_zone == self.quadtree.n_zones:
-                return True
-
-            if all(update_quad(rootquad[child], delquad[child]) for child in ['tl', 'tr', 'bl', 'br']):
-                # Merge if possible
-                if rootquad.size <= self.quadtree.max_sector_size and \
-                all(rootquad[child].boundary_zone == self.quadtree.n_zones for child in ['tl', 'tr', 'bl', 'br']) and \
-                rootquad.boundary_zone == self.quadtree.n_zones:
-
-                    self.quadtree.leaves -= self.quadtree.search_leaves(rootquad)
-
-                    del rootquad.children
-                    rootquad.children = [None] * len(rootquad.chdToIdx)
-                    rootquad.neighbors = [None] * len(rootquad.nghToIdx)
-                    self.quadtree.mark_leaf(rootquad)
-                    return True
-
-            return False
-
-        update_quad(self.quadtree.root, search_qtree.root)
-
+        # Step 3: Optionally return removed data
         if pop_field or pop_tree:
+            search_field = PotentialField(rgjs)
+            search_field.reload_center_point(False)
+            search_field.center_point = self.field.center_point
+            search_field.size = self.field.size
+
             if pop_field and not pop_tree:
                 return search_field
+
+            search_qtree = QuadTree(search_field,
+                                    minimum_length_limit=self.quadtree.min_sector_size,
+                                    edge_bounds=self.quadtree.edge_bounds,
+                                    size=self.quadtree.size,
+                                    build_tree=True)
+
             if pop_tree and not pop_field:
                 return search_qtree
-            return search_field, search_qtree
 
-        del pop_field, pop_tree
+            return search_field, search_qtree
 
     def in_bbox(self, point: Point, max_depth: int = 2) -> bool:
         """
@@ -910,7 +885,7 @@ class QPotentailField():
         points = np.atleast_2d(np.array(points, dtype=np.float64))
         n_points = len(points)
 
-        if not len(self.rgjs):
+        if not len(self.field.rgjs):
             return np.zeros(n_points, dtype=float)
 
         unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
@@ -922,7 +897,7 @@ class QPotentailField():
             rgj_indices = quad.rgj_idx
             group_points = points[pt_indices]
 
-            if not rgj_indices:
+            if not len(rgj_indices):
                 results[pt_indices] = 0.0
             else:
                 results[pt_indices] = self.field.eval(group_points, filted_idx=rgj_indices)
@@ -1003,27 +978,27 @@ class QPotentailField():
 
         return dist_matrix
 
-    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:FieldScaleTransform = lambda x: x, max_depth:int = 2) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
         points = points if n <= 0 else points[:-1]
 
-        f_eval = scale_transform(self.eval(points=points))
+        f_eval = scale_transform(self.eval(points=points, max_depth=max_depth))
 
         return f_eval.sum()*step
     
-    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:FieldScaleTransform = lambda x: x, max_depth:int = 2) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
         points = points if n <= 0 else points[:-1]
 
-        f_eval:np.ndarray = scale_transform(self.eval(points=points))
+        f_eval:np.ndarray = scale_transform(self.eval(points=points, max_depth=max_depth))
 
         return f_eval.max()
 
-    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None) -> np.ndarray:
+    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, max_depth:int = 2, return_extent=True) -> np.ndarray:
 
         if center_point is None:
             if self.field.center_point is None:
@@ -1051,5 +1026,11 @@ class QPotentailField():
         xgrid, ygrid = np.meshgrid(xaxis, yaxis)
         points = np.vstack([xgrid.ravel(), ygrid.ravel()]).T
 
-        return self.eval(points).reshape((y_resolution, resolution))  
+        image = self.eval(points, max_depth=max_depth).reshape((y_resolution, resolution))
+
+        if return_extent:
+            extent = np.reshape([loc_tl[0], loc_br[0], loc_br[1], loc_tl[1]], -1).tolist()
+            return image, extent
+
+        return image
     

@@ -200,18 +200,34 @@ class RoutingNetwork(Network):
         self.__fill_shallow_neighs__()
         self.__build_graph__()
 
-    def refresh(self):
-        # delete old reference
-        remove_from_nodes = self._graph.keys - self.quadtree.leaves
-        add_to_nodes = self.quadtree.leaves - self._graph.keys
+    def refresh(self, full_rebuild=False):
+        """
+        Refresh the routing network after the quadtree has changed.
 
-        for node in remove_from_nodes:
-            self.remove(node)
-            del node
+        - Removes references to obsolete nodes.
+        - Adds new nodes.
+        - Rebuilds shallow neighbors and connections for the new nodes.
+        """
+        if full_rebuild:
+            self._graph.clear()
+            self.build()
+        else:
+            current_nodes = set(self._graph.keys())
+            new_leaves = set(self.quadtree.leaves)
 
-        # add new references
-        self.__fill_shallow_neighs__()
-        self.__build_graph__(add_to_nodes, overwrite_directed=False)
+            # Nodes to remove (no longer leaves)
+            removed_nodes = current_nodes - new_leaves
+            for node in removed_nodes:
+                self.remove(node)  # Also removes node from neighbors
+
+            # Nodes to add (new leaves not already in graph)
+            added_nodes = new_leaves - current_nodes
+
+            # Fill shallow neighbors before building connections
+            self.__fill_shallow_neighs__()
+
+            if added_nodes:
+                self.__build_graph__(leaves=list(added_nodes), overwrite_directed=False)
 
     @staticmethod
     def calculate_distance(node_from:QuadNode, node_to:QuadNode, penalty_transform:FieldScaleTransform=lambda x: 1.0 + x, scaled=True, max_penalty: float = np.inf):

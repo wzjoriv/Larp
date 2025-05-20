@@ -670,6 +670,25 @@ class QPotentailField(PotentialField):
         return self.addField(new_field=new_field, reload_bbox=reload_bbox)
 
     def delRGJ(self, idxs: Union[int, List[int]], reload_bbox=True, pop_field=False, pop_tree=False):
+        """
+        Deletes one or more RGJs from the potential field and updates the quadtree to reflect these deletions.
+
+        This involves:
+        - Removing the RGJs from the field.
+        - Traversing and cleaning the quadtree to update indices, remove deleted references, 
+        and merge empty branches if possible.
+        - Optionally returning the deleted RGJs as a field or quadtree for backup or reuse.
+
+        Args:
+            idxs (int or List[int]): Index or indices of RGJs to remove.
+            reload_bbox (bool): Whether to recompute the bounding box of the field. Defaults to True.
+            pop_field (bool): If True, return a PotentialField containing the removed RGJs.
+            pop_tree (bool): If True, return a QuadTree built on the removed RGJs.
+
+        Returns:
+            Optional[PotentialField, QuadTree, Tuple]: Depending on `pop_field` and `pop_tree`, 
+                returns the removed RGJs as a PotentialField, a QuadTree, or both.
+        """
         if self.quadtree.conservative:
             warnings.warn("Quadtree made non-conservative")
             self.quadtree.conservative = False
@@ -686,42 +705,34 @@ class QPotentailField(PotentialField):
             if quad is None:
                 return False
 
-            # --- Early exit if no relevant RGJs in this quad or its children ---
             if np.intersect1d(quad.rgj_idx, idxs).size == 0:
-                return False
+                return quad.boundary_zone == self.quadtree.n_zones
 
-            # --- Remove deleted indices ---
-            keep_mask = ~np.isin(quad.rgj_idx, idxs) #TODO: add assume unique
+            # --- Update quad nodes ---
+            keep_mask = ~np.isin(quad.rgj_idx, idxs, assume_unique=True)
             quad.rgj_idx = quad.rgj_idx[keep_mask]
             quad.rgj_zones = quad.rgj_zones[keep_mask]
 
-            # --- Shift remaining indices downward ---
             shift = np.searchsorted(idxs, quad.rgj_idx, side="right")
-            quad.rgj_idx = quad.rgj_idx - shift
+            quad.rgj_idx -= shift
 
-            # --- Update boundary zone ---
-            quad.boundary_zone = min(quad.rgj_zones) if len(quad.rgj_zones) > 0 else self.quadtree.n_zones
+            quad.boundary_zone = (
+                min(quad.rgj_zones) if len(quad.rgj_zones) > 0 else self.quadtree.n_zones
+            )
 
-            # --- Recurse if not leaf ---
-            removed_all = True
+            # --- Attempt early merge (before recursion) ---
+            if not quad.leaf and quad.size <= self.quadtree.max_sector_size and quad.boundary_zone == self.quadtree.n_zones:
+                self.quadtree.leaves -= self.quadtree.search_leaves(quad)
+                quad.children = [None] * len(quad.chdToIdx)
+                quad.neighbors = [None] * len(quad.nghToIdx)
+                self.quadtree.mark_leaf(quad)
+                return True
+
+            # --- Recurse if not a leaf ---
             if not quad.leaf:
                 for child in ['tl', 'tr', 'bl', 'br']:
-                    if not clean_quad(quad[child]):
-                        removed_all = False
+                    clean_quad(quad[child])
 
-                # Try merging children if all were removed
-                if removed_all and quad.size <= self.quadtree.max_sector_size:
-                    children = [quad[child] for child in ['tl', 'tr', 'bl', 'br']]
-                    if all(child.boundary_zone == self.quadtree.n_zones for child in children):
-                        self.quadtree.leaves -= self.quadtree.search_leaves(quad)
-                        quad.children = [None] * len(quad.chdToIdx)
-                        quad.neighbors = [None] * len(quad.nghToIdx)
-                        self.quadtree.mark_leaf(quad)
-                        return True
-                    
-                return False
-
-            # --- Return whether this leaf is now empty ---
             return quad.boundary_zone == self.quadtree.n_zones
 
         clean_quad(self.quadtree.root)
@@ -736,11 +747,13 @@ class QPotentailField(PotentialField):
             if pop_field and not pop_tree:
                 return search_field
 
-            search_qtree = QuadTree(search_field,
-                                    minimum_length_limit=self.quadtree.min_sector_size,
-                                    edge_bounds=self.quadtree.edge_bounds,
-                                    size=self.quadtree.size,
-                                    build_tree=True)
+            search_qtree = QuadTree(
+                search_field,
+                minimum_length_limit=self.quadtree.min_sector_size,
+                edge_bounds=self.quadtree.edge_bounds,
+                size=self.quadtree.size,
+                build_tree=True
+            )
 
             if pop_tree and not pop_field:
                 return search_qtree

@@ -10,6 +10,7 @@ from larp.types import FieldScaleTransform, RGJDict, FieldSize, Point, RGeoJSONC
 Author: Josue N Rivera
 
 x are assumed to be a list of point coordinates in euclidean space
+
 """
 
 class RGJGeometry():

@@ -1,6 +1,6 @@
+from __future__ import annotations
 from typing import List, Optional, Tuple, Union
 import warnings
-from __future__ import annotations
 
 import numpy as np
 import larp.fn as lpf
@@ -696,19 +696,21 @@ class PotentialField():
 
         return evals
     
-    def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, reference_idx = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, return_reference = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         points = np.array(points)
         if not len(self):
             warnings.warn("There are not any RGJs elements in the field")
-            if reference_idx:
+            if return_reference:
                 return points.sum(1)*np.inf, -np.ones_like(points.sum(1))
             return points.sum(1)*np.inf
 
         dists = self.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted)
 
-        if reference_idx:
+        if return_reference:
             min_idxs = np.argmin(dists, axis=1)
-            return dists[np.arange(len(dists)), min_idxs], self.arange(len(self))[min_idxs]
+
+            filted_idx = filted_idx if filted_idx is not None else np.arange(len(self))
+            return dists[np.arange(len(dists)), min_idxs], filted_idx[min_idxs]
 
         return np.min(dists, axis=1)
     

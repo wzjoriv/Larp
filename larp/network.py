@@ -54,10 +54,8 @@ class Network(object):
                 cxns.remove(node)
             except KeyError:
                 pass
-        try:
-            del self._graph[node]
-        except KeyError:
-            pass
+        
+        self._graph.pop(node)
 
     def is_connected(self, node1, node2):
         """ Is node1 directly connected to node2 """
@@ -106,7 +104,7 @@ class RoutingNetwork(Network):
         'l':  ['tr', 'br']
     }
 
-    def __init__(self, quadtree:QuadTree, directed:bool=False, build_network:bool=False):
+    def __init__(self, quadtree:QuadTree, directed:bool=False, build_network:bool=True):
         self.quadtree = quadtree
         super().__init__(directed=directed)
 
@@ -121,6 +119,9 @@ class RoutingNetwork(Network):
         self.routing_algs[name.lower()] = algorithm
 
     def __fill_shallow_neighs__(self, root:Optional[QuadNode] = None):
+
+        if root is None:
+            root = self.quadtree.root
 
         def outer_edge_fill(quad:QuadNode, child = 'tl', side = 't'):
             child_quad = quad[child]
@@ -169,9 +170,6 @@ class RoutingNetwork(Network):
 
             for quad_loc in [qtl, qtr, qbl, qbr]:
                 dfs(quad_loc)
-        
-        if root is None:
-            root = self.quadtree.root
 
         dfs(root)
 
@@ -202,7 +200,7 @@ class RoutingNetwork(Network):
 
     def refresh(self, full_rebuild=False):
         """
-        Refresh the routing network after the quadtree has changed.
+        Refreshes the routing network after the quadtree has changed.
 
         - Removes references to obsolete nodes.
         - Adds new nodes.

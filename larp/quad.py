@@ -8,7 +8,7 @@ from larp import PotentialField
 
 import larp.fn as lpf
 from larp.field import RGJGeometry
-from larp.types import FieldScaleTransform, FieldSize, Point, RGJDict, RepulsionVectorsAndRef
+from larp.types import FieldScaleTransform, FieldSize, Point, RGJDict
 
 """
 Author: Josue N Rivera
@@ -368,7 +368,7 @@ class QuadTree():
         self.root = __load_quad__(data['root'])
         self.leaves = self.search_leaves()
 
-    def to_image(self, resolution: int = 200, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
+    def to_image(self, resolution: int = 200, return_potential = False, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
         """
         Render a top-down raster image of the quadtree zoning layout.
 
@@ -377,11 +377,12 @@ class QuadTree():
             return_extent (bool): Whether to return the real-world coordinate extent.
 
         Returns:
-            image (np.ndarray): 2D array with zone values.
+            image (np.ndarray): 2D array with potential or zone values of sectors.
             extent (Optional[List[float]]): [xmin, xmax, ymin, ymax] real-world bounds if return_extent is True.
         """
         # Minimum resolution to represent smallest sectors
-        min_resolution = np.ceil(self.root.size / self.min_sector_size)
+        
+        min_resolution = int(np.ceil(np.log2(self.root.size / self.min_sector_size))+1)
         resolution = max(resolution, min_resolution)
 
         image = np.ones((resolution, resolution), dtype=int) * self.n_zones
@@ -411,6 +412,9 @@ class QuadTree():
             y_end = min(y_idx + block_size, resolution)
 
             image[y_idx:y_end, x_idx:x_end] = quad.boundary_zone
+
+        if return_potential:
+            image = self.ZONEToMaxRANGE[image]
 
         if return_extent:
             return image, [lower_bound[0], upper_bound[0], lower_bound[1], upper_bound[1]]
@@ -615,7 +619,7 @@ class QPotentailField(PotentialField):
         update_idx(new_qtree.root)
 
         # Merge new quadtree into existing one
-        def update_quad(rootquad: QuadNode, newquad: QuadNode):
+        def update_quad(rootquad: QuadNode, newquad: Optional[QuadNode]):
             if newquad is None or newquad.boundary_zone == self.quadtree.n_zones:
                 return
 
@@ -631,7 +635,7 @@ class QPotentailField(PotentialField):
 
             # If root is leaf and new is not, convert to branch
             if rootquad.leaf and not newquad.leaf:
-                self.quadtree.leaves.discard(rootquad)
+                self.quadtree.leaves.remove(rootquad)
                 rootquad.children = [None] * len(rootquad.chdToIdx)
                 rootquad.neighbors = [None] * len(rootquad.nghToIdx)
                 rootquad.leaf = False
@@ -641,11 +645,8 @@ class QPotentailField(PotentialField):
                 nq = newquad[child]
                 rq = rootquad[child]
 
-                if nq is None:
-                    continue
-
                 if rq is None:
-                    self.quadtree.replace_branch(rootquad, child, newquad)
+                    self.quadtree.replace_branch(rootquad, child, nq)
                 else:
                     update_quad(rq, nq)
 

@@ -368,7 +368,7 @@ class QuadTree():
         self.root = __load_quad__(data['root'])
         self.leaves = self.search_leaves()
 
-    def to_image(self, resolution: int = 200, return_potential = False, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
+    def to_image(self, resolution: int = 200, return_potential = True, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
         """
         Render a top-down raster image of the quadtree zoning layout.
 
@@ -694,8 +694,8 @@ class QPotentailField(PotentialField):
             warnings.warn("Quadtree made non-conservative")
             self.quadtree.conservative = False
 
-        idxs = np.unique([idxs] if isinstance(idxs, int) else idxs)
-        idxs.sort()
+        idxs = np.atleast_1d(idxs)
+        idxs = np.unique(idxs % len(self))[::-1]  # Wrap, deduplicate, and reverse sort
 
         # Step 1: Store deleted RGJs before removing from field
         rgjs = [self.field.rgjs[idx] for idx in idxs]
@@ -730,9 +730,8 @@ class QPotentailField(PotentialField):
                 return True
 
             # --- Recurse if not a leaf ---
-            if not quad.leaf:
-                for child in ['tl', 'tr', 'bl', 'br']:
-                    clean_quad(quad[child])
+            for child in ['tl', 'tr', 'bl', 'br']:
+                clean_quad(quad[child])
 
             return quad.boundary_zone == self.quadtree.n_zones
 
@@ -1012,7 +1011,7 @@ class QPotentailField(PotentialField):
 
         return f_eval.max()
 
-    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, max_depth:int = 2, return_extent=True) -> np.ndarray:
+    def to_image(self, resolution:int = 400, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, max_depth:int = 2, return_extent=True) -> np.ndarray:
 
         if center_point is None:
             if self.field.center_point is None:

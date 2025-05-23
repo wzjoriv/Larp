@@ -572,19 +572,17 @@ class PotentialField():
         if self.__reload_center:
             self.center_point = self.__calculate_center_point__()
 
-    def delRGJ(self, idxs: Union[int, List[int]], reload_bbox=True) -> None:
+    def delRGJ(self, idxs: Union[int, List[int], np.ndarray], reload_bbox: bool = True) -> None:
         """
-        Removes one or more RGJs from the field by their index.
+        Removes one or more RGJs from the field by their indices.
 
         Args:
-            idxs (Union[int, List[int]]): A single index or list of indices to remove.
-            reload_bbox (bool, optional): Whether to recompute the bounding box after deletion.
-                                        Defaults to True.
+            idxs (Union[int, List[int], np.ndarray]): A single index, list of indices, or 1D numpy array of indices to remove.
+            reload_bbox (bool, optional): Whether to recompute the bounding box after deletion. Defaults to True.
         """
-        # Ensure idxs is a list of unique, sorted integers in reverse order
-        if isinstance(idxs, int):
-            idxs = [idxs]
-        idxs = sorted(set(idxs), reverse=True)
+        # Normalize input and wrap indices within range
+        idxs = np.atleast_1d(idxs)
+        idxs = np.unique(idxs % len(self))[::-1]  # Wrap, deduplicate, and reverse sort
 
         # Delete RGJs from highest to lowest index to avoid reindexing errors
         for idx in idxs:

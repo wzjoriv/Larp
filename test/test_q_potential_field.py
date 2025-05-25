@@ -208,11 +208,13 @@ def test_add_rgj_idx_passed():
     qfield.addRGJ(larp.PointRGJ((55, 55), repulsion=[[25, 0], [0, 25]]))
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
+        assert all(np.array(quad.rgj_idx) < len(field)), f"Quad's rgj indexes {quad.rgj_idx} are out of bound"
+
         if quad.leaf:
             return
         
         for child in quad.children:
-            assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child [{str(child)}] rgj idxs are not a subset of {str(quad)}'s"
+            assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child {str(child)} rgj idxs are not a subset of {str(quad)}'s: child = {child.rgj_idx} | parent = {quad.rgj_idx}"
             assert child.boundary_zone >= quad.boundary_zone, f"Child {str(child)} boundary zone is higher than {str(quad)}'s"
 
         for child in quad.children:
@@ -252,16 +254,17 @@ def test_remove_rgj_idx_passed():
                                   build_tree=True)
     
     qfield = larp.QPotentailField(field_quadtree=quadtree)
-    qfield.delRGJ([4, 3, 2])
+    qfield.delRGJ([2, 3])
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
+        assert all(np.array(quad.rgj_idx) < len(field)), f"Quad's rgj indexes {quad.rgj_idx} are out of bound"
+        
         if quad.leaf:
             return
         
         for child in quad.children:
+            assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child {str(child)} rgj idxs are not a subset of {str(quad)}'s: child = {child.rgj_idx} | parent = {quad.rgj_idx}"
             assert child.boundary_zone >= quad.boundary_zone, f"Child {str(child)} boundary zone is higher than {str(quad)}'s"
-
-            assert set(child.rgj_idx) <= set(quad.rgj_idx), f"Child {str(child)} rgj idxs are not a subset of {str(quad)}'s: child: {child.rgj_idx} | parent: {quad.rgj_idx}"
             
             get_rgj_idx(child)
         

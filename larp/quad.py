@@ -368,12 +368,12 @@ class QuadTree():
         self.root = __load_quad__(data['root'])
         self.leaves = self.search_leaves()
 
-    def to_image(self, resolution: int = 200, return_potential = True, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
+    def to_image(self, return_potential = False, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
         """
         Render a top-down raster image of the quadtree zoning layout.
 
         Args:
-            resolution (int): Desired resolution of the square output image.
+            return_potential (bool): Whether to return the potential limit of each zone.
             return_extent (bool): Whether to return the real-world coordinate extent.
 
         Returns:
@@ -381,9 +381,7 @@ class QuadTree():
             extent (Optional[List[float]]): [xmin, xmax, ymin, ymax] real-world bounds if return_extent is True.
         """
         # Minimum resolution to represent smallest sectors
-        
-        min_resolution = int(np.ceil(np.log2(self.root.size / self.min_sector_size))+1)
-        resolution = max(resolution, min_resolution)
+        resolution = 2**int(np.log2(self.root.size / self.min_sector_size))
 
         image = np.ones((resolution, resolution), dtype=int) * self.n_zones
 
@@ -405,7 +403,7 @@ class QuadTree():
             # Image coordinates: origin is top-left
             x_idx = int((quad_left - lower_bound[0]) / pixel_size)
             y_idx = int((upper_bound[1] - quad_top) / pixel_size)
-            block_size = max(1, int(quad.size / pixel_size))
+            block_size = max(1, int(np.ceil(quad.size / pixel_size)))
 
             # Ensure bounds don't overflow image dimensions
             x_end = min(x_idx + block_size, resolution)

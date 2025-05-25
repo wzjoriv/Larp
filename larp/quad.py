@@ -116,7 +116,7 @@ class QuadTree():
         n_rgjs = len(filter_idx)
         zones = np.ones(n_rgjs, dtype=int) * self.n_zones
 
-        rep_vectors, refs_idxs = self.field.repulsion_vectors([center_point], filted_idx=filter_idx, min_dist_select=True, reference_idx=True)
+        rep_vectors, refs_idxs = self.field.repulsion_vectors([center_point], filted_idx=filter_idx, min_dist_select=True, return_reference=True)
 
         dist_sqr = (rep_vectors*rep_vectors).sum(1)
         zone0_select = dist_sqr <= (size*size)/2.0
@@ -707,17 +707,27 @@ class QPotentailField(PotentialField):
         deleted[idxs] = True
         shift_map = shift_map - np.cumsum(deleted)
 
+        def shift_recursive(quad: QuadNode):
+            if quad is None or quad.rgj_idx.size == 0:
+                return
+            
+            quad.rgj_idx = shift_map[quad.rgj_idx]
+            if not quad.leaf:
+                for child in ['tl', 'tr', 'bl', 'br']:
+                    shift_recursive(quad[child])
+
         # Step 3: Traverse quadtree and update nodes
         def clean_quad(quad: QuadNode):
             if quad is None:
-                return False
+                return
 
             # --- Filter out deleted RGJ indices ---
             keep_mask = ~np.isin(quad.rgj_idx, idxs, assume_unique=True)
 
             # If no RGJs in this quad are being deleted, skip processing
             if np.all(keep_mask):
-                return quad.boundary_zone == self.quadtree.n_zones
+                shift_recursive(quad)
+                return
 
             # --- Apply filtering ---
             quad.rgj_idx = shift_map[quad.rgj_idx[keep_mask]]
@@ -731,14 +741,12 @@ class QPotentailField(PotentialField):
                 quad.children = [None] * len(quad.chdToIdx)
                 quad.neighbors = [None] * len(quad.nghToIdx)
                 self.quadtree.mark_leaf(quad)
-                return True
+                return
 
             # --- Recurse if not a leaf ---
             if not quad.leaf and quad.rgj_idx.size > 0:
                 for child in ['tl', 'tr', 'bl', 'br']:
                     clean_quad(quad[child])
-
-            return quad.boundary_zone == self.quadtree.n_zones
 
         clean_quad(self.quadtree.root)
 
@@ -811,7 +819,7 @@ class QPotentailField(PotentialField):
         self,
         points: Union[np.ndarray, List['Point']],
         min_dist_select: bool = True,
-        reference_idx: bool = False,
+        return_reference: bool = False,
         max_depth: int = 2
     ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         """
@@ -823,20 +831,20 @@ class QPotentailField(PotentialField):
         Args:
             points (Union[np.ndarray, List[Point]]): Input 2D points.
             min_dist_select (bool): Whether to use minimum distance RGJ filtering.
-            reference_idx (bool): If True, returns RGJ indices used per point.
+            return_reference (bool): If True, returns RGJ indices used per point.
             max_depth (int): Maximum depth in the quadtree to traverse.
 
         Returns:
-            If reference_idx is False:
+            If return_reference is False:
                 np.ndarray of shape (N, 2): Repulsion vectors for all input points.
                 
-            If reference_idx is True:
+            If return_reference is True:
                 Tuple[np.ndarray, np.ndarray]: (repulsion_vectors, rgj_indices_used_per_point)
         """
         points = np.atleast_2d(np.array(points, dtype=np.float64))
         n_points = len(points)
         repulsion_vectors = np.zeros((n_points, 2), dtype=np.float64)
-        rgj_reference_ids = np.zeros(n_points, dtype=int) if reference_idx else None
+        rgj_reference_ids = np.zeros(n_points, dtype=int) if return_reference else None
 
         unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
 
@@ -845,12 +853,12 @@ class QPotentailField(PotentialField):
             rgj_indices = quad.rgj_idx
 
             group_points = points[pt_indices]
-            if reference_idx:
+            if return_reference:
                 group_vectors, group_rgj_ids = self.field.repulsion_vectors(
                     points=group_points,
                     filted_idx=rgj_indices,
                     min_dist_select=min_dist_select,
-                    reference_idx=True
+                    return_reference=True
                 )
                 repulsion_vectors[pt_indices] = group_vectors
                 rgj_reference_ids[pt_indices] = group_rgj_ids
@@ -859,11 +867,11 @@ class QPotentailField(PotentialField):
                     points=group_points,
                     filted_idx=rgj_indices,
                     min_dist_select=min_dist_select,
-                    reference_idx=False
+                    return_reference=False
                 )
                 repulsion_vectors[pt_indices] = group_vectors
 
-        if reference_idx:
+        if return_reference:
             return repulsion_vectors, rgj_reference_ids
         else:
             return repulsion_vectors
@@ -925,17 +933,17 @@ class QPotentailField(PotentialField):
     def eval_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None) -> np.ndarray:
         return self.field.eval_per(points=points, idxs=idxs)
     
-    def squared_dist(self, points:Union[np.ndarray, List[Point]], scaled=True, inverted=True, max_depth=2, reference_idx = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    def squared_dist(self, points:Union[np.ndarray, List[Point]], scaled=True, inverted=True, max_depth=2, return_reference = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
 
         points = np.array(points)
         if not len(self):
             warnings.warn("There are not any RGJs elements in the field")
-            if reference_idx:
+            if return_reference:
                 return points.sum(1)*np.inf, -np.ones_like(points.sum(1))
             return points.sum(1)*np.inf
 
         dists = self.squared_dist_list(points=points, scaled=scaled, inverted=inverted, max_depth=max_depth)
-        if reference_idx:
+        if return_reference:
             min_idxs = np.argmin(dists, axis=1)
             return dists[np.arange(len(dists)), min_idxs], min_idxs
 

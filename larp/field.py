@@ -393,11 +393,11 @@ class GeometryCollectionRGJ(RGJGeometry):
         coords = np.reshape(np.array([rgj.get_center_point() for rgj in self.rgjs]), (-1, 2))
         return (coords.min(0) + coords.max(0))/2.0
     
-    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, reference_idx=False, **kwargs) -> np.ndarray:
+    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, return_reference=False, **kwargs) -> np.ndarray:
 
         dists = np.stack([rgj.squared_dist(x, scaled=scaled, inverted=inverted) for rgj in self.rgjs], axis=1)
 
-        if reference_idx:
+        if return_reference:
             min_idxs = np.argmin(dists, axis=1)
             return dists[np.arange(len(dists)), min_idxs], min_idxs
 
@@ -420,7 +420,7 @@ class GeometryCollectionRGJ(RGJGeometry):
     
     def gradient(self, x: np.ndarray, **kwargs):
 
-        _, dist_idxs = self.squared_dist(x, reference_idx=True, **kwargs)
+        _, dist_idxs = self.squared_dist(x, return_reference=True, **kwargs)
 
         repulsion_vector = self.repulsion_vector(x, min_dist_select = True, **kwargs)
         return - self.eval(x=x).reshape(-1, 1) * (np.einsum('ijk,ik->ij', self.grad_matrixes[dist_idxs], repulsion_vector))
@@ -630,13 +630,13 @@ class PotentialField():
         else:
             return np.nonzero([rgj.in_bbox(point) for rgj in self.rgjs])[0]
     
-    def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, reference_idx = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
+    def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, return_reference = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
         points = np.array(points)
         if not len(self):
             return points*np.inf
         filted_idx = filted_idx if not filted_idx is None else list(range(len(self)))
 
-        if reference_idx:
+        if return_reference:
             idxs = []
             repulsion_vectors = []
 
@@ -662,7 +662,7 @@ class PotentialField():
         grad = np.zeros((len(points), 2), dtype=float)
 
         # Use closest RGJ per point to compute gradient
-        _, grad_idxs = self.squared_dist(points=points, reference_idx=True)
+        _, grad_idxs = self.squared_dist(points=points, return_reference=True)
         unique_idxs = set(grad_idxs)
         
         for idx in unique_idxs:

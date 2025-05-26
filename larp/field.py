@@ -4,7 +4,7 @@ import warnings
 
 import numpy as np
 import larp.fn as lpf
-from larp.types import FieldScaleTransform, RGJDict, FieldSize, Point, RGeoJSONCollection, RGeoJSONObject, RepulsionVectorsAndRef
+from larp.types import Scaler, RGJDict, FieldSize, Point, RGeoJSONCollection, RGeoJSONObject, RepulsionVectorsAndRef
 
 """
 Author: Josue N Rivera
@@ -745,7 +745,7 @@ class PotentialField():
 
         return np.stack([rgj.squared_dist(points, scaled=scaled, inverted=inverted) for rgj in rgjs], axis=1)
     
-    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:Scaler = lambda x: x) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
@@ -755,7 +755,7 @@ class PotentialField():
 
         return f_eval.sum()*step
     
-    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:FieldScaleTransform = lambda x: x) -> float:
+    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)

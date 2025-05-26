@@ -8,7 +8,7 @@ from larp import PotentialField
 
 import larp.fn as lpf
 from larp.field import RGJGeometry
-from larp.types import FieldScaleTransform, FieldSize, Point, RGJDict
+from larp.types import Scaler, FieldSize, Point, RGJDict
 
 """
 Author: Josue N Rivera
@@ -1004,7 +1004,7 @@ class QPotentailField(PotentialField):
 
         return dist_matrix
 
-    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:FieldScaleTransform = lambda x: x, max_depth:int = 2) -> float:
+    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 2) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
@@ -1014,7 +1014,7 @@ class QPotentailField(PotentialField):
 
         return f_eval.sum()*step
     
-    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:FieldScaleTransform = lambda x: x, max_depth:int = 2) -> float:
+    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 2) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)

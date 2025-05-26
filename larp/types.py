@@ -14,7 +14,7 @@ RepulsionVectorsAndRef = Tuple[List[int], np.ndarray]
 
 RoutingAlgorithmStr = Literal['a*', 'dijkstra']
 
-FieldScaleTransform = Callable[[float], float]
+Scaler = Callable[[float], float]
 
 RGJDict = TypedDict('LOIDict', { #super set of GeoJSON geometry
     'type': str,

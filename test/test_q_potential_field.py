@@ -162,20 +162,20 @@ def test_add_remove_field():
 
     
     assert qfield.eval([(55, 55)])[0] != 1.0, "QPotentialField eval correct"
-    assert quadtree.find_quads([(54.9, 55)])[0].boundary_zone != 0, "Boundary zone correct in quadtree"
+    assert quadtree.find_quad([(54.9, 55)])[0].boundary_zone != 0, "Boundary zone correct in quadtree"
 
     # Add RGJ
     point = larp.PointRGJ((55, 55), repulsion=[[10, 0], [0, 10]])
     added_idx = qfield.addRGJ(point)
 
     assert qfield.eval([(55, 55)])[0] == 1.0, "RGJ not added to potential field"
-    assert quadtree.find_quads([(54.9, 55)])[0].boundary_zone == 0, "Boundary zone not update in quadtree"
+    assert quadtree.find_quad([(54.9, 55)])[0].boundary_zone == 0, "Boundary zone not update in quadtree"
 
     # Delete RGJ
     qfield.delRGJ(added_idx)
     
     assert qfield.eval([(55, 55)])[0] != 1.0, "RGJ not removed from potential field"
-    assert quadtree.find_quads([(54.9, 55)])[0].boundary_zone != 0, "Boundary zone not update in quadtree"
+    assert quadtree.find_quad([(54.9, 55)])[0].boundary_zone != 0, "Boundary zone not update in quadtree"
 
 test_add_remove_field()
 
@@ -258,7 +258,7 @@ def test_remove_rgj_idx_passed():
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
         assert all(np.array(quad.rgj_idx) < len(field)), f"Quad's rgj indexes {quad.rgj_idx} are out of bound"
-        
+
         if quad.leaf:
             return
         

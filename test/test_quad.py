@@ -29,10 +29,10 @@ def test_quad_on_simple_pf():
     quadtree.build()
 
     aleaf = next(iter(quadtree.leaves))
-    assert aleaf == quadtree.find_quads([aleaf.center_point])[0], "Leaf found does not match expected leaf"
+    assert aleaf == quadtree.find_quad([aleaf.center_point])[0], "Leaf found does not match expected leaf"
 
     manyleaves = list(quadtree.leaves)[:30]
-    quads = quadtree.find_quads([quad.center_point for quad in manyleaves])
+    quads = quadtree.find_quad([quad.center_point for quad in manyleaves])
     assert np.array([manyleaves[idx] == quads[idx] for idx in range(len(quads))]).all(), "Many quads search failed"
 
     assert quadtree.leaves == set(quadtree.search_leaves(quadtree.root)), "Leaves stored and leaves searched don't match"

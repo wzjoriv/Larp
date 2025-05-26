@@ -204,7 +204,7 @@ class QuadTree():
     def get_quad_maximum_range(self) -> np.ndarray:
         return np.array([quad.boundary_max_range for quad in self.leaves])
 
-    def find_quads(self, x: Union[List['Point'], np.ndarray], max_depth: int = 1000) -> List['QuadNode']:
+    def find_quad(self, x: Union[List['Point'], np.ndarray], max_depth: int = 1000) -> List['QuadNode']:
         """
         Efficiently finds the quad node for each point, minimizing redundant traversal.
 

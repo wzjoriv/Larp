@@ -1,31 +1,35 @@
 from collections import defaultdict
 import heapq
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Set
 
 import numpy as np
 
 from larp.quad import QuadNode, QuadTree
-from larp.types import FieldScaleTransform, Point, RoutingAlgorithmStr
+from larp.types import Scaler, Point, RoutingAlgorithmStr
 
 """
 Author: Josue N Rivera
 """
 
-RoutingAlgorithm = Callable[[QuadNode, QuadNode, FieldScaleTransform, dict], Optional[List[QuadNode]]]
+RoutingAlgorithm = Callable[[Point, Point, Scaler, dict], Optional[List[Point]]]
 
 class Network(object):
     """ Network data structure, undirected by default. 
-    
-    - Adapted from: https://stackoverflow.com/questions/19472530/representing-graphs-data-structure-in-python
     """
 
-    def __init__(self, connections = None, directed = False):
+    def __init__(self, connections:List[tuple] = None, directed = False):
         self._graph = defaultdict(set)
         self._directed = directed
         if connections is not None:
             self.add_connections(connections)
 
-    def add_connections(self, connections):
+    def __getitem__(self, node):
+        """
+        Returns neighbors of a node
+        """
+        return self._graph[node]
+
+    def add_connections(self, connections:List[tuple]):
         """ Add connections (list of tuple pairs) to network """
 
         for node1, node2 in connections:
@@ -59,16 +63,12 @@ class Network(object):
 
     def is_connected(self, node1, node2):
         """ Is node1 directly connected to node2 """
-
         return node1 in self._graph and node2 in self._graph[node1]
 
     def __str__(self):
         return '{}({})'.format(self.__class__.__name__, dict(self._graph))
     
-    def find_path(self, node1, node2):
-        raise NotImplementedError
-    
-class RoutingNetwork(Network):
+class QuadNetwork(Network):
 
     ChildNeighOuterEdges = { # Maps child quad' outer edge to neighbors' children
         'tl': {
@@ -108,17 +108,20 @@ class RoutingNetwork(Network):
         self.quadtree = quadtree
         super().__init__(directed=directed)
 
-        self.routing_algs = defaultdict(lambda: self.find_path_A_star)
-        self.routing_algs["a*"] = self.find_path_A_star
-        self.routing_algs["dijkstra"] = self.find_path_dijkstra
-
         if build_network:
             self.build()
 
-    def add_routing_algorithm(self, name:str, algorithm:RoutingAlgorithm):
-        self.routing_algs[name.lower()] = algorithm
-
     def __fill_shallow_neighs__(self, root:Optional[QuadNode] = None):
+        """
+        Populates shallow (immediate) neighbor relationships between quads in the quadtree.
+
+        For each non-leaf node, this function connects each of its four children ('tl', 'tr', 'bl', 'br')
+        to their internal siblings (in the same parent) and to appropriate neighboring child nodes in 
+        adjacent quads.
+
+        Args:
+            root (Optional[QuadNode]): The root node to start from. Defaults to the quadtree root.
+        """
 
         if root is None:
             root = self.quadtree.root
@@ -174,6 +177,18 @@ class RoutingNetwork(Network):
         dfs(root)
 
     def __build_graph__(self, leaves:Optional[List[QuadNode]] = None, overwrite_directed=True):
+        """
+        Constructs the connectivity graph of the leaf quads in the quadtree.
+
+        Each leaf quad is connected to all of its reachable neighbors across outer quad boundaries.
+        The traversal for neighbors uses predefined directional mappings to ensure complete adjacency.
+
+        Args:
+            leaves (Optional[List[QuadNode]]): List of leaves to include in the graph.
+                                            If None, all leaves from the quadtree are used.
+            overwrite_directed (bool): Whether to overwrite existing directed edges in the network.
+                                    This affects how bidirectional graphs behave.
+        """
 
         def recursive_search(shallow_neigh:QuadNode, directions:List[str] = ['tl']) -> List[QuadNode]:
             if shallow_neigh is None: return []
@@ -194,13 +209,27 @@ class RoutingNetwork(Network):
                 adjacent_neighs = recursive_search(quad[[neigh_str]][0], self.NeighOuterEdges[neigh_str])
                 self.add_one_to_many(quad, adjacent_neighs, overwrite_directed=overwrite_directed)
 
-    def build(self):
-        self.__fill_shallow_neighs__()
-        self.__build_graph__()
+    def build(self, root:Optional[QuadNode] = None):
+        """
+        Builds the quad network by establishing neighbor links and generating the connectivity graph.
+
+        If no root is provided, the entire quadtree is processed. If a root node is specified,
+        only the subnetwork rooted at that node is built.
+
+        Args:
+            root (Optional[QuadNode]): The root node to build from. If None, builds the entire network.
+        """
+        
+        if root is None:
+            self.__fill_shallow_neighs__()
+            self.__build_graph__()
+        else:
+            self.__fill_shallow_neighs__(root)
+            self.__build_graph__(leaves=self.quadtree.search_leaves(root), overwrite_directed=False)
 
     def refresh(self, full_rebuild=False):
         """
-        Refreshes the routing network after the quadtree has changed.
+        Refreshes the quad network after the quadtree has changed.
 
         - Removes references to obsolete nodes.
         - Adds new nodes.
@@ -221,117 +250,30 @@ class RoutingNetwork(Network):
             # Nodes to add (new leaves not already in graph)
             added_nodes = new_leaves - current_nodes
 
-            # Fill shallow neighbors before building connections
-            self.__fill_shallow_neighs__()
-
             if added_nodes:
+                # Fill shallow neighbors before building connections
+                self.__fill_shallow_neighs__()
                 self.__build_graph__(leaves=list(added_nodes), overwrite_directed=False)
 
-    @staticmethod
-    def calculate_distance(node_from:QuadNode, node_to:QuadNode, penalty_transform:FieldScaleTransform=lambda x: 1.0 + x, scaled=True, max_penalty: float = np.inf):
-        if scaled:
-            multipler = np.inf if node_to.boundary_zone == 0 else penalty_transform(node_to.boundary_max_range)
-            multipler = min(multipler, max_penalty)
-        else:
+    def find_quad(self, points:List[Point]):
+        return self.quadtree.find_quad(points)
+    
+    def get_quad_center(self, quads:List[QuadNode]):
+        return [quad.center_point for quad in quads]
+        
+    def get_quad_size(self, quads:List[QuadNode]):
+        return [quad.size for quad in quads]
+
+    def get_center_distance(self, node_from:QuadNode, node_to:QuadNode, scaler:Optional[Scaler]=None, max_scale: float = np.inf):
+
+        if scaler is None:
             multipler = 1.0
+        else:
+            multipler = np.inf if node_to.boundary_zone == 0 else scaler(node_to.boundary_max_range)
+            multipler = min(multipler, max_scale)
 
         diff = node_to.center_point - node_from.center_point
         return multipler*np.linalg.norm(diff)
-    
-    def __reconstruct_path__(self, came_from, current):
-        total_path = [current]
-        while current in came_from.keys():
-            current = came_from[current]
-            total_path.append(current)
-        return total_path[::-1]
-    
-    def find_path(self, start_node:QuadNode, end_node:QuadNode, penalty_transform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*', max_penalty: float = np.inf):
-        """Routing Algorithms
-
-        Options:
-        * A*
-        * Dijkstra
-        * [Any algorithm included by user]
-        """
-
-        return self.routing_algs[alg.lower()](start_node=start_node, end_node=end_node, penalty_transform=penalty_transform, max_penalty=max_penalty)
-    
-    def find_path_A_star(self, start_node:QuadNode, end_node:QuadNode, penalty_transform:FieldScaleTransform=lambda x: 1.0 + x, max_penalty: float = np.inf) -> Optional[List[QuadNode]]:
-        """ find path (A*) 
-        
-        Returns None if no path found
-        """
-        open_set = []
-        heapq.heappush(open_set, (0, start_node))
-
-        came_from = {}
-        g_score = defaultdict(lambda: np.inf)
-        g_score[start_node] = 0
-
-        f_score = defaultdict(lambda: np.inf)
-        f_score[start_node] = self.calculate_distance(start_node, end_node, scaled=False)
-
-        while open_set:
-            _, current = heapq.heappop(open_set)
-
-            if current == end_node:
-                return self.__reconstruct_path__(came_from, current)
-
-            for neighbor in self._graph[current]:
-                tentative_g_score = g_score[current] + self.calculate_distance(current, neighbor, penalty_transform=penalty_transform, max_penalty=max_penalty)
-
-                if tentative_g_score < g_score[neighbor]:
-                    came_from[neighbor] = current
-                    g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + self.calculate_distance(neighbor, end_node, scaled=False)
-
-                    if neighbor not in [i[1] for i in open_set]:
-                        heapq.heappush(open_set, (f_score[neighbor], neighbor))
-
-        return None
-    
-    def find_path_dijkstra(self, start_node:QuadNode, end_node:QuadNode, penalty_transform:FieldScaleTransform=lambda x: 1.0 + x, max_penalty: float = np.inf)-> Optional[List[QuadNode]]:
-        """ find path (Dijkstra) 
-        
-        Returns None if no path found
-        """
-        open_set = []
-        heapq.heappush(open_set, (0, start_node))
-
-        came_from = {}
-        dist = defaultdict(lambda: np.inf)
-        dist[start_node] = 0
-
-        while open_set:
-            _, current = heapq.heappop(open_set)
-
-            if current == end_node:
-                return self.__reconstruct_path__(came_from, current)
-
-            for neighbor in self._graph[current]:
-                tentative_dist = dist[current] + self.calculate_distance(current, neighbor, penalty_transform=penalty_transform, max_penalty=max_penalty)
-
-                if tentative_dist < dist[neighbor]:
-                    came_from[neighbor] = current
-                    dist[neighbor] = tentative_dist
-
-                    if neighbor not in [i[1] for i in open_set]:
-                        heapq.heappush(open_set, (dist[neighbor], neighbor))
-
-        return None
-
-    def find_route(self, pointA:Point, pointB:Point, penalty_transform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*', max_penalty: float = np.inf):
-        
-        quads = self.quadtree.find_quads([pointA, pointB])
-        return self.find_path(quads[0], quads[1], penalty_transform=penalty_transform, alg=alg, max_penalty=max_penalty)
-
-    def find_many_routes(self, pointsA:Point, pointsB:Point, penalty_transform:FieldScaleTransform=lambda x: 1.0 + x, alg:RoutingAlgorithmStr='A*'):
-        pointsA, pointsB = np.array(pointsA), np.array(pointsB)
-        n = len(pointsA)
-
-        quads = self.quadtree.find_quads(np.concatenate([pointsA, pointsB], axis=0))
-
-        return [self.find_path(quads[idx], quads[n+idx], penalty_transform=penalty_transform, alg=alg) for idx in range(n)]
     
     def to_routes_lines_collection(self):
         
@@ -339,25 +281,6 @@ class RoutingNetwork(Network):
         for leaf in self._graph.keys():
             for neigh in self._graph[leaf]:
                 lines.extend([[leaf.center_point[0], neigh.center_point[0]], [leaf.center_point[1], neigh.center_point[1]]])
-
-        return lines
-    
-    @staticmethod
-    def route_to_lines_collection(pointsA:Point, pointsB:Point, route: List[QuadNode], remapped=False) -> np.ndarray:
-        """
-        Given a route (i.e. list of quads) and starting and ending location, it returns path of the route
-        """
-        pointsA = np.array(pointsA)
-        pointsB = np.array(pointsB)
-
-        route = route[1:-1] if len(route) > 1 else []
-
-        lines = np.array([quad_stop.center_point for quad_stop in route])
-        if remapped:
-            if len(lines):
-                lines = np.concatenate([pointsA.reshape(-1, 2), lines, pointsB.reshape(-1, 2)], axis=0)
-            else:
-                lines = np.concatenate([pointsA.reshape(-1, 2), pointsB.reshape(-1, 2)], axis=0)
 
         return lines
 

@@ -283,6 +283,4 @@ class QuadNetwork(Network):
                 lines.extend([[leaf.center_point[0], neigh.center_point[0]], [leaf.center_point[1], neigh.center_point[1]]])
 
         return lines
-
-
-
+    

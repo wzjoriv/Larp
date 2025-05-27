@@ -581,7 +581,7 @@ class PotentialField():
             reload_bbox (bool, optional): Whether to recompute the bounding box after deletion. Defaults to True.
         """
         # Normalize input and wrap indices within range
-        idxs = np.atleast_1d(idxs)
+        idxs = np.atleast_1d(idxs).astype(int)
         idxs = np.unique(idxs % len(self))[::-1]  # Wrap, deduplicate, and reverse sort
 
         # Delete RGJs from highest to lowest index to avoid reindexing errors

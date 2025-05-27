@@ -216,7 +216,7 @@ class QuadTree():
             List[QuadNode]: Quad node for each point, in input order.
         """
 
-        x = np.atleast_2d(np.array(x, dtype=np.float64))
+        x = np.atleast_2d(x).astype(float)
 
         n_points = len(x)
         results = [None] * n_points
@@ -255,7 +255,7 @@ class QuadTree():
         Returns:
             List[List[QuadNode]]: A list of quad chains, one per point.
         """
-        x = np.atleast_2d(np.array(x))
+        x = np.atleast_2d(x).astype(float)
         n_points = len(x)
         results = [[] for _ in range(n_points)]  # chain for each point
 
@@ -436,7 +436,7 @@ class QuadNode():
     nghToIdx = __make_index_map__(['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l'])
     
     def __init__(self, center_point:Point, size:float) -> None:
-        self.center_point = np.array(center_point)
+        self.center_point = np.atleast_1d(center_point).astype(float)
         self.size = size
         self.leaf = False
         self.boundary_zone:int = 0
@@ -479,6 +479,77 @@ class QuadNode():
     def __lt__(self, other:QuadNode):
         return self.boundary_max_range < other.boundary_max_range
     
+    def get_boundaries(self) -> np.ndarray:
+        """
+        Returns (xmin, xmax, ymin, ymax) boundaries of the quad.
+        """
+        cx, cy = self.center_point
+        half = self.size / 2.0
+        return np.array([cx - half, cx + half, cy - half, cy + half])
+    
+    def get_shared_edge(self, neighbor: 'QuadNode'):
+        """
+        Returns a 2x2 array representing the shared edge between this quad and its neighbor.
+        If they share only a corner (diagonal), returns that point repeated.
+        If they do not touch, returns None.
+        """
+        if neighbor is None:
+            return None
+
+        b1 = self.get_boundaries()   # [xmin, xmax, ymin, ymax]
+        b2 = neighbor.get_boundaries()
+
+        # Extract boundaries
+        x0 = max(b1[0], b2[0])  # max(xmin1, xmin2)
+        x1 = min(b1[1], b2[1])  # min(xmax1, xmax2)
+        y0 = max(b1[2], b2[2])  # max(ymin1, ymin2)
+        y1 = min(b1[3], b2[3])  # min(ymax1, ymax2)
+
+        # Check for overlap in both axes
+        if x0 > x1 or y0 > y1:
+            return None  # No overlap
+
+        # If overlap is only a point (diagonal neighbor), return that point repeated
+        if np.isclose(x0, x1) and np.isclose(y0, y1):
+            return np.array([[x0, y0], [x0, y0]])
+
+        # Otherwise, it's a shared edge
+        return np.array([[x0, y0], [x1, y1]])
+    
+    def get_shared_entry_point(self, neighbor: QuadNode, entry: Point) -> np.ndarray:
+        """
+        Computes the entry point on the shared edge or corner with a neighbor quad.
+        If diagonally adjacent, returns midpoint of shared corner.
+        """
+
+        x1min, x1max, y1min, y1max = self.get_boundaries()
+        x2min, x2max, y2min, y2max = neighbor.get_boundaries()
+
+        dx = neighbor.center_point[0] - self.center_point[0]
+        dy = neighbor.center_point[1] - self.center_point[1]
+
+        if abs(dx) > 0 and abs(dy) > 0:
+            # Diagonal neighbor — shared corner
+            x = (x1max + x2min) / 2 if dx > 0 else (x1min + x2max) / 2
+            y = (y1max + y2min) / 2 if dy > 0 else (y1min + y2max) / 2
+            return np.array([x, y])
+
+        elif abs(dx) > abs(dy):
+            # Horizontal neighbor — clip vertically
+            x = (x1max + x2min) / 2 if dx > 0 else (x1min + x2max) / 2
+            y_min = max(y1min, y2min)
+            y_max = min(y1max, y2max)
+            y = np.clip(entry[1], y_min, y_max)
+            return np.array([x, y])
+
+        else:
+            # Vertical neighbor — clip horizontally
+            y = (y1max + y2min) / 2 if dy > 0 else (y1min + y2max) / 2
+            x_min = max(x1min, x2min)
+            x_max = min(x1max, x2max)
+            x = np.clip(entry[0], x_min, x_max)
+            return np.array([x, y])
+
     def to_boundary_lines(self, margin=0.1) -> Tuple[np.ndarray, np.ndarray]:
         size2 = self.size/2.0 - margin
         offset = np.array([
@@ -537,7 +608,7 @@ class QPotentailField(PotentialField):
             quad_to_point_indices (Dict[int, List[int]]): Map from quad idx to list of point indices.
         """
 
-        points = np.atleast_2d(points)
+        points = np.atleast_2d(points).astype(float)
         quad_chains = self.quadtree.find_quads_chain(points, max_depth=max_depth)
 
         final_quads = []
@@ -600,6 +671,7 @@ class QPotentailField(PotentialField):
         new_qtree = QuadTree(
             new_field,
             minimum_length_limit=self.quadtree.min_sector_size,
+            maximum_length_limit=self.quadtree.max_sector_size,
             edge_bounds=self.quadtree.edge_bounds,
             size=self.quadtree.size,
             build_tree=True,
@@ -692,7 +764,7 @@ class QPotentailField(PotentialField):
             warnings.warn("Quadtree made non-conservative")
             self.quadtree.conservative = False
 
-        idxs = np.atleast_1d(idxs)
+        idxs = np.atleast_1d(idxs).astype(int)
         idxs = np.unique(idxs % len(self))[::-1]  # Wrap, deduplicate, and reverse sort
 
         # Step 1: Store deleted RGJs before removing from field
@@ -736,7 +808,7 @@ class QPotentailField(PotentialField):
             quad.boundary_zone = (min(quad.rgj_zones) if len(quad.rgj_zones) > 0 else self.quadtree.n_zones)
 
             # --- Attempt early merge (before recursion) ---
-            if not quad.leaf and quad.size <= self.quadtree.max_sector_size and quad.boundary_zone == self.quadtree.n_zones:
+            if (not quad.leaf) and quad.size <= self.quadtree.max_sector_size and quad.boundary_zone == self.quadtree.n_zones:
                 self.quadtree.leaves -= self.quadtree.search_leaves(quad)
                 quad.children = [None] * len(quad.chdToIdx)
                 quad.neighbors = [None] * len(quad.nghToIdx)
@@ -744,7 +816,7 @@ class QPotentailField(PotentialField):
                 return
 
             # --- Recurse if not a leaf ---
-            if not quad.leaf and quad.rgj_idx.size > 0:
+            if not quad.leaf and keep_mask.size > 0:
                 for child in ['tl', 'tr', 'bl', 'br']:
                     clean_quad(quad[child])
 
@@ -841,9 +913,9 @@ class QPotentailField(PotentialField):
             If return_reference is True:
                 Tuple[np.ndarray, np.ndarray]: (repulsion_vectors, rgj_indices_used_per_point)
         """
-        points = np.atleast_2d(np.array(points, dtype=np.float64))
+        points = np.atleast_2d(points).astype(float)
         n_points = len(points)
-        repulsion_vectors = np.zeros((n_points, 2), dtype=np.float64)
+        repulsion_vectors = np.zeros((n_points, 2), dtype=float)
         rgj_reference_ids = np.zeros(n_points, dtype=int) if return_reference else None
 
         unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
@@ -877,7 +949,7 @@ class QPotentailField(PotentialField):
             return repulsion_vectors
         
     def gradient(self, points, min_dist_select=True, max_depth=2):
-        points = np.atleast_2d(np.array(points, dtype=np.float64))
+        points = np.atleast_2d(points).astype(float)
         n_points = len(points)
 
         if len(self.field) == 0:
@@ -908,7 +980,7 @@ class QPotentailField(PotentialField):
         Returns:
             np.ndarray: Evaluated potential values at each point.
         """
-        points = np.atleast_2d(np.array(points, dtype=np.float64))
+        points = np.atleast_2d(points).astype(float)
         n_points = len(points)
 
         if not len(self.field.rgjs):
@@ -973,7 +1045,7 @@ class QPotentailField(PotentialField):
         Returns:
             np.ndarray: Squared distances of shape (N, M), where M = total RGJs.
         """
-        points = np.atleast_2d(np.array(points, dtype=np.float64))
+        points = np.atleast_2d(points).astype(float)
         n_points = len(points)
         total_rgjs = len(self.field.rgjs)
 

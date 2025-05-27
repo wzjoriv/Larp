@@ -185,13 +185,67 @@ def test_quad_link():
 
 test_iter_quadtree()
 
+def test_boundary():
+
+    quad = larp.quad.QuadNode((2, 3), 2)
+    assert np.allclose(quad.get_boundaries(), np.array([1, 2, 3, 4])) , "Expected edge of quads not returned"
+
+test_boundary()
+
 def test_quad_shared_edge():
 
     # Scenerio 1
     quad1 = larp.quad.QuadNode((2, 3), 2)
-    quad2 = larp.quad.QuadNode((4, 1), 2)
-    shared_edge = quad1.get_shared_edge(quad2)
+    quad2 = larp.quad.QuadNode((4, 2), 2)
+    shared_edge1 = quad1.get_shared_edge(quad2)
+    shared_edge2 = quad2.get_shared_edge(quad1)
 
-    assert np.allclose(shared_edge[0], np.array([[3, 1], [3, 3]])) , "Expected edge of quads not returned"
+    assert np.allclose(shared_edge1, np.array([[3, 2], [3, 3]])) , "Expected edge of quads not returned"
+    assert np.allclose(shared_edge1, shared_edge2) , "Expected edge of quads not returned"
+
+    # Scenerio 2
+    quad1 = larp.quad.QuadNode((2, 4), 2)
+    quad2 = larp.quad.QuadNode((5, 4), 4)
+    shared_edge1 = quad1.get_shared_edge(quad2)
+    shared_edge2 = quad2.get_shared_edge(quad1)
+
+    assert np.allclose(shared_edge1, np.array([[3, 3], [3, 5]])) , "Expected edge of quads not returned"
+    assert np.allclose(shared_edge1, shared_edge2) , "Expected edge of quads not returned"
+
+    # Scenerio 3
+    quad1 = larp.quad.QuadNode((3.5, 6.5), 3)
+    quad2 = larp.quad.QuadNode((4, 4), 2)
+    shared_edge1 = quad1.get_shared_edge(quad2)
+    shared_edge2 = quad2.get_shared_edge(quad1)
+
+    assert np.allclose(shared_edge1, np.array([[3, 5], [5, 5]])) , "Expected edge of quads not returned"
+    assert np.allclose(shared_edge1, shared_edge2) , "Expected edge of quads not returned"
+
+    # Scenerio 4
+    quad1 = larp.quad.QuadNode((3, 14), 2)
+    quad2 = larp.quad.QuadNode((6, 11), 2)
+    shared_edge1 = quad1.get_shared_edge(quad2)
+    shared_edge2 = quad2.get_shared_edge(quad1)
+
+    assert shared_edge1 is None , "Edge returned when none expected"
+    assert shared_edge1 is shared_edge2, "Expected edge of quads not returned"
+
+    # Scenerio 5
+    quad1 = larp.quad.QuadNode((2, 1), 2)
+    quad2 = larp.quad.QuadNode((4, 3), 2)
+    shared_edge1 = quad1.get_shared_edge(quad2)
+    shared_edge2 = quad2.get_shared_edge(quad1)
+
+    assert np.allclose(shared_edge1, np.array([[3, 2], [3, 2]])) , "Expected edge of quads not returned"
+    assert np.allclose(shared_edge1, shared_edge2) , "Expected edge of quads not returned"
+
+    # Scenerio 6
+    quad1 = larp.quad.QuadNode((102, -6), 2)
+    quad2 = larp.quad.QuadNode((103, -7), 2)
+    shared_edge1 = quad1.get_shared_edge(quad2)
+    shared_edge2 = quad2.get_shared_edge(quad1)
+
+    assert shared_edge1 is None , "Edge returned when none expected"
+    assert shared_edge1 is shared_edge2, "Expected edge of quads not returned"
 
 test_quad_shared_edge()

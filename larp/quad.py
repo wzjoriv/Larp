@@ -380,7 +380,6 @@ class QuadTree():
             image (np.ndarray): 2D array with potential or zone values of sectors.
             extent (Optional[List[float]]): [xmin, xmax, ymin, ymax] real-world bounds if return_extent is True.
         """
-        # Minimum resolution to represent smallest sectors
         resolution = 2**int(np.log2(self.root.size / self.min_sector_size))
 
         image = np.ones((resolution, resolution), dtype=int) * self.n_zones
@@ -481,74 +480,42 @@ class QuadNode():
     
     def get_boundaries(self) -> np.ndarray:
         """
-        Returns (xmin, xmax, ymin, ymax) boundaries of the quad.
+        Returns (xmin, ymin, xmax, ymax) boundaries of the quad.
         """
         cx, cy = self.center_point
         half = self.size / 2.0
-        return np.array([cx - half, cx + half, cy - half, cy + half])
+        return np.array([cx - half, cy - half, cx + half, cy + half])
     
     def get_shared_edge(self, neighbor: 'QuadNode'):
         """
-        Returns a 2x2 array representing the shared edge between this quad and its neighbor.
-        If they share only a corner (diagonal), returns that point repeated.
-        If they do not touch, returns None.
+        Computes the shared boundary segment between this quad and a neighboring quad.
+
+        Returns:
+            np.ndarray: A (2, 2) array representing the endpoints of the shared edge.
+                - If the quads share an edge (horizontal or vertical), the endpoints of that edge are returned.
+                - If the quads only touch at a corner (diagonal adjacency), the single shared point is returned twice.
+                - If the quads do not touch, returns None.
+
+        Note:
         """
         if neighbor is None:
             return None
 
-        b1 = self.get_boundaries()   # [xmin, xmax, ymin, ymax]
+        b1 = self.get_boundaries()   # [xmin, ymin, xmax, ymax]
         b2 = neighbor.get_boundaries()
 
         # Extract boundaries
         x0 = max(b1[0], b2[0])  # max(xmin1, xmin2)
-        x1 = min(b1[1], b2[1])  # min(xmax1, xmax2)
-        y0 = max(b1[2], b2[2])  # max(ymin1, ymin2)
+        y0 = max(b1[1], b2[1])  # max(ymin1, ymin2)
+        x1 = min(b1[2], b2[2])  # min(xmax1, xmax2)
         y1 = min(b1[3], b2[3])  # min(ymax1, ymax2)
 
         # Check for overlap in both axes
-        if x0 > x1 or y0 > y1:
+        if not np.isclose(x0, x1) and not np.isclose(y0, y1):
             return None  # No overlap
 
-        # If overlap is only a point (diagonal neighbor), return that point repeated
-        if np.isclose(x0, x1) and np.isclose(y0, y1):
-            return np.array([[x0, y0], [x0, y0]])
-
         # Otherwise, it's a shared edge
-        return np.array([[x0, y0], [x1, y1]])
-    
-    def get_shared_entry_point(self, neighbor: QuadNode, entry: Point) -> np.ndarray:
-        """
-        Computes the entry point on the shared edge or corner with a neighbor quad.
-        If diagonally adjacent, returns midpoint of shared corner.
-        """
-
-        x1min, x1max, y1min, y1max = self.get_boundaries()
-        x2min, x2max, y2min, y2max = neighbor.get_boundaries()
-
-        dx = neighbor.center_point[0] - self.center_point[0]
-        dy = neighbor.center_point[1] - self.center_point[1]
-
-        if abs(dx) > 0 and abs(dy) > 0:
-            # Diagonal neighbor — shared corner
-            x = (x1max + x2min) / 2 if dx > 0 else (x1min + x2max) / 2
-            y = (y1max + y2min) / 2 if dy > 0 else (y1min + y2max) / 2
-            return np.array([x, y])
-
-        elif abs(dx) > abs(dy):
-            # Horizontal neighbor — clip vertically
-            x = (x1max + x2min) / 2 if dx > 0 else (x1min + x2max) / 2
-            y_min = max(y1min, y2min)
-            y_max = min(y1max, y2max)
-            y = np.clip(entry[1], y_min, y_max)
-            return np.array([x, y])
-
-        else:
-            # Vertical neighbor — clip horizontally
-            y = (y1max + y2min) / 2 if dy > 0 else (y1min + y2max) / 2
-            x_min = max(x1min, x2min)
-            x_max = min(x1max, x2max)
-            x = np.clip(entry[0], x_min, x_max)
-            return np.array([x, y])
+        return np.array([[x0, y0], [x1, y1]]) # [xmin, ymin, xmax, ymax]
 
     def to_boundary_lines(self, margin=0.1) -> Tuple[np.ndarray, np.ndarray]:
         size2 = self.size/2.0 - margin

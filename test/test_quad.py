@@ -184,3 +184,14 @@ def test_quad_link():
     assert all([quad.boundary_zone == 0 for quad in quad_chain]), "The expected number of quads in the chain is different than the number found"
 
 test_iter_quadtree()
+
+def test_quad_shared_edge():
+
+    # Scenerio 1
+    quad1 = larp.quad.QuadNode((2, 3), 2)
+    quad2 = larp.quad.QuadNode((4, 1), 2)
+    shared_edge = quad1.get_shared_edge(quad2)
+
+    assert np.allclose(shared_edge[0], np.array([[3, 1], [3, 3]])) , "Expected edge of quads not returned"
+
+test_quad_shared_edge()

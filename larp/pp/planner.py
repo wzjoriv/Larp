@@ -27,6 +27,8 @@ def __reconstruct_quad_path__(came_from:dict, current:QuadNode):
     return total_path[::-1]
 
 def optimize_path_via_edge_bundling(path: List[Point], quad_path: List[QuadNode], network: QuadNetwork) -> List[Point]:
+
+    # TODO: Fix 
     def quads_aligned(q1, q2):
         """Check if two quads are adjacent and aligned either horizontally or vertically (not diagonally)."""
         if q1 is None or q2 is None:
@@ -39,7 +41,7 @@ def optimize_path_via_edge_bundling(path: List[Point], quad_path: List[QuadNode]
         # Not a single-point overlap (i.e., not diagonal)
         return not np.allclose(shared_edge[0], shared_edge[1])
 
-    if not path or not quad_path or len(path) != len(quad_path) + 1:
+    if not path is not None or not quad_path is not None or len(path) != len(quad_path) + 1:
         raise ValueError("Path and quad_path length mismatch. Expected len(path) == len(quad_path) + 1.")
 
     optimized_points = [path[0]]
@@ -291,7 +293,7 @@ def find_path_dijkstra(start_point:Point, end_point:Point, network:QuadNetwork, 
     Returns:
         Optional[List[Point]]: Path from start to goal, or None if no path exists.
     """
-    start_quad, end_quad = tuple(network.find_quad([start_point, end_point]))
+    start_quad, end_quad = network.find_quad([start_point, end_point])
 
     if scaler is None:
         scaler = lambda p: 1.0 + p

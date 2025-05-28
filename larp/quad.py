@@ -571,7 +571,7 @@ class QPotentailField(PotentialField):
     def __len__(self)->int:
         return len(self.field)
     
-    def __group_points_by_quads_with_rgjs(self, points: np.ndarray, max_depth: int = 2):
+    def __group_points_by_quads_with_rgjs(self, points: np.ndarray, max_depth: int = 3):
         """
         Assign points to the deepest quad containing RGJs and group indices per quad.
 
@@ -821,7 +821,7 @@ class QPotentailField(PotentialField):
 
             return search_field, search_qtree
 
-    def in_bbox(self, point: Point, max_depth: int = 2) -> bool:
+    def in_bbox(self, point: Point, max_depth: int = 3) -> bool:
         """
         Check if the point lies within the bounding box of any RGJ using the quadtree.
 
@@ -851,7 +851,7 @@ class QPotentailField(PotentialField):
         # fallback: search entire field if no relevant RGJs found
         return self.field.in_bbox(point)
     
-    def find_bbox(self, point: Point, max_depth: int = 2) -> np.ndarray:
+    def find_bbox(self, point: Point, max_depth: int = 3) -> np.ndarray:
         """
         Return indices of RGJs whose bounding boxes contain the point, using the quadtree.
 
@@ -888,7 +888,7 @@ class QPotentailField(PotentialField):
         points: Union[np.ndarray, List['Point']],
         min_dist_select: bool = True,
         return_reference: bool = False,
-        max_depth: int = 2
+        max_depth: int = 3
     ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         """
         Computes repulsion vectors for 2D points using only relevant RGJs from a quadtree field.
@@ -1025,7 +1025,7 @@ class QPotentailField(PotentialField):
         points: Union[np.ndarray, List['Point']],
         scaled: bool = True,
         inverted: bool = True,
-        max_depth: int = 2
+        max_depth: int = 3
     ) -> np.ndarray:
         """
         Compute squared distances from each point to all RGJs in the field, but only

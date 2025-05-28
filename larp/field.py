@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Iterable
 from typing import List, Optional, Tuple, Union
 import warnings
 
@@ -439,8 +440,27 @@ class GeometryCollectionRGJ(RGJGeometry):
         }
     
 class PotentialField():
+    
     """
-    Potential field given a subset of RGJs
+    Represents a potential field composed of a subset of RGJ objects.
+
+    This class allows the storage and spatial organization of RGJ geometries, and provides tools
+    for bounding box management and automatic sizing/centering of the potential field based on input RGJs.
+
+    Attributes:
+        rgjs (List[RGJGeometry]): List of RGJ geometries in the field.
+        center_point (Point or None): Central reference point of the potential field. Can be auto-calculated.
+        size (np.ndarray or None): Spatial extent of the field (width, height). Can be inferred.
+        extra_info (dict): Optional metadata or user-defined information.
+        bbox (np.ndarray): Bounding box of all RGJs in the field. Shape (2, 2) -> [[xmin, ymin], [xmax, ymax]].
+
+    Args:
+        rgjs (Optional[List[RGJDict] or RGJGeometry]): List of RGJ objects or single RGJ geometry. Can be None.
+        center_point (Optional[Point]): Optional center point for the field. If not provided, auto-calculated.
+        size (Optional[FieldSize or float]): Width/height or 2D size of the field. If None, inferred from RGJs.
+        properties (Optional[List[dict]]): List of metadata dictionaries for each RGJ (used when RGJs are dicts).
+        extra_info (dict): Arbitrary extra user-defined metadata associated with the field.
+
     """
 
     def __init__(self, rgjs:Optional[Union[List[RGJDict], RGJGeometry]] = None, center_point: Optional[Point] = None, size:Optional[Union[FieldSize, float]] = None, properties:Optional[List[dict]] = None, extra_info={}):
@@ -477,6 +497,24 @@ class PotentialField():
                 suggest_size = np.array([max(np.abs(self.bbox - self.center_point).reshape(-1))*2]*2)
 
                 self.size = suggest_size if self.size is None else self.size
+
+    def __getitem__(self, idxs:Union[int, Iterable[int]]):
+        """
+        Access RGJ(s) in the field by index or list of indices.
+
+        Args:
+            idxs (int or Iterable[int]): Index or iterable of indices into the RGJ list.
+
+        Returns:
+            RGJGeometry or List[RGJGeometry] or None: The selected RGJ(s), or None if invalid input.
+        """
+
+        if type(idxs) is int:
+            return self.rgjs[idxs]
+        elif isinstance(idxs, Iterable) and not isinstance(idxs, (str, bytes)):
+            return [self.rgjs[i] for i in idxs]
+        
+        return None
 
     def __iter__(self):
         self.rgj_idx = 0

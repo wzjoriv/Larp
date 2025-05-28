@@ -96,8 +96,28 @@ class RGJGeometry():
             }
         }
     
-    def __str__(self):
+    def __repr__(self):
+        """
+        Returns a more concise and unambiguous string representation of the object,
+        typically used in debugging.
+        """
         return str(self.toRGeoJSON())
+
+    def __str__(self):
+        """
+        Returns a user-friendly string representation of the object,
+        using its RGeoJSON representation.
+        """
+
+        def ndnumpy_to_str(array):
+            string = f"{array.tolist()}"
+
+            if len(string) > 50:
+                string = string[:25] + "..." + string[-25:]
+
+            return string
+
+        return f"{self.__class__.__name__}(coordinates={ndnumpy_to_str(self.coordinates)} repulsion={ndnumpy_to_str(self.repulsion)})"
 
 
 class PointRGJ(RGJGeometry):
@@ -498,22 +518,24 @@ class PotentialField():
 
                 self.size = suggest_size if self.size is None else self.size
 
-    def __getitem__(self, idxs:Union[int, Iterable[int]]):
+    def __getitem__(self, idxs: Union[int, np.integer, Iterable[int]]):
         """
         Access RGJ(s) in the field by index or list of indices.
 
         Args:
-            idxs (int or Iterable[int]): Index or iterable of indices into the RGJ list.
+            idxs (int, np.integer, or Iterable[int]): Index or iterable of indices into the RGJ list.
 
         Returns:
             RGJGeometry or List[RGJGeometry] or None: The selected RGJ(s), or None if invalid input.
         """
 
-        if type(idxs) is int:
-            return self.rgjs[idxs]
+        if isinstance(idxs, (int, np.integer)):
+            return self.rgjs[int(idxs)]
+
         elif isinstance(idxs, Iterable) and not isinstance(idxs, (str, bytes)):
-            return [self.rgjs[i] for i in idxs]
-        
+            return [self.rgjs[int(i)] for i in idxs]
+
+        warnings.warn(f"Object of type {type(idxs)} not supported")
         return None
 
     def __iter__(self):

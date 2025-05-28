@@ -1,6 +1,6 @@
 from collections import defaultdict
 import heapq
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
 from larp.field import PotentialField
@@ -12,9 +12,8 @@ from larp.types import Scaler, Point
 """
 Author: Josue N Rivera
 
-Module providing path planning algorithms over a quadtree-based spatial network.
-Implements classic and multi-resolution planning strategies including A*, Dijkstra,
-and Multi-resolution Field D* (MRF-D*).
+Module providing path planning algorithms. They can be over a potentiald field or quadtree-based spatial network of the potential field.
+Implements classic and multi-resolution planning strategies including A* and Dijkstra.
 """
 
 PathAlg = Callable[[Point, Point, QuadNetwork, dict, Any], Optional[List[Point]]]
@@ -27,6 +26,51 @@ def __reconstruct_quad_path__(came_from:dict, current:QuadNode):
         total_path.append(current)
     return total_path[::-1]
 
+def optimize_path_via_edge_bundling(path: List[Point], quad_path: List[QuadNode], network: QuadNetwork) -> List[Point]:
+    def quads_aligned(q1, q2):
+        """Check if two quads are adjacent and aligned either horizontally or vertically (not diagonally)."""
+        if q1 is None or q2 is None:
+            return False
+
+        shared_edge = q1.get_shared_edge(q2)
+        if shared_edge is None:
+            return False
+
+        # Not a single-point overlap (i.e., not diagonal)
+        return not np.allclose(shared_edge[0], shared_edge[1])
+
+    if not path or not quad_path or len(path) != len(quad_path) + 1:
+        raise ValueError("Path and quad_path length mismatch. Expected len(path) == len(quad_path) + 1.")
+
+    optimized_points = [path[0]]
+    i = 0
+
+    while i < len(quad_path):
+        # Find longest aligned segment in quad_path
+        j = i + 1
+        while j < len(quad_path) and quads_aligned(quad_path[j - 1], quad_path[j]):
+            j += 1
+
+        # Segment start and end
+        start_point = optimized_points[-1]
+        end_point = path[j] if j < len(path) else path[-1]
+
+        line_vec = end_point - start_point
+        num_steps = j - i
+
+        for k in range(1, num_steps):
+            t = k / num_steps
+            interp = start_point + t * line_vec
+            current_quad = quad_path[i + k - 1]
+            next_quad = quad_path[i + k]
+
+            shared = network.get_shared_entry_point(current_quad, next_quad, interp)
+            optimized_points.append(shared if shared is not None else interp)
+
+        optimized_points.append(end_point)
+        i = j  # Advance to the next segment
+
+    return optimized_points
 
 class Planner():
 
@@ -121,7 +165,7 @@ class QuadPlanner(Planner):
     Path planner using quad network
     """
 
-    def __init__(self, quadtree:QuadTree, alg: Optional[PathAlgArg]):
+    def __init__(self, quadtree:QuadTree, alg: Optional[PathAlgArg] = None):
 
         Planner.__init__(self, None)
         
@@ -131,7 +175,8 @@ class QuadPlanner(Planner):
 
         self.algs["a*"] = find_path_A_star
         self.algs["dijkstra"] = find_path_dijkstra
-        self.algs["mrfd*"] = find_path_mrfdstar
+        self.algs["a*-e"] = find_path_astar_e
+        self.algs["dijkstra-e"] = find_path_dijkstra_e
         self.alg = self.algs["a*"]
 
         if alg is not None:
@@ -150,7 +195,7 @@ class QuadPlanner(Planner):
         """
         self.network.refresh()
 
-    def find_path(self, start_point:Point, end_point:Point, refresh_network = False, reset_memory = False, **kargs) -> Optional[Union[List[Point], np.ndarray]]:
+    def find_path(self, start_point:Point, end_point:Point, refresh_network = False, reset_memory = False, **kargs) -> Tuple[Optional[Union[List[Point], np.ndarray]], Optional[List[QuadNode]]]:
         """
         Executes the selected path planning algorithm from start to goal.
 
@@ -223,9 +268,14 @@ def find_path_A_star(start_point:Point, end_point:Point, network:QuadNetwork, sc
     
     if current == end_quad:
         quad_path = __reconstruct_quad_path__(came_from, current)
-        return np.array([start_point] + network.get_quad_center(quad_path)[1:-1] + [end_point])
+        path = np.array([start_point] + network.get_quad_center(quad_path)[1:-1] + [end_point])
 
-    return None
+        path = [start_point] + [network.get_shared_entry_point(quad_path[i], quad_path[i+1], path[i+1]) for i in range(len(quad_path)-1)] + [end_point]
+        path = optimize_path_via_edge_bundling(path, quad_path, network)
+
+        return np.array(path), quad_path
+
+    return None, None
 
 def find_path_dijkstra(start_point:Point, end_point:Point, network:QuadNetwork, scaler:Optional[Scaler]=None, max_scale: float = np.inf, **kargs)-> Optional[List[Point]]:
     """
@@ -272,11 +322,16 @@ def find_path_dijkstra(start_point:Point, end_point:Point, network:QuadNetwork, 
 
     if current == end_quad:
         quad_path = __reconstruct_quad_path__(came_from, current)
-        return np.array([start_point] + network.get_quad_center(quad_path)[1:-1] + [end_point])
+        path = np.array([start_point] + network.get_quad_center(quad_path)[1:-1] + [end_point])
 
-    return None
+        path = [start_point] + [network.get_shared_entry_point(quad_path[i], quad_path[i+1], path[i+1]) for i in range(len(quad_path)-1)] + [end_point]
+        path = optimize_path_via_edge_bundling(path, quad_path, network)
 
-def find_path_mrfdstar(
+        return np.array(path), quad_path
+
+    return None, None
+
+def find_path_astar_e(
         start_point: Point,
         end_point: Point,
         network: QuadNetwork,
@@ -286,7 +341,7 @@ def find_path_mrfdstar(
     ) -> Optional[List[Point]]:
 
     """
-    Multi-resolution Field D* (MRF-D*) pathfinding with edge-aware traversal between quad regions.
+    A* pathfinding with edge-aware traversal between quad regions.
 
     This variant of A* seeks to avoid quad center traversal and instead moves between
     shared edges based on entry direction and local quad structure.
@@ -301,17 +356,28 @@ def find_path_mrfdstar(
     Returns:
         Optional[List[Point]]: Point-to-point path, or None if no path is found.
     """
-    
+
     start_point = np.array(start_point)
     end_point = np.array(end_point)
+
+    start_quad, end_quad = network.find_quad([start_point, end_point])
+
+    if start_quad is None or end_quad is None:
+        return None
+
+    if np.allclose(start_point, end_point):
+        return [start_point]
     
-    start_quad, end_quad = tuple(network.find_quad([start_point, end_point]))
+    if start_quad == end_quad:
+        return [start_point, end_point]
 
     if scaler is None:
         scaler = lambda p: 1.0 + p
 
     open_set = []
+    open_set_hash = set()
     heapq.heappush(open_set, (0, start_quad))
+    open_set_hash.add(start_quad)
 
     came_from = {}
     g_score = defaultdict(lambda: np.inf)
@@ -326,19 +392,21 @@ def find_path_mrfdstar(
 
     while open_set:
         _, current = heapq.heappop(open_set)
+        open_set_hash.remove(current)
 
         if current == end_quad:
             break
 
         for neighbor in network[current]:
             entry = edge_entry[current]
-            exit = current.get_shared_entry_point(neighbor, entry)
+            exit = network.get_shared_entry_point(current, neighbor, entry)
 
             if exit is None:
                 continue
 
             traversal_cost = np.linalg.norm(exit - entry)
-            scaled_cost = traversal_cost * min(scaler(neighbor.boundary_max_range), max_scale)
+            scale = np.inf if neighbor.boundary_zone == 0 else scaler(neighbor.boundary_max_range)
+            scaled_cost = traversal_cost * min(scale, max_scale)
 
             tentative_g = g_score[current] + scaled_cost
 
@@ -347,16 +415,127 @@ def find_path_mrfdstar(
                 g_score[neighbor] = tentative_g
                 f_score[neighbor] = tentative_g + np.linalg.norm(exit - end_point)
                 edge_entry[neighbor] = exit
-                heapq.heappush(open_set, (f_score[neighbor], neighbor))
+
+                if neighbor not in open_set_hash:
+                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
+                    open_set_hash.add(neighbor)
+
+    if current == end_quad:
+        # Reconstruct full point-level and quad path
+        path = [end_point]
+        quad = end_quad
+        while quad in came_from:
+            path.append(edge_entry[quad])
+            quad = came_from[quad]
+
+        path.append(start_point)
+        path = path[::-1]
+
+        quad_path = __reconstruct_quad_path__(came_from, end_quad)
+        path = optimize_path_via_edge_bundling(path, quad_path, network)
+
+        return np.array(path), quad_path
+
+    return None, None
+
+def find_path_dijkstra_e(
+        start_point: Point,
+        end_point: Point,
+        network: QuadNetwork,
+        scaler: Optional[Scaler] = None,
+        max_scale: float = np.inf,
+        **kargs
+    ) -> Optional[List[Point]]:
+
+    """
+    Dijkstra's algorithm with edge-aware traversal between quad regions.
+
+    This variant of Dijkstra seeks to avoid quad center traversal and instead moves between
+    shared edges based on entry direction and local quad structure.
+
+    Args:
+        start_point (Point): Starting position.
+        end_point (Point): Target position.
+        network (QuadNetwork): The graph of quad connectivity.
+        scaler (Optional[Scaler]): Optional scaling function for local quad cost.
+        max_scale (float): Maximum value allowed by the scaler.
+
+    Returns:
+        Optional[List[Point]]: Point-to-point path, or None if no path is found.
+    """
+
+    start_point = np.array(start_point)
+    end_point = np.array(end_point)
+
+    start_quad, end_quad = network.find_quad([start_point, end_point])
+
+    if start_quad is None or end_quad is None:
+        return None
+
+    if np.allclose(start_point, end_point):
+        return [start_point]
+    
+    if start_quad == end_quad:
+        return [start_point, end_point]
+
+    if scaler is None:
+        scaler = lambda p: 1.0 + p
+
+    open_set = []
+    open_set_hash = set()
+    heapq.heappush(open_set, (0, start_quad))
+    open_set_hash.add(start_quad)
+
+    came_from = {}
+    g_score = defaultdict(lambda: np.inf)
+    g_score[start_quad] = 0
+
+    edge_entry = {start_quad: start_point}
+
+    current = None
+
+    while open_set:
+        _, current = heapq.heappop(open_set)
+        open_set_hash.remove(current)
+
+        if current == end_quad:
+            break
+
+        for neighbor in network[current]:
+            entry = edge_entry[current]
+            exit = network.get_shared_entry_point(current, neighbor, entry)
+
+            if exit is None:
+                continue
+
+            traversal_cost = np.linalg.norm(exit - entry)
+            scale = np.inf if neighbor.boundary_zone == 0 else scaler(neighbor.boundary_max_range)
+            scaled_cost = traversal_cost * min(scale, max_scale)
+
+            tentative_g = g_score[current] + scaled_cost
+
+            if tentative_g < g_score[neighbor]:
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g
+                edge_entry[neighbor] = exit
+
+                if neighbor not in open_set_hash:
+                    heapq.heappush(open_set, (g_score[neighbor], neighbor))
+                    open_set_hash.add(neighbor)
 
     if current == end_quad:
         # Reconstruct full point-level path
-        path = []
+        path = [end_point]
         quad = end_quad
         while quad in came_from:
             path.append(edge_entry[quad])
             quad = came_from[quad]
         path.append(start_point)
-        return np.array(path[::-1] + [end_point])
+        path = path[::-1]
 
-    return None
+        quad_path = __reconstruct_quad_path__(came_from, end_quad)
+        path = optimize_path_via_edge_bundling(path, quad_path, network)
+
+        return np.array(path), quad_path
+
+    return None, None

@@ -80,7 +80,7 @@ class Planner():
     Course path without dynamics included
     """
 
-    def __init__(self, alg: Optional[PathAlgArg]):
+    def __init__(self, alg: Optional[PathAlgArg] = None):
 
         self.algs = defaultdict(lambda: None)
         self.alg = self.algs['custom']
@@ -151,7 +151,7 @@ class FieldPlanner(Planner):
     Path planner based on field only
     """
 
-    def __init__(self, field:PotentialField, alg: Optional[PathAlgArg]):
+    def __init__(self, field:Union[PotentialField], alg: Optional[PathAlgArg] = None):
         
         self.field = field
 

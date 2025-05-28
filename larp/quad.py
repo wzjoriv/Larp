@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Iterable
 from typing import Dict, List, Optional, Set, Tuple, Union
 import warnings
 from collections import defaultdict
@@ -547,6 +548,19 @@ class QPotentailField(PotentialField):
         self.field = field
         self.quadtree = quadtree
         self.quadtree.conservative = False
+
+    def __getitem__(self, idxs:Union[int, Iterable[int]]):
+        """
+        Access RGJ(s) in the field by index or list of indices.
+
+        Args:
+            idxs (int or Iterable[int]): Index or iterable of indices into the RGJ list.
+
+        Returns:
+            RGJGeometry or List[RGJGeometry] or None: The selected RGJ(s), or None if invalid input.
+        """
+
+        return self.field.__getitem__(idxs)
 
     def __iter__(self):
         return self.field.__iter__()

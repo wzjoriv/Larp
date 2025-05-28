@@ -263,6 +263,30 @@ class QuadNetwork(Network):
         
     def get_quad_size(self, quads:List[QuadNode]):
         return [quad.size for quad in quads]
+    
+    def get_shared_entry_point(self, node_from: QuadNode, node_to: QuadNode, entry: Point) -> np.ndarray:
+        """
+        Computes the entry point on the shared edge or corner with a neighbor quad.
+        If diagonally adjacent, returns midpoint of shared corner.
+        """
+
+        ######## TODO: Fix: Do a projection to shared segment
+
+        shared_edge = node_from.get_shared_edge(node_to)
+
+        if shared_edge is None:
+            return None
+
+        p0, p1 = shared_edge
+
+        if np.allclose(p0, p1):
+            # Shared corner: return the corner point
+            return p0
+        else:
+            # Shared edge: project entry point onto the edge segment
+            y = np.clip(entry[1], min(p0[1], p1[1]), max(p0[1], p1[1]))
+            x = np.clip(entry[0], min(p0[0], p1[0]), max(p0[0], p1[0]))
+            return np.array([x, y])
 
     def get_center_distance(self, node_from:QuadNode, node_to:QuadNode, scaler:Optional[Scaler]=None, max_scale: float = np.inf):
 
@@ -270,17 +294,24 @@ class QuadNetwork(Network):
             multipler = 1.0
         else:
             multipler = np.inf if node_to.boundary_zone == 0 else scaler(node_to.boundary_max_range)
-            multipler = min(multipler, max_scale)
+        
+        multipler = min(multipler, max_scale)
 
         diff = node_to.center_point - node_from.center_point
         return multipler*np.linalg.norm(diff)
     
     def to_routes_lines_collection(self):
+        """
+        Generates a list of 2D line segments for use with matplotlib's LineCollection.
+
+        Returns:
+            List of 2-point arrays: [[(x1, y1), (x2, y2)], ...]
+        """
         
         lines = []
         for leaf in self._graph.keys():
-            for neigh in self._graph[leaf]:
-                lines.extend([[leaf.center_point[0], neigh.center_point[0]], [leaf.center_point[1], neigh.center_point[1]]])
+            for neigh in self[leaf]:
+                lines.append([leaf.center_point, neigh.center_point])
 
-        return lines
+        return np.array(lines)
     

@@ -155,7 +155,7 @@ class QuadTree():
         
         size2 = size/2.0
         if size <= self.max_sector_size:
-            if size2 < self.min_sector_size or quad.boundary_zone == self.n_zones:
+            if size2 <= self.min_sector_size or quad.boundary_zone == self.n_zones:
                 # stop subdividing if size is too small or the active zones are too far away
                 self.mark_leaf(quad)
                 return quad
@@ -368,7 +368,7 @@ class QuadTree():
         self.root = __load_quad__(data['root'])
         self.leaves = self.search_leaves()
 
-    def to_image(self, return_potential = False, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
+    def to_image(self, return_potential=False, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
         """
         Render a top-down raster image of the quadtree zoning layout.
 
@@ -380,7 +380,9 @@ class QuadTree():
             image (np.ndarray): 2D array with potential or zone values of sectors.
             extent (Optional[List[float]]): [xmin, xmax, ymin, ymax] real-world bounds if return_extent is True.
         """
-        resolution = 2**int(np.log2(self.root.size / self.min_sector_size))
+        # Get resolution as a power of two
+        resolution = 2 ** int(np.floor(np.log2(self.root.size / self.min_sector_size)))+1
+        pixel_size = self.root.size / resolution
 
         image = np.ones((resolution, resolution), dtype=int) * self.n_zones
 
@@ -388,27 +390,20 @@ class QuadTree():
         lower_bound = self.root.center_point - half_size
         upper_bound = self.root.center_point + half_size
 
-        world_width = self.root.size
-        pixel_size = world_width / resolution
-
         for quad in self.leaves:
             if quad.boundary_zone == self.n_zones:
                 continue
 
             quad_half = quad.size / 2.0
-            quad_left = quad.center_point[0] - quad_half
-            quad_top = quad.center_point[1] + quad_half
+            x0 = int((quad.center_point[0] - quad_half - lower_bound[0]) / pixel_size)
+            y0 = int((upper_bound[1] - (quad.center_point[1] + quad_half)) / pixel_size)
+            block_size = max(1, int(np.floor(quad.size / pixel_size)))
 
-            # Image coordinates: origin is top-left
-            x_idx = int((quad_left - lower_bound[0]) / pixel_size)
-            y_idx = int((upper_bound[1] - quad_top) / pixel_size)
-            block_size = max(1, int(np.ceil(quad.size / pixel_size)))
+            # Ensure bounds are within the image dimensions
+            x1 = min(x0 + block_size, resolution)
+            y1 = min(y0 + block_size, resolution)
 
-            # Ensure bounds don't overflow image dimensions
-            x_end = min(x_idx + block_size, resolution)
-            y_end = min(y_idx + block_size, resolution)
-
-            image[y_idx:y_end, x_idx:x_end] = quad.boundary_zone
+            image[y0:y1, x0:x1] = quad.boundary_zone
 
         if return_potential:
             image = self.ZONEToMaxRANGE[image]
@@ -826,9 +821,18 @@ class QPotentailField(PotentialField):
         point = np.array(point, dtype=np.float64)
         quad_chain = self.quadtree.find_quads_chain([point], max_depth=max_depth)[0]
 
-        for node in reversed(quad_chain):
-            if node.rgj_idx:
-                return self.field.in_bbox(point, filted_idx=node.rgj_idx)
+        searched_rgj = set()
+
+        for quad in reversed(quad_chain):
+            to_search_rgj = set(quad.rgj_idx) - searched_rgj
+
+            if len(to_search_rgj):
+                searched_rgj.update(to_search_rgj)
+
+                bbox_idx = self.field.find_bbox(point, filted_idx=to_search_rgj)
+
+                if len(bbox_idx):
+                    return bbox_idx
 
         # fallback: search entire field if no relevant RGJs found
         return self.field.in_bbox(point)
@@ -843,15 +847,26 @@ class QPotentailField(PotentialField):
 
         Returns:
             np.ndarray: Indices of RGJs (global) whose bounding boxes contain the point.
+
+        Note function may return only a subset of the RGJs indexes (those closest in distance)
         """
         point = np.array(point, dtype=np.float64)
         quad_chain = self.quadtree.find_quads_chain([point], max_depth=max_depth)[0]
 
-        for node in reversed(quad_chain):
-            if node.rgj_idx:
-                return self.field.find_bbox(point, filted_idx=node.rgj_idx)
+        searched_rgj = set()
 
-        # fallback: search whole field if no relevant RGJs found
+        for quad in reversed(quad_chain):
+            to_search_rgj = set(quad.rgj_idx) - searched_rgj
+
+            if len(quad.rgj_idx):
+                searched_rgj.update(to_search_rgj)
+
+                bbox_idx = self.field.find_bbox(point, filted_idx=to_search_rgj)
+
+                if len(bbox_idx):
+                    return bbox_idx
+
+        # fallback: search whole field if no relevant RGJs found; not expected to ever happen
         return self.field.find_bbox(point)
     
     def repulsion_vectors(

@@ -542,7 +542,16 @@ class QPotentailField(PotentialField):
     - Need all RGJ to be inside the quad tree area to be efficient and reliable
     """
 
-    def __init__(self, field_quadtree:Union[PotentialField, QuadTree]):
+    def __init__(self, field_quadtree: Union[PotentialField, QuadTree]):
+        """
+        Initialize QPotentialField with a PotentialField or a QuadTree.
+
+        If a PotentialField is provided, a QuadTree is built from it.
+        If a QuadTree is provided, its associated PotentialField is used.
+
+        Args:
+            field_quadtree (Union[PotentialField, QuadTree]): The field or associated quadtree.
+        """
 
         if isinstance(field_quadtree, PotentialField):
             field = field_quadtree
@@ -554,6 +563,16 @@ class QPotentailField(PotentialField):
         self.field = field
         self.quadtree = quadtree
         self.quadtree.conservative = False
+
+    def __getattr__(self, name):
+        """
+        Delegate attribute access to the wrapped PotentialField
+        if the attribute is not found in QPotentialField.
+        """
+        try:
+            return getattr(self.field, name)
+        except AttributeError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}' or in wrapped field")
 
     def __getitem__(self, idxs:Union[int, Iterable[int]]):
         """
@@ -894,7 +913,8 @@ class QPotentailField(PotentialField):
         points: Union[np.ndarray, List['Point']],
         min_dist_select: bool = True,
         return_reference: bool = False,
-        max_depth: int = 3
+        max_depth: int = 3,
+        filted_idx:Optional[List[int]] = None
     ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         """
         Computes repulsion vectors for 2D points using only relevant RGJs from a quadtree field.
@@ -915,6 +935,9 @@ class QPotentailField(PotentialField):
             If return_reference is True:
                 Tuple[np.ndarray, np.ndarray]: (repulsion_vectors, rgj_indices_used_per_point)
         """
+        if filted_idx is not None:
+            self.field.repulsion_vectors(points=points, filted_idx=filted_idx, min_dist_select=min_dist_select, return_reference=return_reference)
+
         points = np.atleast_2d(points).astype(float)
         n_points = len(points)
         repulsion_vectors = np.zeros((n_points, 2), dtype=float)
@@ -1078,7 +1101,7 @@ class QPotentailField(PotentialField):
 
         return dist_matrix
 
-    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 2) -> float:
+    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 3) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
@@ -1088,7 +1111,7 @@ class QPotentailField(PotentialField):
 
         return f_eval.sum()*step
     
-    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 2) -> float:
+    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 3) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
@@ -1098,7 +1121,7 @@ class QPotentailField(PotentialField):
 
         return f_eval.max()
 
-    def to_image(self, resolution:int = 400, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, max_depth:int = 2, return_extent=True) -> np.ndarray:
+    def to_image(self, resolution:int = 400, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, max_depth:int = 3, return_extent=True) -> np.ndarray:
 
         if center_point is None:
             if self.field.center_point is None:

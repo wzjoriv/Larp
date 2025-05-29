@@ -270,8 +270,6 @@ class QuadNetwork(Network):
         If diagonally adjacent, returns midpoint of shared corner.
         """
 
-        ######## TODO: Fix: Do a projection to shared segment
-
         shared_edge = node_from.get_shared_edge(node_to)
 
         if shared_edge is None:
@@ -284,9 +282,30 @@ class QuadNetwork(Network):
             return p0
         else:
             # Shared edge: project entry point onto the edge segment
-            y = np.clip(entry[1], min(p0[1], p1[1]), max(p0[1], p1[1]))
-            x = np.clip(entry[0], min(p0[0], p1[0]), max(p0[0], p1[0]))
-            return np.array([x, y])
+            edge_vector = p1 - p0
+            edge_length_squared = np.dot(edge_vector, edge_vector)
+            if edge_length_squared == 0:
+                # Avoid division by zero if edge_vector is zero
+                return p0
+            t = np.dot(entry - p0, edge_vector) / edge_length_squared
+            t = np.clip(t, 0.0, 1.0)
+            projection = p0 + t * edge_vector
+            return projection
+    
+    def get_corner_points(self, quad_path: List[QuadNode]):
+
+        i = 0
+        points = []
+        for i in range(len(quad_path)-1):
+            shared_edge = quad_path[i].get_shared_edge(quad_path[i+1])
+
+            if shared_edge is None:
+                return None
+            
+            if np.allclose(shared_edge[0], shared_edge[1]):
+                points.append(shared_edge[0])
+
+        return np.array(points)
 
     def get_center_distance(self, node_from:QuadNode, node_to:QuadNode, scaler:Optional[Scaler]=None, max_scale: float = np.inf):
 

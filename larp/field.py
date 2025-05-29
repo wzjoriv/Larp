@@ -691,7 +691,7 @@ class PotentialField():
             return np.nonzero([rgj.in_bbox(point) for rgj in self.rgjs])[0]
     
     def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, return_reference = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
-        points = np.array(points)
+        points = np.atleast_2d(points).astype(float)
         if not len(self):
             return points*np.inf
         filted_idx = filted_idx if not filted_idx is None else list(range(len(self)))
@@ -715,7 +715,7 @@ class PotentialField():
     
     def gradient(self, points: Union[np.ndarray, List[Point]], min_dist_select=True) -> np.ndarray:
 
-        points = np.array(points)
+        points = np.atleast_2d(points).astype(float)
         if not len(self):
             return points * 0.0
         
@@ -732,7 +732,7 @@ class PotentialField():
         return grad
 
     def eval(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
-        points = np.array(points)
+        points = np.atleast_2d(points).astype(float)
         rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
 
         if not len(rgjs):
@@ -744,7 +744,7 @@ class PotentialField():
         if len(points) != len(idxs):
             raise RuntimeError("The number of points doesn't match the number of indexes")
         
-        points = np.array(points)
+        points = np.atleast_2d(points).astype(float)
         n = len(points)
         idxs = np.array(idxs, dtype=int)
         
@@ -756,7 +756,7 @@ class PotentialField():
         return evals
     
     def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, return_reference = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
-        points = np.array(points)
+        points = np.atleast_2d(points).astype(float)
         if not len(self):
             warnings.warn("There are not any RGJs elements in the field")
             if return_reference:
@@ -796,7 +796,7 @@ class PotentialField():
         return dists
     
     def squared_dist_list(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
-        points = np.array(points)
+        points = np.atleast_2d(points).astype(float)
         rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
 
         if not len(rgjs):

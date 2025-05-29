@@ -257,3 +257,17 @@ def test_quad_shared_edge():
     assert shared_edge1 is shared_edge2, "Expected edge of quads not returned"
 
 test_quad_shared_edge()
+
+def test_quad_bbox():
+
+    # Scenerio 1: Sharing partial edge
+    quad1 = larp.quad.QuadNode((2, 3), 2)
+    quad2 = larp.quad.QuadNode((4, 2), 2)
+
+    in_bbox1 = quad1.in_bbox([[1, 2], [2, 3], [-1, -1], [4, 2], [3, 3], [3.1, 2], [2.9, 2]])
+    in_bbox2 = quad2.in_bbox([[1, 2], [2, 3], [-1, -1], [4, 2], [3, 3], [3.1, 2], [2.9, 2]])
+
+    assert np.allclose(in_bbox1, np.array([True, True, False, False, True, False, True])) , "Point misclassified as being or not inside the bounding box"
+    assert np.allclose(in_bbox2, np.array([False, False, False, True, True, True, False])) , "Point misclassified as being or not inside the bounding box"
+
+test_quad_bbox()

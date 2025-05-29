@@ -156,7 +156,7 @@ class QuadTree():
         
         size2 = size/2.0
         if size <= self.max_sector_size:
-            if size2 <= self.min_sector_size or quad.boundary_zone == self.n_zones:
+            if size2 < self.min_sector_size or quad.boundary_zone == self.n_zones:
                 # stop subdividing if size is too small or the active zones are too far away
                 self.mark_leaf(quad)
                 return quad
@@ -481,6 +481,12 @@ class QuadNode():
         cx, cy = self.center_point
         half = self.size / 2.0
         return np.array([cx - half, cy - half, cx + half, cy + half])
+    
+    def in_bbox(self, points):
+        points = np.atleast_2d(points)
+        xmin, ymin, xmax, ymax = self.get_boundaries()
+
+        return (points[:, 0] >= xmin) & (points[:, 1] >= ymin) & (points[:, 0] <= xmax) & (points[:, 1] <= ymax)
     
     def get_shared_edge(self, neighbor: 'QuadNode'):
         """

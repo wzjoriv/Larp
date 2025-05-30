@@ -122,7 +122,7 @@ class Planner():
         """
 
         if isinstance(alg, str):
-            self.alg = self.algs[alg]
+            self.alg = self.algs[alg.lower()]
         else:
             self.add_alg('custom', alg)
             self.alg = self.algs["custom"]
@@ -197,7 +197,7 @@ class QuadPlanner(Planner):
         """
         self.network.refresh()
 
-    def find_path(self, start_point:Point, end_point:Point, refresh_network = False, reset_memory = False, **kargs) -> Tuple[Optional[Union[List[Point], np.ndarray]], Optional[List[QuadNode]]]:
+    def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, **kargs) -> Tuple[Optional[Union[List[Point], np.ndarray]], Optional[List[QuadNode]]]:
         """
         Executes the selected path planning algorithm from start to goal.
 
@@ -210,10 +210,11 @@ class QuadPlanner(Planner):
         Returns:
             Optional[Union[List[Point], np.ndarray]]: Path as a list of points, or None if no path found.
         """
-        if reset_memory:
-            self.memory.clear()
         if refresh_network:
             self.refresh_network()
+
+        if reset_memory:
+            self.memory.clear()
 
         return self.alg(start_point=start_point, end_point=end_point, network=self.network, memory=self.memory, **kargs)
 

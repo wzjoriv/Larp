@@ -47,7 +47,6 @@ Explore Larp’s capabilities through interactive Jupyter Notebook demos:
 - 🔁 [Hot Reloading in Room](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Hot%20Reloading%20in%20Room/presentation.ipynb) — Dynamic obstacle updates in confined space 
 - 🏛️ [Lafayette Court House](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Lafayette%20Court%20House/presentation.ipynb) — Outdoor urban-scale routing 
 - 🛫 [Urban Air Mobility in Singapore](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Urban%20Air%20Mobility%20and%20Quadtree%20Storing/presentation.ipynb) — High-altitude navigation  
-- 🛣️ [Aerial Cargo Delivery](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Routes%20for%20Austin%20TX/presentation.ipynb) — Delivery route path planning 
 
 ---
 

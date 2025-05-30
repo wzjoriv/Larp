@@ -319,7 +319,7 @@ class QuadNetwork(Network):
         diff = node_to.center_point - node_from.center_point
         return multipler*np.linalg.norm(diff)
     
-    def to_routes_lines_collection(self):
+    def to_line_collection(self):
         """
         Generates a list of 2D line segments for use with matplotlib's LineCollection.
 

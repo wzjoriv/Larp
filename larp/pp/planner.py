@@ -26,6 +26,19 @@ def __reconstruct_quad_path__(came_from:dict, current:QuadNode):
         total_path.append(current)
     return total_path[::-1]
 
+def __get_scaled_distance__(entry:Point, exit:Point, node_to:QuadNode, scaler:Optional[Scaler]=None, max_scale: float = np.inf):
+
+        if scaler is None:
+            multipler = 1.0
+        else:
+            multipler = np.inf if node_to.boundary_zone == 0 else scaler(node_to.boundary_max_range)
+        
+        multipler = min(multipler, max_scale)
+
+        diff = exit - entry
+
+        return multipler*np.linalg.norm(diff)
+
 def optimize_path_via_edge_bundling(path: List[Point], quad_path: List[QuadNode], network: QuadNetwork) -> List[Point]:
 
     # TODO: Fix 
@@ -360,8 +373,8 @@ def find_path_astar_e(
         Optional[List[Point]]: Point-to-point path, or None if no path is found.
     """
 
-    start_point = np.array(start_point)
-    end_point = np.array(end_point)
+    start_point = np.array(start_point, dtype=float)
+    end_point = np.array(end_point, dtype=float)
 
     start_quad, end_quad = network.find_quad([start_point, end_point])
 
@@ -407,11 +420,7 @@ def find_path_astar_e(
             if exit is None:
                 continue
 
-            traversal_cost = np.linalg.norm(exit - entry)
-            scale = np.inf if neighbor.boundary_zone == 0 else scaler(neighbor.boundary_max_range)
-            scaled_cost = traversal_cost * min(scale, max_scale)
-
-            tentative_g = g_score[current] + scaled_cost
+            tentative_g = g_score[current] + __get_scaled_distance__(entry, exit, neighbor, scaler, max_scale)
 
             if tentative_g < g_score[neighbor]:
                 came_from[neighbor] = current
@@ -467,8 +476,8 @@ def find_path_dijkstra_e(
         Optional[List[Point]]: Point-to-point path, or None if no path is found.
     """
 
-    start_point = np.array(start_point)
-    end_point = np.array(end_point)
+    start_point = np.array(start_point, dtype=float)
+    end_point = np.array(end_point, dtype=float)
 
     start_quad, end_quad = network.find_quad([start_point, end_point])
 
@@ -511,11 +520,7 @@ def find_path_dijkstra_e(
             if exit is None:
                 continue
 
-            traversal_cost = np.linalg.norm(exit - entry)
-            scale = np.inf if neighbor.boundary_zone == 0 else scaler(neighbor.boundary_max_range)
-            scaled_cost = traversal_cost * min(scale, max_scale)
-
-            tentative_g = g_score[current] + scaled_cost
+            tentative_g = g_score[current] + __get_scaled_distance__(entry, exit, neighbor, scaler, max_scale)
 
             if tentative_g < g_score[neighbor]:
                 came_from[neighbor] = current

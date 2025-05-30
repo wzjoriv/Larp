@@ -540,8 +540,8 @@ class QPotentailField(PotentialField):
     A potential field optimized with a quadtree structure for efficient spatial operations.
 
     This class wraps a `PotentialField` with a `QuadTree`, allowing for fast spatial queries
-    such as locating RGJs within a region. All RGJs must 
-    reside within the quadtree's bounds for optimal efficiency.
+    such as locating RGJs within a region and optimized potential field evaluations and distance search.
+    All RGJs must reside within the quadtree's bounds for optimal efficiency.
 
     Args:
         field_quadtree (Union[PotentialField, QuadTree]): Either a `PotentialField` from which

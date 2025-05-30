@@ -565,7 +565,7 @@ class QPotentailField(PotentialField):
 
         if isinstance(field_quadtree, PotentialField):
             field = field_quadtree
-            quadtree = QuadTree(field, minimum_length_limit=np.max(field.size)/8, build_tree=True)
+            quadtree = QuadTree(field, minimum_length_limit=(np.max(field.size)/8)*0.9, build_tree=True)
         else:
             field = field_quadtree.field
             quadtree = field_quadtree
@@ -904,7 +904,7 @@ class QPotentailField(PotentialField):
             bool: True if the point lies in any RGJ bounding box.
         """
         if filted_idx is not None:
-            self.field.in_bbox(point=point, filted_idx=filted_idx)
+            return self.field.in_bbox(point=point, filted_idx=filted_idx)
 
         point = np.array(point, dtype=np.float64)
         quad_chain = self.quadtree.find_quads_chain([point], max_depth=max_depth)[0]
@@ -939,7 +939,7 @@ class QPotentailField(PotentialField):
         Note function may return only a subset of the RGJs indexes (those closest in distance)
         """
         if filted_idx is not None:
-            self.field.find_bbox(point=point, filted_idx=filted_idx)
+            return self.field.find_bbox(point=point, filted_idx=filted_idx)
 
         point = np.array(point, dtype=np.float64)
         quad_chain = self.quadtree.find_quads_chain([point], max_depth=max_depth)[0]
@@ -988,7 +988,7 @@ class QPotentailField(PotentialField):
                 Tuple[np.ndarray, np.ndarray]: (repulsion_vectors, rgj_indices_used_per_point)
         """
         if filted_idx is not None:
-            self.field.repulsion_vectors(points=points, filted_idx=filted_idx, min_dist_select=min_dist_select, return_reference=return_reference)
+            return self.field.repulsion_vectors(points=points, filted_idx=filted_idx, min_dist_select=min_dist_select, return_reference=return_reference)
 
         points = np.atleast_2d(points).astype(float)
         n_points = len(points)
@@ -1058,7 +1058,7 @@ class QPotentailField(PotentialField):
             np.ndarray: Evaluated potential values at each point.
         """
         if filted_idx is not None:
-            self.field.eval(points=points, filted_idx=filted_idx)
+            return self.field.eval(points=points, filted_idx=filted_idx)
 
         points = np.atleast_2d(points).astype(float)
         n_points = len(points)
@@ -1085,7 +1085,7 @@ class QPotentailField(PotentialField):
     def eval_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None) -> np.ndarray:
         return self.field.eval_per(points=points, idxs=idxs)
     
-    def squared_dist(self, points:Union[np.ndarray, List[Point]], scaled=True, inverted=True, max_depth=2, return_reference = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    def squared_dist(self, points:Union[np.ndarray, List[Point]], scaled=True, inverted=True, max_depth=2, return_reference = False, filted_idx:Optional[List[int]] = None) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
 
         points = np.array(points)
         if not len(self):
@@ -1094,7 +1094,8 @@ class QPotentailField(PotentialField):
                 return points.sum(1)*np.inf, -np.ones_like(points.sum(1))
             return points.sum(1)*np.inf
 
-        dists = self.squared_dist_list(points=points, scaled=scaled, inverted=inverted, max_depth=max_depth)
+        dists = self.squared_dist_list(points=points, scaled=scaled, inverted=inverted, max_depth=max_depth, filted_idx=filted_idx)
+
         if return_reference:
             min_idxs = np.argmin(dists, axis=1)
             return dists[np.arange(len(dists)), min_idxs], min_idxs
@@ -1127,7 +1128,7 @@ class QPotentailField(PotentialField):
             np.ndarray: Squared distances of shape (N, M), where M = total RGJs.
         """
         if filted_idx is not None:
-            self.field.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted)
+            return self.field.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted)
 
         points = np.atleast_2d(points).astype(float)
         n_points = len(points)

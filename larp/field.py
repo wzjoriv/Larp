@@ -495,7 +495,7 @@ class PotentialField():
         elif np.isscalar(size):
             self.size = np.array([size, size])
         else:
-            self.size = np.array(size)
+            self.size = np.atleast_1d(size)
 
         if properties is None or isinstance(rgjs[0], RGJGeometry):
             for rgj in rgjs:
@@ -510,7 +510,7 @@ class PotentialField():
             self.__reload_center = True # whether to recalculate center point if new RGJ are added
             if len(rgjs) > 0:
                 self.center_point, suggest_size = self.__calculate_center_point__(suggest_size=True)
-                self.size = np.array([suggest_size]*2) if self.size is None else self.size
+                self.size = np.array([max(suggest_size)]*2, dtype=float) if self.size is None else self.size
         else:
             self.__reload_center = False
             if len(rgjs) > 0:
@@ -556,11 +556,17 @@ class PotentialField():
         center = np.sum(self.bbox, 0)/2.0
 
         if suggest_size:
-            suggest_size = max(self.bbox[1] - center)*2
+            suggest_size = self.bbox[1] - self.bbox[0]
             return center, suggest_size
         
         return center
     
+    def set_bbox(self, x_min:float, y_min:float, x_max:float, y_max:float):
+        
+        self.bbox = np.array([[x_min, y_min], [x_max, y_max]])
+        self.center_point = np.sum(self.bbox, 0)/2.0
+        self.size = self.bbox[1] - self.bbox[0]
+
     def set_all_repulsion(self, new_repulsion):
         new_repulsion = np.array(new_repulsion)
         for rgj in self.rgjs:
@@ -580,7 +586,7 @@ class PotentialField():
         if toggle and len(self.rgjs) > 0:
             if recal_size:
                 self.center_point, suggest_size = self.__calculate_center_point__(True)
-                self.size = np.array([suggest_size]*2)
+                self.size = np.array([max(suggest_size)]*2, dtype=float)
             else:
                 self.center_point = self.__calculate_center_point__(False)
 

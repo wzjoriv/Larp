@@ -16,7 +16,7 @@ def test_load_rgj():
 test_load_rgj()
 
 def test_load_gj():
-    field = lpio.loadGeoJSONFile("test/data2.geojson")
+    field = lpio.loadGeoJSONFile("test/data.geojson")
     field.eval([[0.0, 0.0]])
 
 test_load_gj()

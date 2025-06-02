@@ -122,15 +122,15 @@ def has_quad_zone_sight(
     points = (1 - alphas[:, None]) * p1 + alphas[:, None] * p2
 
     quads = network.find_quad(points)
-    allowed_zone = quads[0].boundary_zone
+    allowed_zone = max(quads[0].boundary_zone, min_zone)
 
     for quad in set(quads):
-        if quad is None or quad.boundary_zone < allowed_zone or quad.boundary_zone <= min_zone:
+        if quad is None or quad.boundary_zone < allowed_zone:
             return False
 
     return True
 
-def path_smoothing(path: List[Point], network: QuadNetwork, step: Optional[float] = None) -> np.ndarray:
+def network_path_smoothing(path: List[Point], network: QuadNetwork, step: Optional[float] = None) -> np.ndarray:
     """
     Smooths a path by merging segments that are in the same zone or higher zone.
     """
@@ -271,7 +271,7 @@ class QuadPlanner(Planner):
         """
         self.network.refresh()
 
-    def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, **kargs) -> Tuple[Optional[Union[List[Point], np.ndarray]], Optional[List[QuadNode]]]:
+    def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, smooth_path = True, **kargs) -> Tuple[Optional[Union[List[Point], np.ndarray]], Optional[List[QuadNode]]]:
         """
         Executes the selected path planning algorithm from start to goal.
 
@@ -290,7 +290,12 @@ class QuadPlanner(Planner):
         if reset_memory:
             self.memory.clear()
 
-        return self.alg(start_point=start_point, end_point=end_point, network=self.network, memory=self.memory, **kargs)
+        path = self.alg(start_point=start_point, end_point=end_point, network=self.network, memory=self.memory, **kargs)
+
+        if smooth_path and path is not None:
+            path = network_path_smoothing(path=path, network=self.network)
+
+        return  path
 
 
 # Path planning algorithms
@@ -351,9 +356,9 @@ def find_path_A_star(start_point:Point, end_point:Point, network:QuadNetwork, sc
 
         path = optimize_path_via_edge_bundling(path, quad_path, network)
 
-        return np.array(path), quad_path
+        return np.array(path)
 
-    return None, None
+    return None
 
 def find_path_dijkstra(start_point:Point, end_point:Point, network:QuadNetwork, scaler:Optional[Scaler]=None, max_scale: float = np.inf, **kargs)-> Optional[List[Point]]:
     """
@@ -405,9 +410,9 @@ def find_path_dijkstra(start_point:Point, end_point:Point, network:QuadNetwork, 
         path = [start_point] + [network.get_shared_entry_point(quad_path[i], quad_path[i+1], path[i+1]) for i in range(len(quad_path)-1)] + [end_point]
         path = optimize_path_via_edge_bundling(path, quad_path, network)
 
-        return np.array(path), quad_path
+        return np.array(path)
 
-    return None, None
+    return None
 
 def find_path_astar_e(
         start_point: Point,
@@ -508,9 +513,9 @@ def find_path_astar_e(
         quad_path = __reconstruct_quad_path__(came_from, end_quad)
         path = optimize_path_via_edge_bundling(path, quad_path, network)
 
-        return np.array(path), quad_path
+        return np.array(path)
 
-    return None, None
+    return None
 
 def find_path_dijkstra_e(
         start_point: Point,
@@ -606,6 +611,6 @@ def find_path_dijkstra_e(
         quad_path = __reconstruct_quad_path__(came_from, end_quad)
         path = optimize_path_via_edge_bundling(path, quad_path, network)
 
-        return np.array(path), quad_path
+        return np.array(path)
 
-    return None, None
+    return None

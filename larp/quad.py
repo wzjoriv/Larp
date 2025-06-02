@@ -369,12 +369,12 @@ class QuadTree():
         self.root = __load_quad__(data['root'])
         self.leaves = self.search_leaves()
 
-    def to_image(self, return_potential=False, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
+    def to_image(self, return_zone=False, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
         """
         Render a top-down raster image of the quadtree zoning layout.
 
         Args:
-            return_potential (bool): Whether to return the potential limit of each zone.
+            return_zone (bool): Whether to return the potential limit of each zone or the zone category.
             return_extent (bool): Whether to return the real-world coordinate extent.
 
         Returns:
@@ -406,8 +406,10 @@ class QuadTree():
 
             image[y0:y1, x0:x1] = quad.boundary_zone
 
-        if return_potential:
-            image = self.ZONEToMaxRANGE[image]
+        if not return_zone:
+            image_p = self.ZONEToMaxRANGE[image]
+            image_p[image == 0] = np.nan
+            image = image_p
 
         if return_extent:
             return image, [lower_bound[0], upper_bound[0], lower_bound[1], upper_bound[1]]

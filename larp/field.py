@@ -574,7 +574,7 @@ class PotentialField():
 
     def reload_bbox(self):
         if len(self):
-            bbox = np.concatenate([rgj.bbox for rgj in self.rgjs], 0).reshape(-1, 2)
+            bbox = np.concatenate([rgj.bbox.reshape(-1, 2) for rgj in self.rgjs], 0)
             self.bbox = np.array([bbox.min(0), bbox.max(0)])
         else:
             self.bbox = np.array([[None, None], [None, None]])

@@ -87,6 +87,67 @@ def optimize_path_via_edge_bundling(path: List[Point], quad_path: List[QuadNode]
 
     return optimized_points
 
+def has_quad_zone_sight(
+        p1: np.ndarray,
+        p2: np.ndarray,
+        network: QuadNetwork,
+        step: Optional[float] = None,
+        min_zone:int = 1
+    ) -> Tuple[bool, Optional[int], Optional[QuadNode]]:
+
+    """
+    Returns whether the path from p1 to p2 maintains or increases zone (i.e., risk doesn't increase).
+
+    Args:
+        p1 (np.ndarray): Start point.
+        p2 (np.ndarray): End point.
+        network (QuadNetwork): The quad network to check in.
+        step (float): Distance between sample points.
+
+    Returns:
+        bool: True if zone doesn't decrease, False otherwise.
+    """
+    if step is None:
+        step = network.quadtree.min_sector_size / 4
+
+    p1 = np.asarray(p1, dtype=float)
+    p2 = np.asarray(p2, dtype=float)
+
+    if np.allclose(p1, p2):
+        return True
+
+    distance = np.linalg.norm(p2 - p1)
+    num_samples = max(2, int(distance / step))
+    alphas = np.linspace(0, 1, num_samples)
+    points = (1 - alphas[:, None]) * p1 + alphas[:, None] * p2
+
+    quads = network.find_quad(points)
+    allowed_zone = quads[0].boundary_zone
+
+    for quad in set(quads):
+        if quad is None or quad.boundary_zone < allowed_zone or quad.boundary_zone <= min_zone:
+            return False
+
+    return True
+
+def path_smoothing(path: List[Point], network: QuadNetwork, step: Optional[float] = None) -> np.ndarray:
+    """
+    Smooths a path by merging segments that are in the same zone or higher zone.
+    """
+    if len(path) <= 2:
+        return np.array(path, dtype=float)
+
+    optimized = [path[0]]
+
+    i = 1
+    while i < len(path) - 1:
+        if not has_quad_zone_sight(optimized[-1], path[i+1], network=network, step=step):
+            optimized.append(path[i])
+        i += 1
+
+    optimized.append(path[-1])
+    return np.array(optimized, dtype=float)
+
 class Planner():
 
     """
@@ -287,6 +348,7 @@ def find_path_A_star(start_point:Point, end_point:Point, network:QuadNetwork, sc
         path = np.array([start_point] + network.get_quad_center(quad_path)[1:-1] + [end_point])
 
         path = [start_point] + [network.get_shared_entry_point(quad_path[i], quad_path[i+1], path[i+1]) for i in range(len(quad_path)-1)] + [end_point]
+
         path = optimize_path_via_edge_bundling(path, quad_path, network)
 
         return np.array(path), quad_path

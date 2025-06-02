@@ -277,20 +277,19 @@ class QuadNetwork(Network):
 
         p0, p1 = shared_edge
 
-        if np.allclose(p0, p1):
-            # Shared corner: return the corner point
+        # Shared edge: project entry point onto the edge segment
+        edge_vector = p1 - p0
+        edge_length_squared = np.dot(edge_vector, edge_vector)
+
+        if edge_length_squared == 0:
+            # Avoid division by zero if edge_vector is zero
             return p0
-        else:
-            # Shared edge: project entry point onto the edge segment
-            edge_vector = p1 - p0
-            edge_length_squared = np.dot(edge_vector, edge_vector)
-            if edge_length_squared == 0:
-                # Avoid division by zero if edge_vector is zero
-                return p0
-            t = np.dot(entry - p0, edge_vector) / edge_length_squared
-            t = np.clip(t, 0.0, 1.0)
-            projection = p0 + t * edge_vector
-            return projection
+        
+        t = np.dot(entry - p0, edge_vector) / edge_length_squared
+        t = np.clip(t, 0.0, 1.0)
+        projection = p0 + t * edge_vector
+        
+        return projection
     
     def get_corner_points(self, quad_path: List[QuadNode]):
 

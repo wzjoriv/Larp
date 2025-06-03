@@ -1,5 +1,3 @@
 numpy==2.2.2
-matplotlib
-tk
 pyproj==3.7.1
-scipy
+matplotlib # [Optional] [for illustrations]

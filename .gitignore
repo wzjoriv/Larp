@@ -1,6 +1,9 @@
 # custom
 .rug_*
 .vscode
+cache
+
+cache
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

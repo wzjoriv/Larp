@@ -1,6 +1,4 @@
 import numpy as np
-import sys
-sys.path.append("../larp")
 import larp
 
 """
@@ -21,8 +19,6 @@ def test_point_rgj():
     
     assert np.squeeze(out)[2] == 1.0, "Evaluation of point rgj is incorrect for point at origin"
     assert len(np.squeeze(out)) == 3, "Evaluation of point rgj does not return a size equal to the size of the input"
-
-test_point_rgj()
 
 def test_line_string_rgj():
     lines_rgj = {
@@ -49,8 +45,6 @@ def test_line_string_rgj():
     assert np.squeeze(out)[2] == 1.0, "Evaluation of line string rgj is incorrect for point at an origin"
     assert np.squeeze(out)[3] == 1.0, "Evaluation of line string rgj is incorrect for point at an origin"
 
-test_line_string_rgj()
-
 def test_ellipse_rgj():
     
     rgj = larp.EllipseRGJ(coordinates=np.array([0, 0]), shape=np.eye(2), repulsion=np.eye(2))
@@ -68,8 +62,6 @@ def test_ellipse_rgj():
     assert ((vectors[0] - np.array([0.0]*2))**2).sum() < 1e-5, "Unexpected repulsion vector"
     assert ((vectors[1] - np.array([2*(np.sqrt(2)-1)/np.sqrt(2)]*2))**2).sum() < 1e-5, "Unexpected repulsion vector"
 
-test_ellipse_rgj()
-
 def test_rect_rgj():
     
     rgj = larp.RectangleRGJ(coordinates=np.array([[1]*2, [-1]*2]), repulsion=np.eye(2))
@@ -82,8 +74,6 @@ def test_rect_rgj():
     assert ((vectors[3] - np.array([0.0]*2))**2).sum() < 1e-5, "Unexpected repulsion vector"
     assert ((vectors[4] - np.array([-1.0]*2))**2).sum() < 1e-5, "Unexpected repulsion vector"
 
-test_rect_rgj()
-
 def test_multi_point_rgj():
     
     rgj = larp.MultiPointRGJ(coordinates=[(1, 1), (0, 0), (0.5, 0.5)], repulsion=np.eye(2))
@@ -94,8 +84,6 @@ def test_multi_point_rgj():
     assert ((vectors[1] - np.array([ 0.15,  0.15]))**2).sum() < 1e-5, "Unexpected repulsion vector"
     assert ((vectors[2] - np.array([ 0.05,  0.05]))**2).sum() < 1e-5, "Unexpected repulsion vector"
     assert ((vectors[3] - np.array([-0.15, -0.15]))**2).sum() < 1e-5, "Unexpected repulsion vector"
-
-test_multi_point_rgj()
 
 def test_multi_line_string_rgj():
     
@@ -108,8 +96,6 @@ def test_multi_line_string_rgj():
     assert ((vectors[2] - np.array([ 0.45, 0.0]))**2).sum() < 1e-5, "Unexpected repulsion vector"
     assert ((vectors[3] - np.array([-0.45, 0.0]))**2).sum() < 1e-5, "Unexpected repulsion vector"
 
-test_multi_line_string_rgj()
-
 def test_multi_rect_rgj():
     
     rgj = larp.MultiRectangleRGJ(coordinates=[[(0, 1), (-1, 0)], [(1, 1), (2, 0)]], repulsion=np.eye(2))
@@ -121,8 +107,6 @@ def test_multi_rect_rgj():
     assert ((vectors[2] - np.array([ 0.45, 0.0]))**2).sum() < 1e-5, "Unexpected repulsion vector"
     assert ((vectors[3] - np.array([-0.45, 0.0]))**2).sum() < 1e-5, "Unexpected repulsion vector"
 
-test_multi_line_string_rgj()
-
 def test_multi_ellipse_rgj():
     
     rgj = larp.MultiEllipseRGJ(coordinates=[(0, 0), (1, 1)], shape=np.array([np.eye(2)*0.25]*2), repulsion=np.eye(2))
@@ -133,8 +117,6 @@ def test_multi_ellipse_rgj():
     assert ((vectors[1] - np.array([0.0]*2))**2).sum() < 1e-5, "Unexpected repulsion vector"
     assert ((vectors[2] - (1-1/np.sqrt(6.48))*np.array([ 0.45, 0.45]))**2).sum() < 1e-5, "Unexpected repulsion vector"
     assert ((vectors[3] - (1-1/np.sqrt(6.48))*np.array([-0.45,-0.45]))**2).sum() < 1e-5, "Unexpected repulsion vector"
-
-test_multi_ellipse_rgj()
 
 def test_geometry_collection_rgj():
     
@@ -193,5 +175,3 @@ def test_geometry_collection_rgj():
     assert ((grads[1] - np.array([0.0]*2))**2).sum() < 1e-5, "Unexpected gradient vector"
     assert ((grads[2] - np.array([0.0]*2))**2).sum() < 1e-5, "Unexpected gradient vector"
     assert ((grads[3] - grad_line)**2).sum() < 1e-5, "Unexpected gradient vector"
-
-test_geometry_collection_rgj()

@@ -290,6 +290,8 @@ class QuadPlanner(Planner):
         if reset_memory:
             self.memory.clear()
 
+        start_point, end_point = np.asarray(start_point, dtype=float), np.asarray(end_point, dtype=float)
+
         path = self.alg(start_point=start_point, end_point=end_point, network=self.network, memory=self.memory, **kargs)
 
         if smooth_path and path is not None:

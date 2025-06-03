@@ -1,36 +1,32 @@
-# Development Setup
-
----
-## Setup
-### Create Virtual environment
-***Optional***
+## 🔧 Development Setup
+### ✅ Create Virtual Environment (optional)
 
 ```bash
 python -m venv .venv
 ```
 
-Then, open a new terminal and activate environment
+Activate the environment in a new terminal.
 
-### Install dependencies
+## 📦 Install Dependencies
 
 ```bash
 pip install -r requirements.txt
-pip install matplotlib pytest ipykernel scipy
+pip install matplotlib pytest ipykernel scipy build twine
 ```
 
-## Deployment
-
-### Build
+## 🚀 Deployment
+### 🏗️ Build Package
 
 ```bash
 py -m build
 ```
 
-### Upload to PyPI
+### 📤 Upload to PyPI
+
 ```bash
 py -m twine upload --repository pypi dist/*
 ```
 
-## Notes 
+## ⚠️ Notes
 
-1. The code is tested for Python 3.13. No other version is supported.
+Tested with Python 3.13. Other versions have not been verified.

@@ -20,5 +20,8 @@ classifiers = [
 Homepage = "https://github.com/wzjoriv/Larp"
 Issues = "https://github.com/wzjoriv/Larp/issues"
 
+[tool.setuptools.packages.find]
+include = ["larp"]
+
 [tool.ruff.lint]
 select = ["NPY201"]

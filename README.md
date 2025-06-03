@@ -15,7 +15,8 @@ Originally developed for Unmanned Aerial Vehicles (UAVs) in urban air mobility s
 - **Restrictive Potential Fields**: Models obstacles and constraints using repulsive potential fields.
 - **Multi-Scale Cell Decomposition**: Enables efficient navigation and spatial querying via hierarchical cell partitioning.
 - **Multi-Faceted Path Planning**: Combines artificial potential fields with cell-based decomposition for route generation.
-- **Flexible Application Domains**: Applicable to UAVs, autonomous vehicles, robotics, and more.
+- **Customizable Trajectory Planning**: Custom.
+- **Flexible Application Domains**: Applicable to UAVs, autonomous vehicles, mobile robotics, and more.
 
 ![Route Graph](https://github.com/wzjoriv/Larp/blob/main/docs/imgs/route_graph.png?raw=true)
 
@@ -34,7 +35,6 @@ pip install larp
 - Python 3.8+
 - `numpy>=2.0.0`
 - `pyproj`
-- `scipy`
 - `matplotlib` (optional, for visualization)
 
 ---
@@ -43,10 +43,11 @@ pip install larp
 
 Explore Larp’s capabilities through interactive Jupyter Notebook demos:
 
-- 📌 [General Demo](https://github.com/wzjoriv/Larp/blob/main/presentation.ipynb) — Intro to core functionality  
-- 🔁 [Hot Reloading in Room](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Hot%20Reloading%20in%20Room/presentation.ipynb) — Dynamic obstacle updates in confined space 
-- 🏛️ [Lafayette Court House](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Lafayette%20Court%20House/presentation.ipynb) — Outdoor urban-scale routing 
-- 🛫 [Urban Air Mobility in Singapore](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Urban%20Air%20Mobility%20and%20Quadtree%20Storing/presentation.ipynb) — High-altitude navigation  
+- 📌 [General Demo](https://github.com/wzjoriv/Larp/blob/main/presentation.ipynb) — Introduction to core functionality  
+- 🔁 [Hot Reloading in Room](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Hot%20Reloading%20in%20Room/presentation.ipynb) — Dynamic updates of obstacles
+- 🏛️ [City Center in Lafayette, IN](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Lafayette%20Court%20House/presentation.ipynb) — Path planning around building
+- 🏫 [Aerial Cargo Delivery](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Aerial%20Cargo%20Delivery/presentation.ipynb) — Low-altitude aerial cargo delivery planning on university campus
+- 🛫 [Urban Air Mobility of EVTOL](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Urban%20Air%20Mobility%20of%20EVTOL/presentation.ipynb) — Urban air mobility of EVTOL aircraft in Singapore
 
 ---
 

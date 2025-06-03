@@ -10,7 +10,7 @@ authors = [
 ]
 description = "Larp (/lärp/): Last-Mile Restrictive Planning"
 readme = "README.md"
-dependencies = ['numpy>=2.0.0', 'pyproj', 'matplotlib']
+dependencies = ['numpy>=2.0.0', 'pyproj', 'matplotlib', 'scipy']
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",

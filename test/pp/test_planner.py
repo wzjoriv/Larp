@@ -1,6 +1,3 @@
-import sys
-sys.path.append("../larp")
-sys.path.append("../../larp")
 
 import larp
 

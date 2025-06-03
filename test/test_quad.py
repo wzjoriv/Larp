@@ -1,6 +1,4 @@
 import numpy as np
-import sys
-sys.path.append("../larp")
 import larp
 
 """
@@ -36,8 +34,6 @@ def test_quad_on_simple_pf():
     assert np.array([manyleaves[idx] == quads[idx] for idx in range(len(quads))]).all(), "Many quads search failed"
 
     assert quadtree.leaves == set(quadtree.search_leaves(quadtree.root)), "Leaves stored and leaves searched don't match"
-
-test_quad_on_simple_pf()
 
 def test_rgj_idx_passed():
     point_rgjs = [{
@@ -78,8 +74,6 @@ def test_rgj_idx_passed():
 
     get_rgj_idx(quadtree.root)
 
-test_rgj_idx_passed()
-
 def test_leaf_none_children():
     point_rgjs = [{
         'type': "Point",
@@ -112,8 +106,6 @@ def test_leaf_none_children():
         assert all([child is None for child in quad.children]) == True, f"{str(quad)} is leaf (by search) with non-none children"
 
     assert quadtree.search_leaves() == quadtree.leaves, "Leaves in list are different than those found by search"
-
-test_leaf_none_children()
 
 def test_iter_quadtree():
 
@@ -149,8 +141,6 @@ def test_iter_quadtree():
 
     assert quadtree.search_leaves() == quadtree.leaves, "Leaves in list are different than those found by search"
 
-test_iter_quadtree()
-
 def test_quad_link():
 
     point_rgjs = [{
@@ -183,14 +173,10 @@ def test_quad_link():
 
     assert all([quad.boundary_zone == 0 for quad in quad_chain]), "The expected number of quads in the chain is different than the number found"
 
-test_iter_quadtree()
-
 def test_boundary():
 
     quad = larp.quad.QuadNode((2, 3), 2)
     assert np.allclose(quad.get_boundaries(), np.array([1, 2, 3, 4])) , "Expected edge of quads not returned"
-
-test_boundary()
 
 def test_quad_shared_edge():
 
@@ -256,8 +242,6 @@ def test_quad_shared_edge():
     assert shared_edge1 is None , "Edge returned when none expected"
     assert shared_edge1 is shared_edge2, "Expected edge of quads not returned"
 
-test_quad_shared_edge()
-
 def test_quad_bbox():
 
     # Scenerio 1: Sharing partial edge
@@ -269,5 +253,4 @@ def test_quad_bbox():
 
     assert np.allclose(in_bbox1, np.array([True, True, False, False, True, False, True])) , "Point misclassified as being or not inside the bounding box"
     assert np.allclose(in_bbox2, np.array([False, False, False, True, True, True, False])) , "Point misclassified as being or not inside the bounding box"
-
-test_quad_bbox()
+    

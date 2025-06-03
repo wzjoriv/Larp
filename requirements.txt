@@ -1,4 +1,3 @@
 numpy==2.2.2
 pyproj==3.7.1
 matplotlib # [Optional] [for illustrations]
-scipy # [Optional] [for unit tests]

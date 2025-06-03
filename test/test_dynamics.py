@@ -1,8 +1,4 @@
 
-import numpy as np
-import sys
-
-sys.path.append("../larp")
 import larp.dynamics
 import numpy as np
 import scipy.integrate as integrate

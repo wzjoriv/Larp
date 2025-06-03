@@ -1,7 +1,9 @@
-import numpy as np
 import sys
 sys.path.append("../larp")
+sys.path.append("../../larp")
+
 import larp
+import numpy as np
 
 """
 Author: Josue N Rivera

@@ -36,7 +36,6 @@ class Dynamics():
         self.first_order_state_n, self.first_order_control_n = (sum(state_derivative_orders) + self.primitive_state_n, sum(control_derivative_orders) + self.primitive_control_n)
     
     def split_first(self, first:np.ndarray):
-
         return tuple([first[:, i:i+1] for i in range(first.shape[1])])
     
     def f(self,
@@ -72,8 +71,7 @@ class Dynamics():
         orders = self.control_derivative_orders
         return [f'u_{{{orders[o_idx]}}}^{{[{i}]}}' for o_idx in range(orders) for i in range(orders[o_idx]+1)]
         
-    def first_names(self) -> Tuple[List[str], List[str]]:
-                   
+    def first_names(self) -> Tuple[List[str], List[str]]:    
         return self.first_state_names(), self.first_control_names()
     
 class WMRDynamics(Dynamics):

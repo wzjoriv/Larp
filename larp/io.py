@@ -16,14 +16,14 @@ def saveRGeoJSON(field:PotentialField, file:Union[str, PathLike], return_bbox=Fa
     with open(file, "w", encoding='utf-8') as outfile:
         json.dump(field.toRGeoJSON(return_bbox=return_bbox), outfile)
 
-def saveQuadTree(tree:QuadTree, file:str):
+def saveQuadTree(tree:QuadTree, file:Union[str, PathLike]):
 
     data = tree.toDict()
 
     with open(file, "wb") as outfile:
         pickle.dump(data, outfile)
 
-def fromRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
+def loadRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
 
     features = rgeojson["features"]
     rgjs = [feature["geometry"] for feature in features]
@@ -39,14 +39,14 @@ def loadRGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0) -> Potential
     with open(file=file, mode='r', encoding='utf-8') as f:
         rgeojson = json.load(f)
 
-    return fromRGeoJSON(rgeojson, size_offset=size_offset)
+    return loadRGeoJSON(rgeojson, size_offset=size_offset)
 
 def loadQuadTreeFile(file: Union[str, PathLike], size_offset = 0.0, return_field = False) -> QuadTree:
 
     with open(file=file, mode='rb') as f:
         data:dict = pickle.load(f)
 
-    field = fromRGeoJSON(data.pop('field'), size_offset=size_offset)
+    field = loadRGeoJSON(data.pop('field'), size_offset=size_offset)
     tree = QuadTree(field=field)
     tree.fromDict(data=data)
 
@@ -55,13 +55,15 @@ def loadQuadTreeFile(file: Union[str, PathLike], size_offset = 0.0, return_field
 
     return tree
 
-def fromGeoJSON(geojson: dict, size_offset = 0.0):
+def loadGeoJSON(geojson: Union[dict, str], size_offset = 0.0):
 
     """
     Converts a GeoJSON into an RGeoJSON
 
     _Note_: All polygons will be converted to line strings.
     """
+    if isinstance(geojson, str):
+        geojson = json.loads(geojson)
 
     def __prune_polygons__(geojson:dict):
         if geojson["type"].lower() == "polygon":
@@ -87,14 +89,14 @@ def fromGeoJSON(geojson: dict, size_offset = 0.0):
     for idx in range(len(geojson["features"])):
         __prune_polygons__(geojson["features"][idx]["geometry"])
 
-    return fromRGeoJSON(geojson, size_offset=size_offset)
+    return loadRGeoJSON(geojson, size_offset=size_offset)
 
 def loadGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0):
     
     with open(file=file, mode='r', encoding='utf-8') as f:
         geojson = json.load(f)
 
-    return fromGeoJSON(geojson, size_offset=size_offset)
+    return loadGeoJSON(geojson, size_offset=size_offset)
 
 def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG:3857", recal_size=True):
 

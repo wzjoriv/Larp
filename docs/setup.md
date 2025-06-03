@@ -15,7 +15,7 @@ Then, open a new terminal and activate environment
 
 ```bash
 pip install -r requirements.txt
-pip install matplotlib pytest ipykernel scipy
+pip install matplotlib pytest ipykernel scipy build twine
 ```
 
 ## Deployment

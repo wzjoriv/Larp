@@ -87,6 +87,8 @@ class QuadTree():
         self.ZONEToMinRANGE = np.concatenate([self.edge_bounds[0:1], self.edge_bounds, [0.0]])
         self.conservative = conservative
 
+        self.MAX_DEPTH = 1000
+
         self.root = None
         self.leaves:Set[QuadNode] = set()
 
@@ -245,7 +247,7 @@ class QuadTree():
         batch_traverse(self.root, np.arange(n_points), depth=0)
         return results
     
-    def find_quads_chain(self, x: Union[List['Point'], np.ndarray], max_depth: int = 1000) -> List[List['QuadNode']]:
+    def find_quads_chain(self, x: Union[List['Point'], np.ndarray], max_depth: Optional[int] = None) -> List[List['QuadNode']]:
         """
         Efficiently finds the full quad traversal chain (from root to final quad) for each point.
 
@@ -258,6 +260,9 @@ class QuadTree():
         """
         x = np.atleast_2d(x).astype(float)
         n_points = len(x)
+        if max_depth is None:
+            max_depth = self.MAX_DEPTH
+
         results = [[] for _ in range(n_points)]  # chain for each point
 
         def batch_traverse(quad: 'QuadNode', point_indices: np.ndarray, depth: int):
@@ -287,19 +292,21 @@ class QuadTree():
         batch_traverse(self.root, np.arange(n_points), depth=0)
         return results
     
-    def __search_leaves__(self, quad:QuadNode):
+    def __search_leaves__(self, quad:QuadNode, depth = 0, max_depth = 10000):
         if quad is None: raise TypeError(f"Branch missing leaf for quad {str(quad)}")
-        if quad.leaf: return [quad]
+        if quad.leaf or depth >= max_depth: return [quad]
 
         out = []
         for child in quad.children:
-            out.extend(self.__search_leaves__(child))
+            out.extend(self.__search_leaves__(child, depth=depth+1))
 
         return out
 
-    def search_leaves(self, quad:Optional[QuadNode] = None) -> Set[QuadNode]:
+    def search_leaves(self, quad:Optional[QuadNode] = None, max_depth:Optional[int] = None) -> Set[QuadNode]:
         quad = self.root if quad is None else quad
-        return set(self.__search_leaves__(quad))
+        max_depth = self.MAX_DEPTH if max_depth is None else max_depth
+
+        return set(self.__search_leaves__(quad, depth=0, max_depth=max_depth))
     
     def get_quad_zones(self):
         return np.array([quad.boundary_zone for quad in self.leaves], dtype=int)
@@ -369,7 +376,7 @@ class QuadTree():
         self.root = __load_quad__(data['root'])
         self.leaves = self.search_leaves()
 
-    def to_image(self, return_zone=False, return_extent: bool = True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
+    def to_image(self, return_zone=False, return_extent: bool = True, max_depth:Optional[int] = None) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
         """
         Render a top-down raster image of the quadtree zoning layout.
 
@@ -391,7 +398,9 @@ class QuadTree():
         lower_bound = self.root.center_point - half_size
         upper_bound = self.root.center_point + half_size
 
-        for quad in self.leaves:
+        quads = self.leaves if max_depth is None else self.search_leaves(max_depth=max_depth)
+
+        for quad in quads:
             if quad.boundary_zone == self.n_zones:
                 continue
 
@@ -894,7 +903,7 @@ class QPotentailField(PotentialField):
 
             return search_field, search_qtree
 
-    def in_bbox(self, point: Point, max_depth: int = 3, filted_idx: Optional[List[int]] = None) -> bool:
+    def in_bbox(self, point: Point, max_depth: int = 5, filted_idx: Optional[List[int]] = None) -> bool:
         """
         Check if the point lies within the bounding box of any RGJ using the quadtree.
 
@@ -909,23 +918,13 @@ class QPotentailField(PotentialField):
             return self.field.in_bbox(point=point, filted_idx=filted_idx)
 
         point = np.array(point, dtype=np.float64)
-        quad_chain = self.quadtree.find_quads_chain([point], max_depth=max_depth)[0]
+        quad = self.quadtree.find_quad([point], max_depth=max_depth)[0]
 
-        searched_rgj = set()
-
-        for quad in reversed(quad_chain):
-            to_search_rgj = set(quad.rgj_idx) - searched_rgj
-
-            if len(to_search_rgj):
-                searched_rgj.update(to_search_rgj)
-
-                bbox_idx = self.field.find_bbox(point, filted_idx=to_search_rgj)
-
-                if len(bbox_idx):
-                    return bbox_idx
-
-        # fallback: search entire field if no relevant RGJs found
-        return self.field.in_bbox(point)
+        if len(quad.rgj_idx):
+            bbox_idx = self.field.in_bbox(point, filted_idx=quad.rgj_idx)
+            return bbox_idx
+        
+        return False
     
     def find_bbox(self, point: Point, max_depth: int = 3, filted_idx: Optional[List[int]] = None) -> np.ndarray:
         """

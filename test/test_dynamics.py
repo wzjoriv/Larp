@@ -25,8 +25,6 @@ def test_whl_dynamics():
     
     integrate.solve_ivp(f, t_span, x0, t_eval=t)
 
-test_whl_dynamics()
-
 def test_quadcopter_dynamics():
 
     dynamics = larp.dynamics.QuadcopterDynamics()
@@ -45,4 +43,11 @@ def test_quadcopter_dynamics():
     
     integrate.solve_ivp(f, t_span, x0, t_eval=t)
 
-test_quadcopter_dynamics()
+def test_discretize():
+
+    dynamics = larp.dynamics.WMRDynamics()
+
+    x0, u0 = np.array([0, 0, np.pi/4]).reshape(-1, 3), np.array([0, 0]).reshape(-1, 2)
+
+    A, B = dynamics.discretize(x0, u0)
+    

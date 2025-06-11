@@ -83,10 +83,10 @@ class Dynamics():
             Physical parameters or constants used in dynamics computations.
 
         state_derivative_orders : list of int
-            Derivative orders for each primitive state (e.g., `[2, 1]` → position with acceleration, and velocity only).
+            Derivative orders for each primitive state (e.g., `[2]` → position, velocity, and acceleration are needed to represent f).
 
         control_derivative_orders : list of int
-            Derivative orders for each primitive control.
+            Derivative orders for each primitive control. Most time it would be 0.
         """
 
         self.constants = constants
@@ -192,7 +192,7 @@ class Dynamics():
         B = self.dfdu(x0, u0)
         return A, B
 
-    def discretize(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1) -> Tuple[np.ndarray, np.ndarray]:
+    def discretize(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate=False) -> Tuple[np.ndarray, np.ndarray]:
         """
         Discretizes the linearized system at point (x0, u0) using zero-order hold (ZOH):
 
@@ -212,6 +212,9 @@ class Dynamics():
         dt : float
             Time step for discretization
 
+        estimate : bool
+            Whether to estimate discretization
+
         Returns
         -------
         Ad : np.ndarray
@@ -220,18 +223,25 @@ class Dynamics():
         Bd : np.ndarray
             Discrete-time control matrix
         """
-        batch_size = x0.shape[0]
         state_dim = self.first_order_state_n
-        control_dim = self.first_order_control_n
 
         A, B = self.linearize(x0, u0)
 
-        M = np.zeros((batch_size, state_dim + control_dim, state_dim + control_dim))
-        M[:, :state_dim, :state_dim] = A
-        M[:, :state_dim, state_dim:] = B
+        if estimate:
+            Ad = np.eye(state_dim) + A*dt
+            Bd = B*dt
 
-        AdBd = expm(dt * M)[:, :state_dim, :]
-        Ad, Bd = AdBd[:, :, :state_dim], AdBd[:, :, state_dim:]
+        else:
+            batch_size = x0.shape[0]
+            control_dim = self.first_order_control_n
+
+            M = np.zeros((batch_size, state_dim + control_dim, state_dim + control_dim))
+            M[:, :state_dim, :state_dim] = A
+            M[:, :state_dim, state_dim:] = B
+
+            AdBd = expm(dt * M)[:, :state_dim, :]
+            Ad, Bd = AdBd[:, :, :state_dim], AdBd[:, :, state_dim:]
+
         return Ad, Bd
 
     def first_state_names(self) -> List[str]:
@@ -308,6 +318,15 @@ class WMRDynamics(Dynamics):
     """
 
     def __init__(self, wheels_distance=1.0) -> None:
+        """
+        Initializes the Wheeled Mobile Robot (WMR) dynamics with physical parameters.
+
+        Parameters
+        ----------
+        wheels_distance : float
+            Distance between the wheels.
+        """
+
         constants = {
             'wheels distance': wheels_distance
         }
@@ -652,14 +671,14 @@ class QuadcopterV1Dynamics(Dynamics):
     .. math::
         \\dot{v} = \\frac{1}{m} R \\begin{bmatrix} 0 \\\\ 0 \\\\ u_1 \\end{bmatrix} - \\begin{bmatrix} 0 \\\\ 0 \\\\ g \\end{bmatrix}
 
-    where \( R \) is the rotation matrix from body to world frame using Euler angles (phi, theta, psi).
+    where \\( R \\) is the rotation matrix from body to world frame using Euler angles (phi, theta, psi).
 
     The rotational dynamics are governed by:
 
     .. math::
         \\dot{\\omega} = I^{-1} (\\tau - \\omega \\times I \\omega)
 
-    where \( \\omega = [p, q, r]^T \), \( I = diag(Ix, Iy, Iz) \), and \( \\tau = [u_2, u_3, u_4]^T \).
+    where \\( \\omega = [p, q, r]^T \\), \\( I = diag(Ix, Iy, Iz) \\), and \\( \\tau = [u_2, u_3, u_4]^T \\).
 
     Parameters
     ----------

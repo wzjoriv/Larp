@@ -1,5 +1,5 @@
 
-import larp.dynamics
+import larp
 import numpy as np
 import scipy.integrate as integrate
 
@@ -13,11 +13,11 @@ def test_whl_dynamics():
     dynamics = larp.dynamics.WMRDynamics(1.0)
 
     def f(t:np.ndarray, x:np.ndarray):
-        t = np.reshape(t, (-1, 1))
+
         x = x.reshape(-1, dynamics.first_order_state_n)
         u = np.sin(t / 2).reshape(-1, 1).repeat(2, axis=1)
 
-        return dynamics.f(t, x, u)[0]
+        return dynamics.f(x, u)[0]
 
     t_span = (0, 10)
     t = np.linspace(*t_span, 10)
@@ -27,7 +27,7 @@ def test_whl_dynamics():
 
 def test_quadcopter_dynamics():
 
-    dynamics = larp.dynamics.QuadcopterDynamics()
+    dynamics = larp.dynamics.QuadcopterV2Dynamics()
 
     def f(t:np.ndarray, x:np.ndarray):
         t = np.reshape(t, (-1, 1))
@@ -35,7 +35,7 @@ def test_quadcopter_dynamics():
         u = np.zeros((1, 4))
         u[:, 0] = 51
 
-        return dynamics.f(t, x, u)[0]
+        return dynamics.f(x, u)[0]
 
     t_span = (0, 5)
     t = np.linspace(*t_span, 100)

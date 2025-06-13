@@ -993,6 +993,7 @@ class QPotentailField(PotentialField):
 
         points = np.atleast_2d(points).astype(float)
         n_points = len(points)
+        
         repulsion_vectors = np.zeros((n_points, 2), dtype=float)
         rgj_reference_ids = np.zeros(n_points, dtype=int) if return_reference else None
 
@@ -1025,6 +1026,71 @@ class QPotentailField(PotentialField):
             return repulsion_vectors, rgj_reference_ids
         else:
             return repulsion_vectors
+        
+    def contact_points(
+        self,
+        points: Union[np.ndarray, List['Point']],
+        min_dist_select: bool = True,
+        return_reference: bool = False,
+        max_depth: int = 3,
+        filted_idx:Optional[List[int]] = None
+    ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+        """
+        Computes contant points (i.e., closest points touching the nearest RGJs) for 2D points using only relevant RGJs from a quadtree field.
+        Each point is assigned to the deepest quad with non-empty RGJs, and contact points
+        are calculated using those RGJ indices. Redundant calculations are avoided by grouping
+        points per quad.
+
+        Args:
+            points (Union[np.ndarray, List[Point]]): Input 2D points.
+            min_dist_select (bool): Whether to use minimum distance RGJ filtering.
+            return_reference (bool): If True, returns RGJ indices used per point.
+            max_depth (int): Maximum depth in the quadtree to traverse.
+
+        Returns:
+            If return_reference is False:
+                np.ndarray of shape (N, 2): Repulsion vectors for all input points.
+                
+            If return_reference is True:
+                Tuple[np.ndarray, np.ndarray]: (contact_points, rgj_indices_used_per_point)
+        """
+        if filted_idx is not None:
+            return self.field.contact_points(points=points, filted_idx=filted_idx, min_dist_select=min_dist_select, return_reference=return_reference)
+
+        points = np.atleast_2d(points).astype(float)
+        n_points = len(points)
+        contact_points = np.zeros((n_points, 2), dtype=float)
+        rgj_reference_ids = np.zeros(n_points, dtype=int) if return_reference else None
+
+        unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
+
+        for quad_idx, pt_indices in quad_to_point_indices.items():
+            quad = unique_quads[quad_idx]
+            rgj_indices = quad.rgj_idx
+
+            group_points = points[pt_indices]
+            if return_reference:
+                group_vectors, group_rgj_ids = self.field.contact_points(
+                    points=group_points,
+                    filted_idx=rgj_indices,
+                    min_dist_select=min_dist_select,
+                    return_reference=True
+                )
+                contact_points[pt_indices] = group_vectors
+                rgj_reference_ids[pt_indices] = group_rgj_ids
+            else:
+                group_vectors = self.field.contact_points(
+                    points=group_points,
+                    filted_idx=rgj_indices,
+                    min_dist_select=min_dist_select,
+                    return_reference=False
+                )
+                contact_points[pt_indices] = group_vectors
+
+        if return_reference:
+            return contact_points, rgj_reference_ids
+        else:
+            return contact_points
         
     def gradient(self, points, min_dist_select=True, max_depth=2):
         points = np.atleast_2d(points).astype(float)

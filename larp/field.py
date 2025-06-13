@@ -185,17 +185,6 @@ class LineStringRGJ(MultiRGJGeometry):
             vectors = vectors[np.arange(len(select)), select]
         
         return vectors.reshape(-1, 2)
-
-    def contact_point(self, x: np.ndarray, min_dist_select:bool = True, **kwargs):
-        vectors = self.repulsion_vector(x=x, min_dist_select=min_dist_select, **kwargs)
-
-        if min_dist_select:
-            return x - vectors
-        
-        n = len(x)
-        points_idx = np.tile(np.arange(n), len(vectors)//n)
-
-        return x[points_idx] - vectors
     
 class RectangleRGJ(RGJGeometry):
     RGJType = "Rectangle"
@@ -772,7 +761,7 @@ class PotentialField():
         if not len(self):
             return points*np.inf
         
-        filted_idx = filted_idx if not filted_idx is None else range(len(self))
+        filted_idx = range(len(self)) if filted_idx is None else filted_idx
 
         if return_reference:
             idxs = []
@@ -790,6 +779,10 @@ class PotentialField():
         else:
             rgjs = [self.rgjs[idx] for idx in filted_idx]
             return np.concatenate([rgj.contact_point(points, min_dist_select=min_dist_select).reshape(-1, 2) for rgj in rgjs], axis=0)
+    
+    def tangent_lines(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, return_reference = False) -> Tuple[np.ndarray, np.ndarray]:
+        
+        raise NotImplemented
 
     def eval(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
         points = np.atleast_2d(points).astype(float)
@@ -921,7 +914,7 @@ class PotentialField():
 
         return image
     
-    def toRGeoJSON(self, return_bbox=False) -> RGeoJSONCollection:\
+    def toRGeoJSON(self, return_bbox=False) -> RGeoJSONCollection:
     
         rgeojson = {
             'type': 'FeatureCollection',

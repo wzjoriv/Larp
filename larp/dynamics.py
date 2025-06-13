@@ -192,7 +192,7 @@ class Dynamics():
         B = self.dfdu(x0, u0)
         return A, B
 
-    def discretize(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate=False) -> Tuple[np.ndarray, np.ndarray]:
+    def discretize(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate=True) -> Tuple[np.ndarray, np.ndarray]:
         """
         Discretizes the linearized system at point (x0, u0) using zero-order hold (ZOH):
 
@@ -358,7 +358,7 @@ class WMRDynamics(Dynamics):
         v_l = v - wd2 * w
         v_r = v + wd2 * w
 
-        return np.concatenate([v_l, v_r], axis=0)
+        return np.concatenate([v_l, v_r], axis=1)
 
     def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
         """

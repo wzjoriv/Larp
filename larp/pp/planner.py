@@ -271,7 +271,7 @@ class QuadPlanner(Planner):
         """
         self.network.refresh()
 
-    def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, smooth_path = True, **kargs) -> Tuple[Optional[Union[List[Point], np.ndarray]], Optional[List[QuadNode]]]:
+    def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, smooth_path = True, **kargs) -> Optional[Union[List[Point], np.ndarray]]:
         """
         Executes the selected path planning algorithm from start to goal.
 

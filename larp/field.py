@@ -3,7 +3,8 @@ from collections.abc import Iterable
 from typing import List, Optional, Tuple, Union
 import warnings
 
-import numpy as np
+from larp.backend import np, np_o, to_numpy
+from larp.types import ArrayLike
 import larp.fn as lpf
 from larp.types import Scaler, RGJDict, FieldSize, Point, RGeoJSONCollection, RGeoJSONObject, RepulsionVectorsAndRef
 
@@ -18,7 +19,7 @@ class RGJGeometry():
 
     RGJType = None
 
-    def __init__(self, coordinates:Union[np.ndarray, List[Point], List[List[Point]], Point], repulsion:Optional[np.ndarray] = None, properties:Optional[dict] = None, optional_dim = 2, **kwargs) -> None:
+    def __init__(self, coordinates:Union[ArrayLike, List[Point], List[List[Point]], Point], repulsion:Optional[ArrayLike] = None, properties:Optional[dict] = None, optional_dim = 2, **kwargs) -> None:
         self.coordinates = np.array(coordinates)
         self.repulsion = np.eye(optional_dim) if repulsion is None else np.array(repulsion)
         self.inv_repulsion = np.linalg.inv(self.repulsion)
@@ -49,7 +50,7 @@ class RGJGeometry():
         
         return self.repulsion
 
-    def get_center_point(self) -> np.ndarray:
+    def get_center_point(self) -> ArrayLike:
         if len(self.coordinates.shape) <= 1:
             return self.coordinates
         
@@ -66,20 +67,20 @@ class RGJGeometry():
 
         return False
 
-    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, **kwargs) -> np.ndarray:
+    def squared_dist(self, x: ArrayLike, scaled=True, inverted=True, **kwargs) -> ArrayLike:
         nvector = self.repulsion_vector(x, min_dist_select = True)
         matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
 
         return ((nvector@matrix)*nvector).sum(axis=1)
     
-    def repulsion_vector(self, x:np.ndarray, **kwargs) -> np.ndarray:
+    def repulsion_vector(self, x:ArrayLike, **kwargs) -> ArrayLike:
         raise NotImplementedError
     
-    def gradient(self, x:np.ndarray, **kwargs):
+    def gradient(self, x:ArrayLike, **kwargs):
         repulsion_vector = self.repulsion_vector(x, **kwargs)
         return - self.eval(x=x).reshape(-1, 1) * (repulsion_vector@self.grad_matrix.T)
 
-    def eval(self, x:np.ndarray):
+    def eval(self, x:ArrayLike):
         return np.exp(-self.squared_dist(x))
     
     def toRGeoJSON(self) -> RGeoJSONObject:
@@ -91,7 +92,7 @@ class RGJGeometry():
             "properties": self.properties,
             "geometry": {
                 "type": self.RGJType,
-                "coordinates": self.coordinates.tolist() if isinstance(self.coordinates, np.ndarray) else self.coordinates,
+                "coordinates": self.coordinates.tolist() if isinstance(self.coordinates, ArrayLike) else self.coordinates,
                 "repulsion": self.repulsion.tolist()
             }
         }
@@ -123,16 +124,16 @@ class RGJGeometry():
 class PointRGJ(RGJGeometry):
     RGJType = "Point"
 
-    def __init__(self, coordinates: Union[np.ndarray, Point], repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
+    def __init__(self, coordinates: Union[ArrayLike, Point], repulsion:Optional[ArrayLike] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
 
-    def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
+    def repulsion_vector(self, x: ArrayLike, **kwargs) -> ArrayLike:
         return x - self.coordinates
 
 class LineStringRGJ(RGJGeometry):
     RGJType = "LineString"
 
-    def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
+    def __init__(self, coordinates: ArrayLike, repulsion:Optional[ArrayLike] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
         self.lines_n = len(self.coordinates) - 1
         self.points_in_line_pair = np.stack([self.coordinates[:-1], self.coordinates[1:]], axis=1)
@@ -142,7 +143,7 @@ class LineStringRGJ(RGJGeometry):
         self.lines_n = len(self.coordinates) - 1
         self.points_in_line_pair = np.stack([self.coordinates[:-1], self.coordinates[1:]], axis=1)
     
-    def __repulsion_vector_one_line__(self, args) -> np.ndarray:
+    def __repulsion_vector_one_line__(self, args) -> ArrayLike:
         x, line = args
         x2_d_x1 = line[1:2] - line[0:1]
         x_d_x1 = x - line[0:1]
@@ -153,8 +154,8 @@ class LineStringRGJ(RGJGeometry):
         g = line[0] + np.clip(x12dotxx1/x12dotx12, 0.0, 1.0)*(x2_d_x1)
         return x - g
     
-    def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
-        vectors:np.ndarray = [self.__repulsion_vector_one_line__((x, line)) for line in self.points_in_line_pair]
+    def repulsion_vector(self, x: ArrayLike, min_dist_select:bool = True, **kwargs) -> ArrayLike:
+        vectors:ArrayLike = [self.__repulsion_vector_one_line__((x, line)) for line in self.points_in_line_pair]
 
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
@@ -170,7 +171,7 @@ class LineStringRGJ(RGJGeometry):
 class RectangleRGJ(RGJGeometry):
     RGJType = "Rectangle"
 
-    def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
+    def __init__(self, coordinates: ArrayLike, repulsion:Optional[ArrayLike] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
         self.x1_abs_x2 = np.abs(self.coordinates[0] - self.coordinates[1])
 
@@ -178,7 +179,7 @@ class RectangleRGJ(RGJGeometry):
         super().set_coordinates(new_coords)
         self.x1_abs_x2 = np.abs(self.coordinates[0] - self.coordinates[1])
 
-    def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
+    def repulsion_vector(self, x: ArrayLike, **kwargs) -> ArrayLike:
         
         return 0.5*np.sign(x-self.coordinates[0])*(np.abs(x-self.coordinates[0]) + np.abs(x-self.coordinates[1]) - self.x1_abs_x2)
     
@@ -186,7 +187,7 @@ class EllipseRGJ(RGJGeometry):
     RGJType = "Ellipse"
     DEN_ERROR_BUFFER = 1e-6
 
-    def __init__(self, coordinates: np.ndarray, shape: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
+    def __init__(self, coordinates: ArrayLike, shape: ArrayLike, repulsion:Optional[ArrayLike] = None, **kwargs) -> None:
 
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
         self.shape = shape
@@ -209,7 +210,7 @@ class EllipseRGJ(RGJGeometry):
         self.shape = new_shape
         self.inv_shape = np.linalg.inv(self.shape)
 
-    def repulsion_vector(self, x: np.ndarray, **kwargs) -> np.ndarray:
+    def repulsion_vector(self, x: ArrayLike, **kwargs) -> ArrayLike:
 
         x_d_xh = x - self.coordinates
         Binvx = x_d_xh@self.inv_shape.T
@@ -227,14 +228,14 @@ class EllipseRGJ(RGJGeometry):
 class MultiPointRGJ(RGJGeometry):
     RGJType = "MultiPoint"
 
-    def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
+    def __init__(self, coordinates: ArrayLike, repulsion:Optional[ArrayLike] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion)
         self.bbox = self.coordinates.copy()
 
     def in_bbox(self, x:Point) -> bool:
         return any(self.bbox == x)
 
-    def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
+    def repulsion_vector(self, x: ArrayLike, min_dist_select:bool = True, **kwargs) -> ArrayLike:
         x = np.array(x)
 
         n = x.shape[0]
@@ -258,7 +259,7 @@ class MultiPointRGJ(RGJGeometry):
 class MultiLineStringRGJ(LineStringRGJ):
     RGJType = "MultiLineString"
 
-    def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, properties:Optional[dict] = None, optional_dim = 2, **kwargs) -> None:
+    def __init__(self, coordinates: ArrayLike, repulsion:Optional[ArrayLike] = None, properties:Optional[dict] = None, optional_dim = 2, **kwargs) -> None:
 
         self.coordinates = [np.array(coords) for coords in coordinates]
         self.repulsion = np.eye(optional_dim) if repulsion is None else np.array(repulsion)
@@ -268,17 +269,17 @@ class MultiLineStringRGJ(LineStringRGJ):
         self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
         
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
-        self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
+        self.points_in_line_pair = np.concatenate([np.array([coords[:-1], coords[1:]]) for coords in self.coordinates], axis=1).swapaxes(0, 1)
 
         self.bbox = np.concatenate([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
 
     def set_coordinates(self, new_coords):
         self.coordinates = [np.array(coords) for coords in new_coords]
         self.lines_n = sum([len(coords)-1 for coords in self.coordinates])
-        self.points_in_line_pair = np.concatenate([[coords[:-1], coords[1:]] for coords in self.coordinates], axis=1).swapaxes(0, 1)
+        self.points_in_line_pair = np.concatenate([np.array([coords[:-1], coords[1:]]) for coords in self.coordinates], axis=1).swapaxes(0, 1)
         self.bbox = np.concatenate([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
 
-    def get_center_point(self) -> np.ndarray:
+    def get_center_point(self) -> ArrayLike:
 
         coords = np.concatenate([coords.reshape((-1, 2)) for coords in self.coordinates], axis=0)
         return (coords.min(0) + coords.max(0))/2.0
@@ -287,7 +288,7 @@ class MultiRectangleRGJ(RGJGeometry):
 
     RGJType = "MultiRectangle"
 
-    def __init__(self, coordinates: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
+    def __init__(self, coordinates: ArrayLike, repulsion:Optional[ArrayLike] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
         self.rect_n = len(self.coordinates)
         self.bbox = np.array([np.array([coords.min(0), coords.max(0)]) for coords in self.coordinates])
@@ -296,12 +297,12 @@ class MultiRectangleRGJ(RGJGeometry):
         super().set_coordinates(new_coords)
         self.rect_n = len(self.coordinates)
     
-    def __repulsion_vector_one_rect__(self, args) -> np.ndarray:
+    def __repulsion_vector_one_rect__(self, args) -> ArrayLike:
         x, rect = args
         return 0.5*np.sign(x-rect[0])*(np.abs(x-rect[0]) + np.abs(x-rect[1]) - np.abs(rect[0] - rect[1]))
     
-    def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
-        vectors:np.ndarray = [self.__repulsion_vector_one_rect__((x, rect)) for rect in self.coordinates]
+    def repulsion_vector(self, x: ArrayLike, min_dist_select:bool = True, **kwargs) -> ArrayLike:
+        vectors:ArrayLike = [self.__repulsion_vector_one_rect__((x, rect)) for rect in self.coordinates]
 
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
@@ -318,7 +319,7 @@ class MultiEllipseRGJ(RGJGeometry):
     RGJType = "MultiEllipse"
     DEN_ERROR_BUFFER = 1e-6
 
-    def __init__(self, coordinates: np.ndarray, shape: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
+    def __init__(self, coordinates: ArrayLike, shape: ArrayLike, repulsion:Optional[ArrayLike] = None, **kwargs) -> None:
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
         self.shape = shape
         self.inv_shape = np.linalg.inv(self.shape)
@@ -354,7 +355,7 @@ class MultiEllipseRGJ(RGJGeometry):
         self.inv_shape = np.linalg.inv(self.shape)
         self.parameters = list(zip(self.coordinates, self.inv_shape))
     
-    def __repulsion_vector_one_ellipse__(self, args) -> np.ndarray:
+    def __repulsion_vector_one_ellipse__(self, args) -> ArrayLike:
         x, coordinate, inv_shape = args
         x_d_xh = x - coordinate
         Binvx = x_d_xh@inv_shape.T
@@ -363,8 +364,8 @@ class MultiEllipseRGJ(RGJGeometry):
         den = np.maximum(den, self.DEN_ERROR_BUFFER)
         return np.maximum(1 - 1/den, 0)*x_d_xh
     
-    def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
-        vectors:np.ndarray = [self.__repulsion_vector_one_ellipse__((x, parameters[0], parameters[1])) for parameters in self.parameters]
+    def repulsion_vector(self, x: ArrayLike, min_dist_select:bool = True, **kwargs) -> ArrayLike:
+        vectors:ArrayLike = [self.__repulsion_vector_one_ellipse__((x, parameters[0], parameters[1])) for parameters in self.parameters]
 
         vectors = np.stack(vectors, axis=0)
         if min_dist_select:
@@ -402,7 +403,7 @@ class GeometryCollectionRGJ(RGJGeometry):
     def in_bbox(self, x:Point) -> bool:
         return any([rgj.in_bbox(x) for rgj in self.rgjs])
 
-    def get_dist_matrix(self, scaled=True, inverted=True) -> List[np.ndarray]:
+    def get_dist_matrix(self, scaled=True, inverted=True) -> List[ArrayLike]:
 
         """
         Returns all distance matrix for all sub units
@@ -410,11 +411,11 @@ class GeometryCollectionRGJ(RGJGeometry):
 
         return np.array([rgj.get_dist_matrix(scaled=scaled, inverted=inverted) for rgj in self.rgjs])
 
-    def get_center_point(self) -> np.ndarray:
+    def get_center_point(self) -> ArrayLike:
         coords = np.reshape(np.array([rgj.get_center_point() for rgj in self.rgjs]), (-1, 2))
         return (coords.min(0) + coords.max(0))/2.0
     
-    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, return_reference=False, **kwargs) -> np.ndarray:
+    def squared_dist(self, x: ArrayLike, scaled=True, inverted=True, return_reference=False, **kwargs) -> ArrayLike:
 
         dists = np.stack([rgj.squared_dist(x, scaled=scaled, inverted=inverted) for rgj in self.rgjs], axis=1)
 
@@ -424,9 +425,9 @@ class GeometryCollectionRGJ(RGJGeometry):
 
         return np.min(dists, axis=1)
     
-    def repulsion_vector(self, x:np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
+    def repulsion_vector(self, x:ArrayLike, min_dist_select:bool = True, **kwargs) -> ArrayLike:
 
-        vectors:np.ndarray = [rgj.repulsion_vector(x, min_dist_select=min_dist_select, **kwargs).reshape(-1, 2) for rgj in self.rgjs]
+        vectors:ArrayLike = [rgj.repulsion_vector(x, min_dist_select=min_dist_select, **kwargs).reshape(-1, 2) for rgj in self.rgjs]
 
         vectors = np.stack(vectors, axis=0)
 
@@ -439,7 +440,7 @@ class GeometryCollectionRGJ(RGJGeometry):
 
         return vectors
     
-    def gradient(self, x: np.ndarray, **kwargs):
+    def gradient(self, x: ArrayLike, **kwargs):
 
         _, dist_idxs = self.squared_dist(x, return_reference=True, **kwargs)
 
@@ -470,9 +471,9 @@ class PotentialField():
     Attributes:
         rgjs (List[RGJGeometry]): List of RGJ geometries in the field.
         center_point (Point or None): Central reference point of the potential field. Can be auto-calculated.
-        size (np.ndarray or None): Spatial extent of the field (width, height). Can be inferred.
+        size (ArrayLike or None): Spatial extent of the field (width, height). Can be inferred.
         extra_info (dict): Optional metadata or user-defined information.
-        bbox (np.ndarray): Bounding box of all RGJs in the field. Shape (2, 2) -> [[xmin, ymin], [xmax, ymax]].
+        bbox (ArrayLike): Bounding box of all RGJs in the field. Shape (2, 2) -> [[xmin, ymin], [xmax, ymax]].
 
     Args:
         rgjs (Optional[List[RGJDict] or RGJGeometry]): List of RGJ objects or single RGJ geometry. Can be None.
@@ -488,7 +489,7 @@ class PotentialField():
         self.__reload_center = None
         self.center_point = center_point
         self.extra_info = extra_info
-        self.bbox = np.array([[None, None], [None, None]])
+        self.bbox = np.array([[0.0, 0.0], [0.0, 0.0]])
 
         if size is None:
             self.size = size
@@ -513,6 +514,7 @@ class PotentialField():
                 self.size = np.array([max(suggest_size)]*2, dtype=float) if self.size is None else self.size
         else:
             self.__reload_center = False
+            self.center_point = np.array(self.center_point)
             if len(rgjs) > 0:
                 suggest_size = np.array([max(np.abs(self.bbox - self.center_point).reshape(-1))*2]*2)
 
@@ -577,7 +579,7 @@ class PotentialField():
             bbox = np.concatenate([rgj.bbox.reshape(-1, 2) for rgj in self.rgjs], 0)
             self.bbox = np.array([bbox.min(0), bbox.max(0)])
         else:
-            self.bbox = np.array([[None, None], [None, None]])
+            self.bbox = np.array([[0.0, 0.0], [0.0, 0.0]])
 
         return self.bbox
     
@@ -638,17 +640,18 @@ class PotentialField():
         if self.__reload_center:
             self.center_point = self.__calculate_center_point__()
 
-    def delRGJ(self, idxs: Union[int, List[int], np.ndarray], reload_bbox: bool = True) -> None:
+    def delRGJ(self, idxs: Union[int, List[int], ArrayLike], reload_bbox: bool = True) -> None:
         """
         Removes one or more RGJs from the field by their indices.
 
         Args:
-            idxs (Union[int, List[int], np.ndarray]): A single index, list of indices, or 1D numpy array of indices to remove.
+            idxs (Union[int, List[int], ArrayLike]): A single index, list of indices, or 1D numpy array of indices to remove.
             reload_bbox (bool, optional): Whether to recompute the bounding box after deletion. Defaults to True.
         """
         # Normalize input and wrap indices within range
         idxs = np.atleast_1d(idxs).astype(int)
         idxs = np.unique(idxs % len(self))[::-1]  # Wrap, deduplicate, and reverse sort
+        idxs = np_o.array(to_numpy(idxs), dtype=int)
 
         # Delete RGJs from highest to lowest index to avoid reindexing errors
         for idx in idxs:
@@ -674,11 +677,15 @@ class PotentialField():
             bool: True if the point is in any RGJ's bounding box.
         """
         point = np.array(point)
-        rgjs = [self.rgjs[idx] for idx in filted_idx] if filted_idx is not None else self.rgjs
+        if filted_idx is None:
+            rgjs = self.rgjs
+        else:
+            filted_idx = np_o.array(to_numpy(filted_idx), dtype=int)
+            rgjs = [self.rgjs[idx] for idx in filted_idx]
 
         return any(rgj.in_bbox(point) for rgj in rgjs)
     
-    def find_bbox(self, point: Point, filted_idx: Optional[List[int]] = None) -> np.ndarray:
+    def find_bbox(self, point: Point, filted_idx: Optional[List[int]] = None) -> ArrayLike:
         """
         Return indices of RGJs whose bounding boxes contain the given point.
 
@@ -687,20 +694,25 @@ class PotentialField():
             filted_idx (Optional[List[int]]): Optional subset of RGJ indices to filter.
 
         Returns:
-            np.ndarray: Indices of RGJs (in global index space) containing the point.
+            ArrayLike: Indices of RGJs (in global index space) containing the point.
         """
         point = np.array(point)
 
-        if filted_idx is not None:
-            return np.array([idx for idx in filted_idx if self.rgjs[idx].in_bbox(point)])
-        else:
+        if filted_idx is None:
             return np.nonzero([rgj.in_bbox(point) for rgj in self.rgjs])[0]
+        else:
+            filted_idx = np_o.array(to_numpy(filted_idx), dtype=int)
+            return np.array([idx for idx in filted_idx if self.rgjs[idx].in_bbox(point)])
     
-    def repulsion_vectors(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, return_reference = False) -> Union[np.ndarray, RepulsionVectorsAndRef]:
+    def repulsion_vectors(self, points: Union[ArrayLike, List[Point]], filted_idx:Optional[List[int]] = None, min_dist_select:bool = True, return_reference = False) -> Union[ArrayLike, RepulsionVectorsAndRef]:
         points = np.atleast_2d(points).astype(float)
         if not len(self):
             return points*np.inf
-        filted_idx = filted_idx if not filted_idx is None else list(range(len(self)))
+        
+        if filted_idx is None:
+            filted_idx = list(range(len(self)))
+        else:
+            filted_idx = np_o.array(to_numpy(filted_idx), dtype=int)
 
         if return_reference:
             idxs = []
@@ -713,13 +725,13 @@ class PotentialField():
                 repulsion_vectors.append(vectors)
 
             repulsion_vectors = np.concatenate(repulsion_vectors, axis=0)
-            return repulsion_vectors, np.array(idxs, dtype=int)
+            return repulsion_vectors, np_o.array(to_numpy(idxs), dtype=int)
    
         else:
             rgjs = [self.rgjs[idx] for idx in filted_idx]
             return np.concatenate([rgj.repulsion_vector(points, min_dist_select=min_dist_select).reshape(-1, 2) for rgj in rgjs], axis=0)
     
-    def gradient(self, points: Union[np.ndarray, List[Point]], min_dist_select=True) -> np.ndarray:
+    def gradient(self, points: Union[ArrayLike, List[Point]], min_dist_select=True) -> ArrayLike:
 
         points = np.atleast_2d(points).astype(float)
         if not len(self):
@@ -737,8 +749,15 @@ class PotentialField():
         
         return grad
 
-    def eval(self, points: Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None) -> np.ndarray:
+    def eval(self, points: Union[ArrayLike, List[Point]], filted_idx:Optional[List[int]] = None) -> ArrayLike:
         points = np.atleast_2d(points).astype(float)
+
+        if filted_idx is None:
+            rgjs = self.rgjs
+        else:
+            filted_idx = np_o.array(to_numpy(filted_idx), dtype=int)
+            rgjs = [self.rgjs[idx] for idx in filted_idx]
+
         rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
 
         if not len(rgjs):
@@ -746,13 +765,13 @@ class PotentialField():
         
         return np.max(np.stack([rgj.eval(points) for rgj in rgjs], axis=1), axis=1)
     
-    def eval_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None) -> np.ndarray:
+    def eval_per(self, points: Union[ArrayLike, List[Point]], idxs:List[int]) -> ArrayLike:
         if len(points) != len(idxs):
             raise RuntimeError("The number of points doesn't match the number of indexes")
         
         points = np.atleast_2d(points).astype(float)
         n = len(points)
-        idxs = np.array(idxs, dtype=int)
+        idxs = np_o.array(to_numpy(idxs), dtype=int)
         
         evals = np.ones(n, dtype=points[0].dtype)
         for idx in set(idxs):
@@ -761,8 +780,10 @@ class PotentialField():
 
         return evals
     
-    def squared_dist(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, return_reference = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    def squared_dist(self, points:Union[ArrayLike, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True, return_reference = False) -> Union[ArrayLike, Tuple[ArrayLike, ArrayLike]]:
         points = np.atleast_2d(points).astype(float)
+        filted_idx = np_o.array(to_numpy(filted_idx), dtype=int)
+
         if not len(self):
             warnings.warn("There are not any RGJs elements in the field")
             if return_reference:
@@ -779,9 +800,8 @@ class PotentialField():
 
         return np.min(dists, axis=1)
     
-    def squared_dist_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
+    def squared_dist_per(self, points: Union[ArrayLike, List[Point]], idxs:List[int], scaled=True, inverted=True) -> ArrayLike:
 
-        idxs = [] if idxs is None else idxs
         n = len(points)
 
         if n != len(idxs):
@@ -792,7 +812,7 @@ class PotentialField():
                 idxs = np.arange(n)
         
         points = np.array(points)
-        idxs = np.array(idxs, dtype=int)
+        idxs = np_o.array(to_numpy(idxs), dtype=int)
         
         dists = np.ones(n, dtype=points[0].dtype)
         for idx in set(idxs):
@@ -801,9 +821,14 @@ class PotentialField():
 
         return dists
     
-    def squared_dist_list(self, points:Union[np.ndarray, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
+    def squared_dist_list(self, points:Union[ArrayLike, List[Point]], filted_idx:Optional[List[int]] = None, scaled=True, inverted=True) -> ArrayLike:
         points = np.atleast_2d(points).astype(float)
-        rgjs = [self.rgjs[idx] for idx in filted_idx] if not filted_idx is None else self.rgjs
+
+        if filted_idx is None:
+            rgjs = self.rgjs
+        else:
+            filted_idx = np_o.array(to_numpy(filted_idx), dtype=int)
+            rgjs = [self.rgjs[idx] for idx in filted_idx]
 
         if not len(rgjs):
             warnings.warn("There are not any RGJs elements in the field")
@@ -811,7 +836,7 @@ class PotentialField():
 
         return np.stack([rgj.squared_dist(points, scaled=scaled, inverted=inverted) for rgj in rgjs], axis=1)
     
-    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:Scaler = lambda x: x) -> float:
+    def estimate_route_area(self, route:Union[List[Point], ArrayLike], step=1e-3, n=0, scale_transform:Scaler = lambda x: x) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
@@ -821,17 +846,17 @@ class PotentialField():
 
         return f_eval.sum()*step
     
-    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x) -> float:
+    def estimate_route_highest_potential(self, route:Union[List[Point], ArrayLike], step=1e-2, n=0, scale_transform:Scaler = lambda x: x) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
         points = points if n <= 0 else points[:-1]
 
-        f_eval:np.ndarray = scale_transform(self.eval(points=points))
+        f_eval:ArrayLike = scale_transform(self.eval(points=points))
 
         return f_eval.max()
 
-    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, filted_idx:Optional[List[int]] = None, return_extent=True) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
+    def to_image(self, resolution:int = 200, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, filted_idx:Optional[List[int]] = None, return_extent=True) -> Union[ArrayLike, Tuple[ArrayLike, List[float]]]:
 
         if center_point is None:
             if self.center_point is None:

@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from itertools import chain
+from larp.types import ArrayLike
 
 """
 Author: Josue N Rivera
@@ -35,27 +36,27 @@ class Dynamics():
 
         self.first_order_state_n, self.first_order_control_n = (sum(state_derivative_orders) + self.primitive_state_n, sum(control_derivative_orders) + self.primitive_control_n)
     
-    def split_first(self, first:np.ndarray):
+    def split_first(self, first:ArrayLike):
         return tuple([first[:, i:i+1] for i in range(first.shape[1])])
     
     def f(self,
-          time: np.ndarray, 
-          first_order_state: np.ndarray,
-          first_order_control: np.ndarray) -> np.ndarray:
+          time: ArrayLike, 
+          first_order_state: ArrayLike,
+          first_order_control: ArrayLike) -> ArrayLike:
         
         raise NotImplementedError
     
     def dfdx(self,
-          time: np.ndarray, 
-          first_order_state: np.ndarray,
-          first_order_control: np.ndarray) -> np.ndarray:
+          time: ArrayLike, 
+          first_order_state: ArrayLike,
+          first_order_control: ArrayLike) -> ArrayLike:
         
         raise NotImplementedError
     
     def dfdu(self,
-          time: np.ndarray, 
-          first_order_state: np.ndarray,
-          first_order_control: np.ndarray) -> np.ndarray:
+          time: ArrayLike, 
+          first_order_state: ArrayLike,
+          first_order_control: ArrayLike) -> ArrayLike:
         
         raise NotImplementedError
         
@@ -108,9 +109,9 @@ class WMRDynamics(Dynamics):
         return np.concatenate([v_l, v_r], axis=0)
 
     def f(self,
-          time: np.ndarray, 
-          first_order_state: np.ndarray,
-          first_order_control: np.ndarray) -> np.ndarray:
+          time: ArrayLike, 
+          first_order_state: ArrayLike,
+          first_order_control: ArrayLike) -> ArrayLike:
         
         _, _, theta = self.split_first(first_order_state)
 
@@ -122,7 +123,7 @@ class WMRDynamics(Dynamics):
 
         return np.concatenate([dx, dy, dtheta], axis=1)
     
-    def dfdu(self, time: np.ndarray, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+    def dfdu(self, time: ArrayLike, first_order_state: ArrayLike, first_order_control: ArrayLike) -> ArrayLike:
 
         _, _, theta = self.split_first(first_order_state)
         v, w = self.split_first(first_order_control)
@@ -133,7 +134,7 @@ class WMRDynamics(Dynamics):
 
         return np.stack([df1, df2, df3], axis=1)
     
-    def dfdx(self, time: np.ndarray, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+    def dfdx(self, time: ArrayLike, first_order_state: ArrayLike, first_order_control: ArrayLike) -> ArrayLike:
 
         x, y, theta = self.split_first(first_order_state)
         v, _ = self.split_first(first_order_control)
@@ -218,7 +219,7 @@ class QuadcopterDynamics(Dynamics):
 
         self.control_to_w2 = np.linalg.inv(self.w2_to_control)
 
-    def extract_w(self, first_order_control:np.ndarray) -> np.ndarray:
+    def extract_w(self, first_order_control:ArrayLike) -> ArrayLike:
 
         w_squared = first_order_control @ self.control_to_w2.T
 
@@ -226,9 +227,9 @@ class QuadcopterDynamics(Dynamics):
         return np.sqrt(w_squared)
     
     def f(self,
-          time: np.ndarray, 
-          first_order_state: np.ndarray,
-          first_order_control: np.ndarray) -> np.ndarray:
+          time: ArrayLike, 
+          first_order_state: ArrayLike,
+          first_order_control: ArrayLike) -> ArrayLike:
         
         x, dx, y, dy, z, dz, phi, dphi, theta, dtheta, psi, dpsi = tuple([first_order_state[:, i:i+1] for i in range(first_order_state.shape[1])])
 

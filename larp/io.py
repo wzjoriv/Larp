@@ -3,6 +3,7 @@ from typing import Union
 import numpy as np
 from larp.field import PotentialField, RGJGeometry
 from larp.quad import QuadTree
+from larp.backend import to_numpy
 from pyproj import CRS, Transformer
 import json
 import pickle
@@ -99,28 +100,37 @@ def loadGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0):
     return loadGeoJSON(geojson, size_offset=size_offset)
 
 def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG:3857", recal_size=True):
-
     from_crs = CRS(from_crs)
     to_crs = CRS(to_crs)
-
     proj = Transformer.from_crs(crs_from=from_crs, crs_to=to_crs)
 
-    def __prune_coords__(rgj:RGJGeometry):
-
+    def __prune_coords__(rgj: RGJGeometry):
         if rgj.RGJType.lower() == "geometrycollection":
             for rgj_n in rgj.rgjs:
                 __prune_coords__(rgj_n)
-        elif rgj.RGJType.lower() in ["point", "ellipse"]:
-            rgj.set_coordinates(np.array(proj.transform(rgj.coordinates[0], rgj.coordinates[1])))
-        elif rgj.RGJType.lower() in ["linestring", "rectangle", "multipoint", "multiellipse"]:
-            rgj.set_coordinates(np.stack(proj.transform(rgj.coordinates[:,0], rgj.coordinates[:, 1]), axis=1))
-        elif rgj.RGJType.lower() == "multirectangle":
-            rgj.set_coordinates(np.stack(proj.transform(rgj.coordinates[:,:,0], rgj.coordinates[:,:,1]), axis=2))
-        elif rgj.RGJType.lower() == "multilinestring":
+            return
+
+        coords = to_numpy(rgj.coordinates)
+        t = rgj.RGJType.lower()
+
+        if t in ["point", "ellipse"]:
+            x, y = coords[0], coords[1]
+            xp, yp = proj.transform(x, y)
+            rgj.set_coordinates(np.array([xp, yp]))
+
+        elif t in ["linestring", "rectangle", "multipoint", "multiellipse"]:
+            xp, yp = proj.transform(coords[:, 0], coords[:, 1])
+            rgj.set_coordinates(np.stack([xp, yp], axis=1))
+
+        elif t == "multirectangle":
+            xp, yp = proj.transform(coords[:, :, 0], coords[:, :, 1])
+            rgj.set_coordinates(np.stack([xp, yp], axis=2))
+
+        elif t == "multilinestring":
             new_coords = []
-            for coord_idx in range(len(rgj.coordinates)):
-                new_coords.append(np.stack(proj.transform(rgj.coordinates[coord_idx][:, 0],\
-                                                                     rgj.coordinates[coord_idx][:, 1]), axis=1))
+            for part in coords:
+                xp, yp = proj.transform(part[:, 0], part[:, 1])
+                new_coords.append(np.stack([xp, yp], axis=1))
             rgj.set_coordinates(new_coords)
 
     for rgj in field:

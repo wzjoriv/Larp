@@ -7,7 +7,7 @@ from larp.field import PotentialField
 from larp.pp.network import QuadNetwork
 
 from larp.quad import QuadNode, QuadTree
-from larp.types import Scaler, Point
+from larp.types import Scaler, Point, ArrayLike
 
 """
 Author: Josue N Rivera
@@ -88,8 +88,8 @@ def optimize_path_via_edge_bundling(path: List[Point], quad_path: List[QuadNode]
     return optimized_points
 
 def has_quad_zone_sight(
-        p1: np.ndarray,
-        p2: np.ndarray,
+        p1: ArrayLike,
+        p2: ArrayLike,
         network: QuadNetwork,
         step: Optional[float] = None,
         min_zone:int = 1
@@ -99,8 +99,8 @@ def has_quad_zone_sight(
     Returns whether the path from p1 to p2 maintains or increases zone (i.e., risk doesn't increase).
 
     Args:
-        p1 (np.ndarray): Start point.
-        p2 (np.ndarray): End point.
+        p1 (ArrayLike): Start point.
+        p2 (ArrayLike): End point.
         network (QuadNetwork): The quad network to check in.
         step (float): Distance between sample points.
 
@@ -130,7 +130,7 @@ def has_quad_zone_sight(
 
     return True
 
-def network_path_smoothing(path: List[Point], network: QuadNetwork, step: Optional[float] = None) -> np.ndarray:
+def network_path_smoothing(path: List[Point], network: QuadNetwork, step: Optional[float] = None) -> ArrayLike:
     """
     Smooths a path by merging segments that are in the same zone or higher zone.
     """
@@ -204,7 +204,7 @@ class Planner():
         if reset_memory:
             self.reset_memory()
 
-    def find_path(self, start_point:Point, end_point:Point, reset_memory = False, **kargs) -> Union[List[Point], np.ndarray]:
+    def find_path(self, start_point:Point, end_point:Point, reset_memory = False, **kargs) -> Union[List[Point], ArrayLike]:
         """
         Executes the selected path planning algorithm from start to goal.
 
@@ -214,7 +214,7 @@ class Planner():
             reset_memory (bool): Whether to reset memory before planning.
 
         Returns:
-            Optional[Union[List[Point], np.ndarray]]: Path as a list of points, or None if no path found.
+            Optional[Union[List[Point], ArrayLike]]: Path as a list of points, or None if no path found.
         """
 
         raise NotImplementedError
@@ -271,7 +271,7 @@ class QuadPlanner(Planner):
         """
         self.network.refresh()
 
-    def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, smooth_path = True, **kargs) -> Tuple[Optional[Union[List[Point], np.ndarray]], Optional[List[QuadNode]]]:
+    def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, smooth_path = True, **kargs) -> Tuple[Optional[Union[List[Point], ArrayLike]], Optional[List[QuadNode]]]:
         """
         Executes the selected path planning algorithm from start to goal.
 
@@ -282,7 +282,7 @@ class QuadPlanner(Planner):
             reset_memory (bool): Whether to reset memory before planning.
 
         Returns:
-            Optional[Union[List[Point], np.ndarray]]: Path as a list of points, or None if no path found.
+            Optional[Union[List[Point], ArrayLike]]: Path as a list of points, or None if no path found.
         """
         if refresh_network:
             self.refresh_network()

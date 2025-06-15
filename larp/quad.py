@@ -4,25 +4,26 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 import warnings
 from collections import defaultdict
 
-import numpy as np
+# import numpy as np
 from larp import PotentialField
+from larp.backend import np, np_o
 
 import larp.fn as lpf
 from larp.field import RGJGeometry
-from larp.types import Scaler, FieldSize, Point, RGJDict
+from larp.types import Scaler, FieldSize, Point, RGJDict, ArrayLike
 
 """
 Author: Josue N Rivera
 Generate the quadtree from the potential field
 """
 
-def __make_index_map__(array: Union[np.ndarray, List]) -> Dict:
+def __make_index_map__(array: Union[ArrayLike, List]) -> Dict:
     """
     Creates a dictionary mapping each unique item in the input to a unique integer index,
     preserving the order of first appearance.
 
     Args:
-        array (Union[np.ndarray, List]): A list or array of hashable items.
+        array (Union[ArrayLike, List]): A list or array of hashable items.
 
     Returns:
         Dict: A mapping from unique item → index.
@@ -70,7 +71,7 @@ class QuadTree():
     def __init__(self, field: PotentialField,
                  minimum_length_limit:float = 5.0,
                  maximum_length_limit:float = np.inf,
-                 edge_bounds:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
+                 edge_bounds:Union[ArrayLike, List[float]] = np.arange(0.2, 0.8, 0.2),
                  size:Optional[float] = None,
                  conservative:bool = False,
                  build_tree:bool = True) -> None:
@@ -83,8 +84,8 @@ class QuadTree():
         self.edge_bounds = np.sort(np.array(edge_bounds))[::-1]
         self.n_zones = len(self.edge_bounds) + 1
         self.__zones_rad_ln = -np.log(self.edge_bounds)
-        self.ZONEToMaxRANGE = np.concatenate([[1.0, 1.0], self.edge_bounds])
-        self.ZONEToMinRANGE = np.concatenate([self.edge_bounds[0:1], self.edge_bounds, [0.0]])
+        self.ZONEToMaxRANGE = np.concatenate([np.array([1.0, 1.0]), self.edge_bounds])
+        self.ZONEToMinRANGE = np.concatenate([self.edge_bounds[0:1], self.edge_bounds, np.array([0.0])])
         self.conservative = conservative
 
         self.MAX_DEPTH = 1000
@@ -115,9 +116,9 @@ class QuadTree():
         quad.leaf = True
         self.leaves.add(quad)
 
-    def __approximated_PF_zones__(self, center_point:Point, size:float, filter_idx:Optional[List[int]] = None) -> Tuple[List[int], np.ndarray]: 
+    def __approximated_PF_zones__(self, center_point:Point, size:float, filter_idx:Optional[List[int]] = None) -> Tuple[List[int], ArrayLike]: 
         n_rgjs = len(filter_idx)
-        zones = np.ones(n_rgjs, dtype=int) * self.n_zones
+        zones = np_o.ones(n_rgjs, dtype=int) * self.n_zones
 
         rep_vectors, refs_idxs = self.field.repulsion_vectors([center_point], filted_idx=filter_idx, min_dist_select=True, return_reference=True)
 
@@ -139,7 +140,7 @@ class QuadTree():
 
         return zones, rep_vectors, refs_idxs
     
-    def __build__(self, center_point:Point, size:float, filter_idx:np.ndarray) -> QuadNode:
+    def __build__(self, center_point:Point, size:float, filter_idx:ArrayLike) -> QuadNode:
          
         quad = QuadNode(center_point=center_point, size=size)
         filter_n = len(filter_idx)
@@ -187,10 +188,13 @@ class QuadTree():
     def build(self) -> QuadNode:
         self.leaves:Set[QuadNode] = set()
         
-        self.root = self.__build__(self.field.center_point, self.size, np.arange(len(self.field)))
+        center_point = np.array(self.field.center_point)
+        size = np.array(self.size)
+
+        self.root = self.__build__(center_point, size, np_o.arange(len(self.field)))
         return self.root
     
-    def to_boundary_lines_collection(self, margin=0.1) -> List[np.ndarray]:
+    def to_boundary_lines_collection(self, margin=0.1) -> List[ArrayLike]:
         lines = [quad.to_boundary_lines(margin=margin) for quad in self.leaves]
         
         return [path for line in lines for path in line]
@@ -204,15 +208,15 @@ class QuadTree():
             new_leaves = self.search_leaves(rootquad[child])
             self.leaves.update(new_leaves)
 
-    def get_quad_maximum_range(self) -> np.ndarray:
+    def get_quad_maximum_range(self) -> ArrayLike:
         return np.array([quad.boundary_max_range for quad in self.leaves])
 
-    def find_quad(self, x: Union[List['Point'], np.ndarray], max_depth: int = 1000) -> List['QuadNode']:
+    def find_quad(self, x: Union[List['Point'], ArrayLike], max_depth: int = 1000) -> List['QuadNode']:
         """
         Efficiently finds the quad node for each point, minimizing redundant traversal.
 
         Args:
-            x (List[Point] or np.ndarray): List of 2D points.
+            x (List[Point] or ArrayLike): List of 2D points.
             max_depth (int): Maximum depth to search in the quad tree.
 
         Returns:
@@ -224,7 +228,7 @@ class QuadTree():
         n_points = len(x)
         results = [None] * n_points
 
-        def batch_traverse(quad: 'QuadNode', point_indices: np.ndarray, depth: int):
+        def batch_traverse(quad: 'QuadNode', point_indices: ArrayLike, depth: int):
             if quad is None or quad.leaf or depth >= max_depth:
                 for idx in point_indices:
                     results[idx] = quad
@@ -247,12 +251,12 @@ class QuadTree():
         batch_traverse(self.root, np.arange(n_points), depth=0)
         return results
     
-    def find_quads_chain(self, x: Union[List['Point'], np.ndarray], max_depth: Optional[int] = None) -> List[List['QuadNode']]:
+    def find_quads_chain(self, x: Union[List['Point'], ArrayLike], max_depth: Optional[int] = None) -> List[List['QuadNode']]:
         """
         Efficiently finds the full quad traversal chain (from root to final quad) for each point.
 
         Args:
-            x (List[Point] or np.ndarray): List of 2D points.
+            x (List[Point] or ArrayLike): List of 2D points.
             max_depth (int): Maximum depth to search in the quad tree.
 
         Returns:
@@ -265,7 +269,7 @@ class QuadTree():
 
         results = [[] for _ in range(n_points)]  # chain for each point
 
-        def batch_traverse(quad: 'QuadNode', point_indices: np.ndarray, depth: int):
+        def batch_traverse(quad: 'QuadNode', point_indices: ArrayLike, depth: int):
             if quad is None or quad.leaf or depth >= max_depth:
                 for idx in point_indices:
                     results[idx].append(quad)
@@ -376,7 +380,7 @@ class QuadTree():
         self.root = __load_quad__(data['root'])
         self.leaves = self.search_leaves()
 
-    def to_image(self, return_zone=False, return_extent: bool = True, max_depth:Optional[int] = None) -> Union[np.ndarray, Tuple[np.ndarray, List[float]]]:
+    def to_image(self, return_zone=False, return_extent: bool = True, max_depth:Optional[int] = None) -> Union[ArrayLike, Tuple[ArrayLike, List[float]]]:
         """
         Render a top-down raster image of the quadtree zoning layout.
 
@@ -385,7 +389,7 @@ class QuadTree():
             return_extent (bool): Whether to return the real-world coordinate extent.
 
         Returns:
-            image (np.ndarray): 2D array with potential or zone values of sectors.
+            image (ArrayLike): 2D array with potential or zone values of sectors.
             extent (Optional[List[float]]): [xmin, xmax, ymin, ymax] real-world bounds if return_extent is True.
         """
         # Get resolution as a power of two
@@ -425,7 +429,7 @@ class QuadTree():
         return image
 
 
-    def quad_to_image(self, quad:Optional[QuadNode] = None, resolution:int = 200, margin:float = 0.0) -> np.ndarray:
+    def quad_to_image(self, quad:Optional[QuadNode] = None, resolution:int = 200, margin:float = 0.0) -> ArrayLike:
 
         if quad is None:
             quad = self.root
@@ -485,7 +489,7 @@ class QuadNode():
     def __lt__(self, other:QuadNode):
         return self.boundary_max_range < other.boundary_max_range
     
-    def get_boundaries(self) -> np.ndarray:
+    def get_boundaries(self) -> ArrayLike:
         """
         Returns (xmin, ymin, xmax, ymax) boundaries of the quad.
         """
@@ -504,7 +508,7 @@ class QuadNode():
         Computes the shared boundary segment between this quad and a neighboring quad.
 
         Returns:
-            np.ndarray: A (2, 2) array representing the endpoints of the shared edge.
+            ArrayLike: A (2, 2) array representing the endpoints of the shared edge.
                 - If the quads share an edge (horizontal or vertical), the endpoints of that edge are returned.
                 - If the quads only touch at a corner (diagonal adjacency), the single shared point is returned twice.
                 - If the quads do not touch, returns None.
@@ -530,7 +534,7 @@ class QuadNode():
         # Otherwise, it's a shared edge
         return np.array([[x0, y0], [x1, y1]]) # [xmin, ymin, xmax, ymax]
 
-    def to_boundary_lines(self, margin=0.1) -> Tuple[np.ndarray, np.ndarray]:
+    def to_boundary_lines(self, margin=0.1) -> Tuple[ArrayLike, ArrayLike]:
         size2 = self.size/2.0 - margin
         offset = np.array([
             [-1.0, 1.0],
@@ -626,12 +630,12 @@ class QPotentailField(PotentialField):
         """
         return len(self.field)
     
-    def __group_points_by_quads_with_rgjs(self, points: np.ndarray, max_depth: int = 3):
+    def __group_points_by_quads_with_rgjs(self, points: ArrayLike, max_depth: int = 3):
         """
         Assign points to the deepest quad containing RGJs and group indices per quad.
 
         Args:
-            points (np.ndarray): Array of points, shape (N, 2).
+            points (ArrayLike): Array of points, shape (N, 2).
             max_depth (int): Maximum quadtree depth to traverse.
 
         Returns:
@@ -696,7 +700,7 @@ class QPotentailField(PotentialField):
             reload_bbox (bool, optional): Whether to recompute the bounding box after addition. Defaults to True.
 
         Returns:
-            np.ndarray: Indices in the field corresponding to the newly added RGJs.
+            ArrayLike: Indices in the field corresponding to the newly added RGJs.
         """
 
         if self.quadtree.conservative:
@@ -926,7 +930,7 @@ class QPotentailField(PotentialField):
         
         return False
     
-    def find_bbox(self, point: Point, max_depth: int = 3, filted_idx: Optional[List[int]] = None) -> np.ndarray:
+    def find_bbox(self, point: Point, max_depth: int = 3, filted_idx: Optional[List[int]] = None) -> ArrayLike:
         """
         Return indices of RGJs whose bounding boxes contain the point, using the quadtree.
 
@@ -935,7 +939,7 @@ class QPotentailField(PotentialField):
             max_depth (int): Maximum depth of the quadtree to consider.
 
         Returns:
-            np.ndarray: Indices of RGJs (global) whose bounding boxes contain the point.
+            ArrayLike: Indices of RGJs (global) whose bounding boxes contain the point.
 
         Note function may return only a subset of the RGJs indexes (those closest in distance)
         """
@@ -963,12 +967,12 @@ class QPotentailField(PotentialField):
     
     def repulsion_vectors(
         self,
-        points: Union[np.ndarray, List['Point']],
+        points: Union[ArrayLike, List['Point']],
         min_dist_select: bool = True,
         return_reference: bool = False,
         max_depth: int = 3,
         filted_idx:Optional[List[int]] = None
-    ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    ) -> Union[ArrayLike, Tuple[ArrayLike, ArrayLike]]:
         """
         Computes repulsion vectors for 2D points using only relevant RGJs from a quadtree field.
         Each point is assigned to the deepest quad with non-empty RGJs, and repulsion vectors
@@ -976,17 +980,17 @@ class QPotentailField(PotentialField):
         points per quad.
 
         Args:
-            points (Union[np.ndarray, List[Point]]): Input 2D points.
+            points (Union[ArrayLike, List[Point]]): Input 2D points.
             min_dist_select (bool): Whether to use minimum distance RGJ filtering.
             return_reference (bool): If True, returns RGJ indices used per point.
             max_depth (int): Maximum depth in the quadtree to traverse.
 
         Returns:
             If return_reference is False:
-                np.ndarray of shape (N, 2): Repulsion vectors for all input points.
+                ArrayLike of shape (N, 2): Repulsion vectors for all input points.
                 
             If return_reference is True:
-                Tuple[np.ndarray, np.ndarray]: (repulsion_vectors, rgj_indices_used_per_point)
+                Tuple[ArrayLike, ArrayLike]: (repulsion_vectors, rgj_indices_used_per_point)
         """
         if filted_idx is not None:
             return self.field.repulsion_vectors(points=points, filted_idx=filted_idx, min_dist_select=min_dist_select, return_reference=return_reference)
@@ -1047,16 +1051,16 @@ class QPotentailField(PotentialField):
 
         return grad
 
-    def eval(self, points: Union[np.ndarray, List['Point']], max_depth=2, filted_idx:Optional[List[int]] = None) -> np.ndarray:
+    def eval(self, points: Union[ArrayLike, List['Point']], max_depth=2, filted_idx:Optional[List[int]] = None) -> ArrayLike:
         """
         Evaluate the potential field at given points using quadtree
         to filter relevant RGJs efficiently.
 
         Args:
-            points (Union[np.ndarray, List[Point]]): Points to evaluate (Nx2).
+            points (Union[ArrayLike, List[Point]]): Points to evaluate (Nx2).
 
         Returns:
-            np.ndarray: Evaluated potential values at each point.
+            ArrayLike: Evaluated potential values at each point.
         """
         if filted_idx is not None:
             return self.field.eval(points=points, filted_idx=filted_idx)
@@ -1083,10 +1087,10 @@ class QPotentailField(PotentialField):
 
         return results
     
-    def eval_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None) -> np.ndarray:
+    def eval_per(self, points: Union[ArrayLike, List[Point]], idxs:Optional[List[int]] = None) -> ArrayLike:
         return self.field.eval_per(points=points, idxs=idxs)
     
-    def squared_dist(self, points:Union[np.ndarray, List[Point]], scaled=True, inverted=True, max_depth=2, return_reference = False, filted_idx:Optional[List[int]] = None) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    def squared_dist(self, points:Union[ArrayLike, List[Point]], scaled=True, inverted=True, max_depth=2, return_reference = False, filted_idx:Optional[List[int]] = None) -> Union[ArrayLike, Tuple[ArrayLike, ArrayLike]]:
 
         points = np.array(points)
         if not len(self):
@@ -1103,30 +1107,30 @@ class QPotentailField(PotentialField):
 
         return np.min(dists, axis=1)
     
-    def squared_dist_per(self, points: Union[np.ndarray, List[Point]], idxs:Optional[List[int]] = None, scaled=True, inverted=True) -> np.ndarray:
+    def squared_dist_per(self, points: Union[ArrayLike, List[Point]], idxs:Optional[List[int]] = None, scaled=True, inverted=True) -> ArrayLike:
         return self.field.squared_dist_per(points=points, idxs=idxs, scaled=scaled, inverted=inverted)
     
     def squared_dist_list(
         self,
-        points: Union[np.ndarray, List['Point']],
+        points: Union[ArrayLike, List['Point']],
         scaled: bool = True,
         inverted: bool = True,
         max_depth: int = 3,
         filted_idx:Optional[List[int]] = None
-    ) -> np.ndarray:
+    ) -> ArrayLike:
         """
         Compute squared distances from each point to all RGJs in the field, but only
         evaluate the ones relevant per point using the quadtree. Non-relevant RGJs will
         be set to np.inf to maintain consistent output shape.
 
         Args:
-            points (Union[np.ndarray, List[Point]]): Input points, shape (N, 2).
+            points (Union[ArrayLike, List[Point]]): Input points, shape (N, 2).
             scaled (bool): Whether to scale distances.
             inverted (bool): Whether to invert distance values.
             max_depth (int): Max depth of quadtree search.
 
         Returns:
-            np.ndarray: Squared distances of shape (N, M), where M = total RGJs.
+            ArrayLike: Squared distances of shape (N, M), where M = total RGJs.
         """
         if filted_idx is not None:
             return self.field.squared_dist_list(points=points, filted_idx=filted_idx, scaled=scaled, inverted=inverted)
@@ -1162,7 +1166,7 @@ class QPotentailField(PotentialField):
 
         return dist_matrix
 
-    def estimate_route_area(self, route:Union[List[Point], np.ndarray], step=1e-3, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 3) -> float:
+    def estimate_route_area(self, route:Union[List[Point], ArrayLike], step=1e-3, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 3) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
@@ -1172,17 +1176,17 @@ class QPotentailField(PotentialField):
 
         return f_eval.sum()*step
     
-    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 3) -> float:
+    def estimate_route_highest_potential(self, route:Union[List[Point], ArrayLike], step=1e-2, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 3) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)
         points = points if n <= 0 else points[:-1]
 
-        f_eval:np.ndarray = scale_transform(self.eval(points=points, max_depth=max_depth))
+        f_eval:ArrayLike = scale_transform(self.eval(points=points, max_depth=max_depth))
 
         return f_eval.max()
 
-    def to_image(self, resolution:int = 400, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, max_depth:int = 3, return_extent=True) -> np.ndarray:
+    def to_image(self, resolution:int = 400, margin:float = 0.0, center_point:Optional[Point] = None, size:Optional[FieldSize] = None, max_depth:int = 3, return_extent=True) -> ArrayLike:
 
         if center_point is None:
             if self.field.center_point is None:

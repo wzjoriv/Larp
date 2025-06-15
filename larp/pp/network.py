@@ -5,7 +5,7 @@ from typing import Callable, List, Optional, Set
 import numpy as np
 
 from larp.quad import QuadNode, QuadTree
-from larp.types import Scaler, Point, RoutingAlgorithmStr
+from larp.types import Scaler, Point, ArrayLike
 
 """
 Author: Josue N Rivera
@@ -264,7 +264,7 @@ class QuadNetwork(Network):
     def get_quad_size(self, quads:List[QuadNode]):
         return [quad.size for quad in quads]
     
-    def get_shared_entry_point(self, node_from: QuadNode, node_to: QuadNode, entry: Point) -> np.ndarray:
+    def get_shared_entry_point(self, node_from: QuadNode, node_to: QuadNode, entry: Point) -> ArrayLike:
         """
         Computes the entry point on the shared edge or corner with a neighbor quad.
         If diagonally adjacent, returns midpoint of shared corner.

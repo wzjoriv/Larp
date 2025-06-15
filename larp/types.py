@@ -1,5 +1,4 @@
-from typing import Any, Callable, List, Tuple, TypedDict, Union, Literal
-import numpy as np
+from typing import Any, Callable, List, Tuple, TypedDict, Union, Literal, TYPE_CHECKING
 
 """
 Author: Josue N Rivera
@@ -9,8 +8,12 @@ TODO: Add quads and eclipse
 
 FieldSize = Tuple[int, int]
 
-Point = Union[Tuple[float, float], np.ndarray]
-RepulsionVectorsAndRef = Tuple[List[int], np.ndarray]
+import numpy as np
+
+ArrayLike = np.ndarray
+
+Point = Union[Tuple[float, float], ArrayLike]
+RepulsionVectorsAndRef = Tuple[List[int], ArrayLike]
 
 RoutingAlgorithmStr = Literal['a*', 'dijkstra']
 

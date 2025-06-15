@@ -1,14 +1,14 @@
 
 from typing import List, Tuple, Union
 import numpy as np
-from larp.types import Point
+from larp.types import Point, ArrayLike
 from pyproj import CRS, Transformer
 
 """
 Author: Josue N Rivera
 """
 
-def route_distance(route:Union[np.ndarray, List[Point]], return_joints = False) -> Union[float, Tuple[float, np.ndarray]]:
+def route_distance(route:Union[ArrayLike, List[Point]], return_joints = False) -> Union[float, Tuple[float, ArrayLike]]:
     """
     Return distance of a path defined by a list of continuous points
     """
@@ -22,11 +22,11 @@ def route_distance(route:Union[np.ndarray, List[Point]], return_joints = False) 
     
     return dist.sum()
 
-def project_route(route:Union[List[Point], np.ndarray], from_crs="EPSG:3857", to_crs="EPSG:4326") -> np.ndarray:
+def project_route(route:Union[List[Point], ArrayLike], from_crs="EPSG:3857", to_crs="EPSG:4326") -> ArrayLike:
 
     return project_points(points=route, from_crs=from_crs, to_crs=to_crs)
 
-def project_points(points:Union[Point, List[Point], np.ndarray], from_crs="EPSG:3857", to_crs="EPSG:4326") -> np.ndarray:
+def project_points(points:Union[Point, List[Point], ArrayLike], from_crs="EPSG:3857", to_crs="EPSG:4326") -> ArrayLike:
 
     from_crs = CRS(from_crs)
     to_crs = CRS(to_crs)
@@ -38,7 +38,7 @@ def project_points(points:Union[Point, List[Point], np.ndarray], from_crs="EPSG:
 
     return np.stack(proj.transform(points[:,0], points[:, 1]), axis=1)
 
-def interpolate_along_route(route:Union[List[Point], np.ndarray], step=1e-3, n=0, return_step_n = False) -> Union[np.ndarray, Tuple[np.ndarray, float, int]]:
+def interpolate_along_route(route:Union[List[Point], ArrayLike], step=1e-3, n=0, return_step_n = False) -> Union[ArrayLike, Tuple[ArrayLike, float, int]]:
     """
     Return a set of equally spaced points along a route
     """

@@ -124,9 +124,16 @@ def has_quad_zone_sight(
     quads = network.find_quad(points)
     allowed_zone = max(quads[0].boundary_zone, min_zone)
 
-    for quad in set(quads):
+    # Reduce to unique quads
+    used = set()
+    quads = [x for x in quads if x not in used and (used.add(x) or True)]
+
+    # Accept quads that have a non-decending quad zone order 
+    for quad in quads:
         if quad is None or quad.boundary_zone < allowed_zone:
             return False
+        
+        allowed_zone = quad.boundary_zone
 
     return True
 
@@ -196,6 +203,9 @@ class Planner():
         """
 
         if isinstance(alg, str):
+            if alg not in self.algs.keys():
+                raise KeyError("Selected algorithm is not available")
+
             self.alg = self.algs[alg.lower()]
         else:
             self.add_alg('custom', alg)
@@ -319,7 +329,7 @@ def find_path_A_star(start_point:Point, end_point:Point, network:QuadNetwork, sc
     start_quad, end_quad = tuple(network.find_quad([start_point, end_point]))
 
     if scaler is None:
-        scaler = lambda p: 1.0 + p
+        scaler = lambda p: 1.0 + 2*p
 
     open_set = []
     heapq.heappush(open_set, (0, start_quad))

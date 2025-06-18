@@ -1,22 +1,33 @@
 # Larp: Last-Mile Restrictive Planning
 
-A fast, flexible Python toolkit for path planning using artificial potential fields and multi-scale cell decomposition—optimized for dynamic environments and complex spatial constraints.
+A fast, flexible Python toolkit for autonomous navigation planning optimized for dynamic environments and complex spatial constraints.
 
 ---
 
 ## 🔍 Overview
 
-**Larp** (/lärp/) introduces a novel approach to path planning by leveraging restrictive potential fields as continuous cost maps and decomposing them into a hierarchy of cells. Each cell is assigned a restriction zone based on proximity to obstacles. Larp supports multi-resolution navigation, hot reloading of obstacles, custom path planning policies, and advanced routing optimization.
+**Larp** (/lärp/) is a framework for autonomous navigation that leverages *repulsive potential fields* to model obstacles and environmental constraints. By decomposing a complex dynamical space into a hierarchical cell structure, Larp enables real-time performance, efficient spatial queries, and scalable path and trajectory planning across large environments.
 
-Originally developed for Unmanned Aerial Vehicles (UAVs) in urban air mobility scenarios, Larp's versatile architecture makes it applicable to a broad range of safe and efficient navigation problems.
+See [larp/docs/demos](https://github.com/wzjoriv/Larp/blob/main/docs/demos/) for example applications, ranging from urban air mobility to wheeled robot navigation.
+
+Although originally developed for Unmanned Aerial Vehicles (UAVs) in urban air mobility scenarios, Larp’s modular design makes it suitable for a wide range of autonomous systems.
 
 ### 🚀 Key Features
 
-- **Restrictive Potential Fields**: Models obstacles and constraints using repulsive potential fields.
-- **Multi-Scale Cell Decomposition**: Enables efficient navigation and spatial querying via hierarchical cell partitioning.
-- **Multi-Faceted Path Planning**: Combines artificial potential fields with cell-based decomposition for route generation.
-- **Customizable Trajectory Planning**: Custom.
-- **Flexible Application Domains**: Applicable to UAVs, autonomous vehicles, mobile robotics, and more.
+- **Restrictive Potential Fields**  
+  Models obstacles and constraints using repulsive fields that guide navigation conscious of restricted areas.
+
+- **Multi-Scale Cell Decomposition**  
+  Hierarchical spatial partitioning enables fast lookups and efficient field evaluations.
+
+- **Path Planning**  
+  Combines potential fields with spatial decomposition for rapid, constraint-aware path planning.
+
+- **Trajectory Generation**  
+  Includes dynamics-aware MPC and iLQR-based trajectory generation that respects repulsive field constraints.
+
+- **Flexible Application Domains**  
+  Applicable to UAVs, autonomous ground vehicles, mobile robots, and more.
 
 ![Route Graph](https://github.com/wzjoriv/Larp/blob/main/docs/imgs/route_graph.png?raw=true)
 
@@ -35,7 +46,8 @@ pip install larp
 - Python 3.8+
 - `numpy>=2.0.0`
 - `pyproj`
-- `matplotlib` (optional, for visualization)
+- `osqp` (For optimal performance, follow setup instructions: https://osqp.org/docs/get_started/python.html)
+- `matplotlib` (Optional, for visualization)
 
 ---
 
@@ -53,7 +65,7 @@ Explore Larp’s capabilities through interactive Jupyter Notebook demos:
 
 ## 📚 Citation
 
-If you use Larp in your research or projects, please cite:
+If you use Larp in your work, please cite the following:
 
 ```bibtex
 @article{rivera2024multi,

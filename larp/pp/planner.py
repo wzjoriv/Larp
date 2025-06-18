@@ -268,6 +268,23 @@ class QuadPlanner(Planner):
         if alg is not None:
             self.select_alg(alg=alg, reset_memory=False)
 
+    def select_alg(self, alg, reset_memory=True):
+        """
+        Selects a planning algorithm by name or function reference.
+
+        Args:
+            alg (Optional[PathAlgArg]): Algorithm name or custom function.
+            reset_memory (bool): Whether to reset internal memory state.
+
+        Options:
+        - a*
+        - dijkstra
+        - a*-e
+        - dijkstra-e
+        """
+
+        return super().select_alg(alg, reset_memory)
+
     def refresh(self):
         """
         Resets planner memory and refreshes the network graph.

@@ -1,3 +1,4 @@
+from abc import ABC
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import expm
@@ -7,7 +8,7 @@ from itertools import chain
 Author: Josue N Rivera
 """
         
-class Dynamics():
+class Dynamics(ABC):
 
     """
     Base class for representing general dynamical systems with support for
@@ -72,7 +73,8 @@ class Dynamics():
     def __init__(self, 
                  constants:Optional[Dict] = None,
                  state_derivative_orders:List[int] = [1],
-                 control_derivative_orders:List[int] = [0]) -> None:
+                 control_derivative_orders:List[int] = [0],
+                 holonomic:bool = False) -> None:
         
         """
         Initialize the base dynamics model.
@@ -90,6 +92,7 @@ class Dynamics():
         """
 
         self.constants = constants
+        self.holonomic = holonomic
 
         # Maximum derivitive order for each primitive state needed to represent the system's state vector (same for control)
         
@@ -194,7 +197,7 @@ class Dynamics():
 
     def discretize(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate=True) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Discretizes the linearized system at point (x0, u0) using zero-order hold (ZOH):
+        Discretizes the linearized system at point (x0, u0) using zero-order hold (ZOH)
 
         .. math::
 

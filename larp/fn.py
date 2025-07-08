@@ -3,6 +3,9 @@ from typing import List, Tuple, Union
 import numpy as np
 from larp.types import Point
 from pyproj import CRS, Transformer
+from functools import lru_cache
+
+Tfrom_crs = lru_cache(Transformer.from_crs, maxsize=10)
 
 """
 Author: Josue N Rivera
@@ -31,7 +34,7 @@ def project_points(points:Union[Point, List[Point], np.ndarray], from_crs="EPSG:
     from_crs = CRS(from_crs)
     to_crs = CRS(to_crs)
 
-    proj = Transformer.from_crs(crs_from=from_crs, crs_to=to_crs)
+    proj = Tfrom_crs(crs_from=from_crs, crs_to=to_crs)
     
     points = np.array(points)
     points = np.expand_dims(points, axis=0) if points.ndim < 2 else points

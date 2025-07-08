@@ -32,7 +32,3 @@ def test_interpolate_route():
     assert n == 3, "Returned n not expected"
     assert ((step - 1.0/np.sqrt(2))**2).sum() < 1e-10, "Returned step not expected"
     assert len(points) == 3, "Number of points not expected"
-    
-if __name__ == "__main__":
-    test_route_distance()
-    test_interpolate_route()

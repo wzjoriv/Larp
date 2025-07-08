@@ -298,6 +298,12 @@ class QuadPlanner(Planner):
         """
         self.network.refresh()
 
+    def reset_memory(self):
+        """
+        Clears any memory state stored across planning runs.
+        """
+        self.memory.clear()
+
     def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, smooth_path = True, **kargs) -> Optional[Union[List[Point], np.ndarray]]:
         """
         Executes the selected path planning algorithm from start to goal.
@@ -315,7 +321,7 @@ class QuadPlanner(Planner):
             self.refresh_network()
 
         if reset_memory:
-            self.memory.clear()
+            self.reset_memory()
 
         start_point, end_point = np.asarray(start_point, dtype=float), np.asarray(end_point, dtype=float)
 

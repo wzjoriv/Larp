@@ -6,7 +6,7 @@ A fast, flexible Python toolkit for autonomous navigation planning optimized for
 
 ## 🔍 Overview
 
-**Larp** (/lärp/) is a framework for autonomous navigation that leverages *repulsive potential fields* to model obstacles and environmental constraints. By decomposing a complex dynamical space into a hierarchical cell structure, Larp enables real-time performance, efficient spatial queries, and scalable path and trajectory planning across large environments.
+**Larp** (/lärp/) is a framework for autonomous navigation that leverages *repulsive artificial potential fields* to model obstacles and environmental constraints. By decomposing a complex dynamical space into a hierarchical cell structure, Larp enables efficient spatial queries, scalable path and trajectory planning across large environments, and optimized computing.
 
 See [larp/docs/demos](https://github.com/wzjoriv/Larp/blob/main/docs/demos/) for example applications, ranging from urban air mobility to wheeled robot navigation.
 
@@ -15,13 +15,13 @@ Although originally developed for Unmanned Aerial Vehicles (UAVs) in urban air m
 ### 🚀 Key Features
 
 - **Restrictive Potential Fields**  
-  Models obstacles and constraints using repulsive fields that guide navigation conscious of restricted areas.
+  Models obstacles and constraints using artificial repulsive fields that guide navigation using non-binary influence.
 
 - **Multi-Scale Cell Decomposition**  
   Hierarchical spatial partitioning enables fast lookups and efficient field evaluations.
 
 - **Path Planning**  
-  Combines potential fields with spatial decomposition for rapid, constraint-aware path planning.
+  Supports potential fields with spatial decomposition for rapid, constraint-aware path planning.
 
 - **Trajectory Generation**  
   Includes dynamics-aware MPC and iLQR-based trajectory generation that respects repulsive field constraints.

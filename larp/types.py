@@ -1,5 +1,5 @@
-from typing import Any, Callable, List, Tuple, TypedDict, Union, Literal
-import numpy as np
+from typing import Any, Callable, List, Optional, Tuple, TypeAlias, TypedDict, Union, Literal
+from numpy import ndarray
 
 """
 Author: Josue N Rivera
@@ -9,8 +9,13 @@ TODO: Add quads and eclipse
 
 FieldSize = Tuple[int, int]
 
-Point = Union[Tuple[float, float], np.ndarray]
-RepulsionVectorsAndRef = Tuple[List[int], np.ndarray]
+FieldConstraints:TypeAlias = Tuple[Optional[ndarray], Optional[ndarray]]
+
+TrajHorizon:TypeAlias = Union[int, float]
+Trajectory:TypeAlias = Tuple[ndarray, ndarray]
+
+Point = Union[Tuple[float, float], ndarray]
+RepulsionVectorsAndRef = Tuple[List[int], ndarray]
 
 RoutingAlgorithmStr = Literal['a*', 'dijkstra']
 

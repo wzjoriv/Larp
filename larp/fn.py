@@ -5,7 +5,7 @@ from larp.types import Point
 from pyproj import CRS, Transformer
 from functools import lru_cache
 
-Tfrom_crs = lru_cache(Transformer.from_crs, maxsize=10)
+Tfrom_crs = lru_cache(Transformer.from_crs)
 
 """
 Author: Josue N Rivera

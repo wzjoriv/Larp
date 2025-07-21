@@ -11,10 +11,12 @@ FieldSize = Tuple[int, int]
 
 FieldConstraints:TypeAlias = Tuple[Optional[ndarray], Optional[ndarray]]
 
+
 TrajHorizon:TypeAlias = Union[int, float]
 Trajectory:TypeAlias = Tuple[ndarray, ndarray]
 
 Point = Union[Tuple[float, float], ndarray]
+Path:TypeAlias = Union[ndarray, List[Point]]
 RepulsionVectorsAndRef = Tuple[List[int], ndarray]
 
 RoutingAlgorithmStr = Literal['a*', 'dijkstra']

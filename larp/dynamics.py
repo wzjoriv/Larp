@@ -171,7 +171,7 @@ class Dynamics(ABC):
         """
         raise NotImplementedError
 
-    def linearize(self, x0: np.ndarray, u0: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def linearize(self, x0: np.ndarray, u0: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Linearizes the nonlinear dynamics \\( f(x, u) \\) about the reference point \\( (x_0, u_0) \\).
 
@@ -190,12 +190,16 @@ class Dynamics(ABC):
 
         B : np.ndarray
             Jacobian matrix \\( B = \\frac{\\partial f}{\\partial u} \\)
+            
+        f : np.ndarray
+            Time derivative of the state.
         """
+        f = self.f(x0, u0)
         A = self.dfdx(x0, u0)
         B = self.dfdu(x0, u0)
-        return A, B
+        return A, B, f
 
-    def discretize(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate=True) -> Tuple[np.ndarray, np.ndarray]:
+    def discretize(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate=True) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Discretizes the linearized system at point (x0, u0) using zero-order hold (ZOH)
 
@@ -220,6 +224,9 @@ class Dynamics(ABC):
 
         Returns
         -------
+        f : np.ndarray
+            Time derivative of the state.
+            
         Ad : np.ndarray
             Discrete-time state matrix
 
@@ -228,7 +235,7 @@ class Dynamics(ABC):
         """
         state_dim = self.first_order_state_n
 
-        A, B = self.linearize(x0, u0)
+        A, B, f = self.linearize(x0, u0)
 
         if estimate:
             Ad = np.eye(state_dim) + A*dt
@@ -245,7 +252,7 @@ class Dynamics(ABC):
             AdBd = expm(dt * M)[:, :state_dim, :]
             Ad, Bd = AdBd[:, :, :state_dim], AdBd[:, :, state_dim:]
 
-        return Ad, Bd
+        return Ad, Bd, f*dt
 
     def first_state_names(self) -> List[str]:
         """
@@ -444,6 +451,161 @@ class WMRDynamics(Dynamics):
         df3 = np.concatenate([zeros, zeros, zeros], axis=1)
 
         return np.stack([df1, df2, df3], axis=1)
+
+class CarDynamics(Dynamics):
+    """
+    Dynamics for a rear-wheeled drive car model.
+
+    This class implements kinematics for car-like vechicle based-on ackerman steering:
+
+    .. math::
+
+        \\begin{align}
+        \\dot{x} &= v \\cos(\\theta) \\\\
+        \\dot{y} &= v \\sin(\\theta) \\\\
+        \\dot{v} &= a
+        \\dot{\\theta} &= v*tan(\\omega)/L
+        \\end{align}
+
+    where:
+
+    - :math:`(x, y)` is the position of the robot in 2D space
+    - :math:`\\theta` is the robot's orientation
+    - :math:`v` is the linear velocity
+    - :math:`a` is the linear acceleration
+    - :math:`\\omega` is the angular velocity
+    - :math:`l` is the distance between front and real wheels
+
+    References
+    ----------
+    - https://github.com/AtsushiSakai/PythonRobotics
+    - https://grauonline.de/wordpress/?page_id=3244
+
+    Parameters
+    ----------
+    wheels_distance : float, optional
+        The distance between the left and right wheels (default: 1.0)
+
+    front_rear_length : float, optional
+        The distance between the front and real wheels (default: 1.0)
+
+    Attributes
+    ----------
+    wd : float
+        The wheelbase, used to compute left/right wheel speeds.
+
+    frd : float
+        The car length, used to compute steering rate.
+    """
+
+    def __init__(self, wheels_distance=1.0, front_rear_length=1.0) -> None:
+        """
+        Initializes the Wheeled Mobile Robot (WMR) dynamics with physical parameters.
+
+        Parameters
+        ----------
+        wheels_distance : float
+            Distance between the wheels.
+        """
+
+        constants = {
+            'wheels distance': wheels_distance,
+            'front rear length': front_rear_length
+        }
+
+        super().__init__(constants=constants,
+                         holonomic=False,
+                         state_derivative_orders=[0, 0, 0, 0],   # x, y, v, theta
+                         control_derivative_orders=[0, 0])    # a, omega
+
+        self.wd = self.constants['wheels distance']
+        self.frd = self.constants['wheels distance']
+
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+        """
+        Computes the time derivative \\( \\dot{x} = f(x, u) \\) for the car model.
+
+        Parameters
+        ----------
+        first_order_state : np.ndarray
+            State vector of shape (batch_size, 4): [x, y, v, θ]
+
+        first_order_control : np.ndarray
+            Control vector of shape (batch_size, 2): [a, ω]
+
+        Returns
+        -------
+        np.ndarray
+            Derivative of the state, shape (batch_size, 4)
+        """
+        _, _, v, theta = self.split_first(first_order_state)
+        a, w = self.split_first(first_order_control)
+
+        dx = v * np.cos(theta)
+        dy = v * np.sin(theta)
+        dv = a
+        dtheta = w
+
+        return np.concatenate([dx, dy, dv, dtheta], axis=1)
+
+    def dfdu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+        """
+        Computes the Jacobian \\( \\frac{\\partial f}{\\partial u} \\) of the WMR dynamics.
+
+        Parameters
+        ----------
+        first_order_state : np.ndarray
+            State vector, shape (batch_size, 3)
+
+        first_order_control : np.ndarray
+            Control vector, shape (batch_size, 2)
+
+        Returns
+        -------
+        np.ndarray
+            Jacobian matrix, shape (batch_size, 3, 2)
+        """
+        _, _, v, _ = self.split_first(first_order_state)
+        _, w = self.split_first(first_order_control)
+
+        zeros = np.zeros_like(v)
+        ones = np.ones_like(v)
+
+        df1 = np.concatenate([zeros, zeros], axis=1)
+        df2 = np.concatenate([zeros, zeros], axis=1)
+        df3 = np.concatenate([ ones, zeros], axis=1)
+        df4 = np.concatenate([zeros, v/(self.frd*np.cos(w)**2)], axis=1)
+
+        return np.stack([df1, df2, df3, df4], axis=1)
+
+    def dfdx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+        """
+        Computes the Jacobian \\( \\frac{\\partial f}{\\partial x} \\) of the car dynamics.
+
+        Parameters
+        ----------
+        first_order_state : np.ndarray
+            State vector, shape (batch_size, 4)
+
+        first_order_control : np.ndarray
+            Control vector, shape (batch_size, 2)
+
+        Returns
+        -------
+        np.ndarray
+            Jacobian matrix, shape (batch_size, 4, 4)
+        """
+        x, _, v, theta = self.split_first(first_order_state)
+        _, w = self.split_first(first_order_control)
+
+        zeros = np.zeros_like(x)
+
+        df1 = np.concatenate([zeros, zeros, np.cos(theta), -v * np.sin(theta)], axis=1)
+        df2 = np.concatenate([zeros, zeros, np.sin(theta), v * np.cos(theta)], axis=1)
+        df3 = np.concatenate([zeros, zeros, zeros, zeros], axis=1)
+        df4 = np.concatenate([zeros, zeros, np.tan(w)/self.frd, zeros], axis=1)
+
+        return np.stack([df1, df2, df3, df4], axis=1)
 
 class Quadcopter2DDynamics(Dynamics):
     """

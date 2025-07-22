@@ -1,7 +1,7 @@
 from os import PathLike
-from typing import Union
+from typing import Optional, Union
 import numpy as np
-from larp.field import PotentialField, RGJGeometry
+from larp.field import PotentialField, RGJGeometry, RectangleRGJ
 from larp.quad import QuadTree
 from pyproj import CRS, Transformer
 import json
@@ -33,6 +33,47 @@ def loadRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
     field.size += size_offset*2
 
     return field
+
+def loadOccupancyMap(grid: np.ndarray, cell_size: float = 1.0, repulsion_matrix: Optional[np.ndarray] = None) -> PotentialField:
+    """
+    Convert an occupancy grid to a PotentialField with rectangular repulsive geometries.
+
+    Parameters
+    ----------
+    grid : np.ndarray
+        2D binary occupancy grid where `True` or `1` indicates an obstacle.
+    cell_size : float, optional
+        Size of each cell in world units. Default is 1.0.
+    repulsion_matrix : Optional[np.ndarray], optional
+        2x2 positive semi-definite matrix representing the repulsion strength
+        and direction. If None, defaults to `cell_size/4` scaled identity matrix.
+
+    Returns
+    -------
+    PotentialField
+        A potential field composed of rectangular repulsion-generating geometries (RGJs)
+        corresponding to the occupied cells in the grid.
+    """
+    grid = np.array(grid, dtype=bool)
+    grid = np.atleast_2d(grid)
+
+    if repulsion_matrix is None:
+        repulsion_matrix = np.eye(2) * (cell_size / 4.0)
+
+    start_yis, start_xis = np.nonzero(grid)
+
+    # Bottom-left and top-right corners in world coordinates
+    x0 = start_xis * cell_size
+    y0 = start_yis * cell_size
+    x1 = x0 + cell_size
+    y1 = y0 + cell_size
+
+    # Stack into coordinates: shape (N, 2, 2), where each is [[x0, y0], [x1, y1]]
+    coordinates = np.stack([np.stack([x0, y0], axis=-1), np.stack([x1, y1], axis=-1)], axis=1)
+
+    rect_rgjs = [RectangleRGJ(coord, repulsion=repulsion_matrix) for coord in coordinates]
+
+    return PotentialField(rgjs=rect_rgjs)
 
 def loadRGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0) -> PotentialField:
 

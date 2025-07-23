@@ -24,10 +24,12 @@ def test_load_quadtree():
 def test_load_occupancy_map():
 
     grid = np.array([
-        [0, 1],
-        [1, 0]
+        [0, 0, 0],
+        [1, 1, 0]
     ])
-    field = lpio.loadOccupancyMap(grid, cell_size=1.0)
+    field = lpio.loadOccupancyMap(grid)
     assert len(field.rgjs) == 2
+    assert np.allclose(field.size, np.array([3, 2]))
+    assert field.in_bbox((1.5, 1.5)) == True
 
 test_load_occupancy_map()

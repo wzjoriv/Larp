@@ -191,8 +191,8 @@ class Planner():
         Selects a planning algorithm by name or function reference.
 
         Args:
-            alg (Optional[PathAlgArg]): Algorithm name or custom function.
-            reset_memory (bool): Whether to reset internal memory state.
+            alg (PathAlgArg): Algorithm name or custom function.
+            reset_memory (bool): Whether to reset internal memory state. Defaults to True.
         """
 
         if isinstance(alg, str):

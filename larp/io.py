@@ -1,5 +1,5 @@
 from os import PathLike
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 import numpy as np
 from larp.field import PotentialField, RGJGeometry, RectangleRGJ
 from larp.quad import QuadTree
@@ -23,6 +23,82 @@ def saveQuadTree(tree:QuadTree, file:Union[str, PathLike]):
     with open(file, "wb") as outfile:
         pickle.dump(data, outfile)
 
+def loadOccupancyMap(grid: np.ndarray,
+                     bbox: Optional[np.ndarray] = None,
+                     repulsion_matrix: Optional[np.ndarray] = None,
+                     size_offset: float = 0.0,
+                     return_quadtree: bool = False
+                     ) -> Union[PotentialField, Tuple[PotentialField, QuadTree]]:
+    """
+    Convert an occupancy grid to a PotentialField with rectangular repulsive geometries (RGJs).
+
+    Parameters
+    ----------
+    grid : np.ndarray
+        2D binary occupancy grid where `True` or `1` indicates an obstacle cell.
+    bbox : Optional[np.ndarray], optional
+        World-space bounding box of the occupancy grid in the format [[min_x, min_y], [max_x, max_y]].
+        If None, defaults to [[0, 0], [W, H]], where W and H are the grid's width and height.
+    repulsion_matrix : Optional[np.ndarray], optional
+        A 2x2 positive semi-definite matrix representing the repulsion strength and shape.
+        If None, defaults to a scaled identity matrix with magnitude (min_cell_size / 4)^2.
+    size_offset : float, optional
+        Extra padding added symmetrically to the potential field's size in each direction.
+        Default is 0.0.
+    return_quadtree : bool, optional
+        If True, returns a tuple of (PotentialField, QuadTree). Default is False.
+
+    Returns
+    -------
+    PotentialField or Tuple[PotentialField, QuadTree]
+        The potential field composed of rectangular RGJs corresponding to occupied cells.
+        Optionally returns a spatial quadtree if `return_quadtree` is True.
+    """
+    grid = np.array(grid, dtype=bool)
+    grid = np.atleast_2d(grid)
+
+    if bbox is None:
+        bbox = np.array([[0, 0], grid.shape[::-1]], dtype=float)
+
+    bbox = np.array(bbox, dtype=float).reshape((2, 2))  # [[min_x, min_y], [max_x, max_y]]
+    bbox = np.stack([bbox.min(axis=0), bbox.max(axis=0)], axis=0)  # Ensure correct bbox order
+
+    # Compute cell size per dimension
+    cell_size = (bbox[1] - bbox[0]) / np.array(grid.shape[::-1])
+    min_cell_size = float(np.min(cell_size))
+
+    if repulsion_matrix is None:
+        repulsion_matrix = np.eye(2) * (min_cell_size / 4.0) ** 2
+
+    # Get obstacle indices
+    start_yis, start_xis = np.nonzero(grid)
+
+    # Convert grid indices to world-space coordinates
+    x0 = bbox[0, 0] + start_xis * cell_size[0]
+    y0 = bbox[0, 1] + start_yis * cell_size[1]
+    x1 = x0 + cell_size[0]
+    y1 = y0 + cell_size[1]
+
+    # Create bounding boxes for each occupied cell
+    coordinates = np.stack([
+        np.stack([x0, y0], axis=-1),
+        np.stack([x1, y1], axis=-1)
+    ], axis=1)  # Shape: (N, 2, 2)
+
+    # Create RGJs
+    rect_rgjs = [RectangleRGJ(coord, repulsion=repulsion_matrix) for coord in coordinates]
+
+    # Construct PotentialField
+    field = PotentialField(rgjs=rect_rgjs,
+                           center_point=np.mean(bbox, axis=0),
+                           size=(bbox[1] - bbox[0]) + 2 * size_offset)
+
+    if return_quadtree:
+        qtree = QuadTree(field, minimum_length_limit=min_cell_size/8, edge_bounds=[])
+        return field, qtree
+
+    return field
+
 def loadRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
 
     features = rgeojson["features"]
@@ -33,47 +109,6 @@ def loadRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
     field.size += size_offset*2
 
     return field
-
-def loadOccupancyMap(grid: np.ndarray, cell_size: float = 1.0, repulsion_matrix: Optional[np.ndarray] = None) -> PotentialField:
-    """
-    Convert an occupancy grid to a PotentialField with rectangular repulsive geometries.
-
-    Parameters
-    ----------
-    grid : np.ndarray
-        2D binary occupancy grid where `True` or `1` indicates an obstacle.
-    cell_size : float, optional
-        Size of each cell in world units. Default is 1.0.
-    repulsion_matrix : Optional[np.ndarray], optional
-        2x2 positive semi-definite matrix representing the repulsion strength
-        and direction. If None, defaults to `cell_size/4` scaled identity matrix.
-
-    Returns
-    -------
-    PotentialField
-        A potential field composed of rectangular repulsion-generating geometries (RGJs)
-        corresponding to the occupied cells in the grid.
-    """
-    grid = np.array(grid, dtype=bool)
-    grid = np.atleast_2d(grid)
-
-    if repulsion_matrix is None:
-        repulsion_matrix = np.eye(2) * (cell_size / 4.0)
-
-    start_yis, start_xis = np.nonzero(grid)
-
-    # Bottom-left and top-right corners in world coordinates
-    x0 = start_xis * cell_size
-    y0 = start_yis * cell_size
-    x1 = x0 + cell_size
-    y1 = y0 + cell_size
-
-    # Stack into coordinates: shape (N, 2, 2), where each is [[x0, y0], [x1, y1]]
-    coordinates = np.stack([np.stack([x0, y0], axis=-1), np.stack([x1, y1], axis=-1)], axis=1)
-
-    rect_rgjs = [RectangleRGJ(coord, repulsion=repulsion_matrix) for coord in coordinates]
-
-    return PotentialField(rgjs=rect_rgjs)
 
 def loadRGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0) -> PotentialField:
 
@@ -101,7 +136,9 @@ def loadGeoJSON(geojson: Union[dict, str], size_offset = 0.0):
     """
     Converts a GeoJSON into an RGeoJSON
 
-    _Note_: All polygons will be converted to line strings.
+    Note
+    ----
+    - All polygons will be converted to line strings.
     """
     if isinstance(geojson, str):
         geojson = json.loads(geojson)

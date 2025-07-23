@@ -75,9 +75,9 @@ def loadOccupancyMap(grid: np.ndarray,
 
     # Convert grid indices to world-space coordinates
     x0 = bbox[0, 0] + start_xis * cell_size[0]
-    y0 = bbox[0, 1] + start_yis * cell_size[1]
+    y0 = bbox[1, 1] - start_yis * cell_size[1]
     x1 = x0 + cell_size[0]
-    y1 = y0 + cell_size[1]
+    y1 = y0 - cell_size[1]
 
     # Create bounding boxes for each occupied cell
     coordinates = np.stack([

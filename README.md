@@ -43,9 +43,10 @@ pip install larp
 
 Explore Larp’s capabilities through interactive Jupyter Notebook demos:
 
-- 📌 [General Demo](https://github.com/wzjoriv/Larp/blob/main/presentation.ipynb) — Introduction to core functionality  
-- 🔁 [Hot Reloading in Room](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Hot%20Reloading%20in%20Room/presentation.ipynb) — Dynamic updates of obstacles
+- 📌 [General Demo](https://github.com/wzjoriv/Larp/blob/main/presentation.ipynb) — Introduction to core functionality
 - 🏛️ [City Center in Lafayette, IN](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Lafayette%20Court%20House/presentation.ipynb) — Path planning around building
+- 🔁 [Hot Reloading in Room](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Hot%20Reloading%20in%20Room/presentation.ipynb) — Dynamic updates of obstacles
+- 🔁 [Hot Reloading in Room](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Occumpancy%20Maps/presentation.ipynb) — Loading occupancy maps
 - 🏫 [Aerial Cargo Delivery](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Aerial%20Cargo%20Delivery/presentation.ipynb) — Low-altitude aerial cargo delivery planning on university campus
 - 🛫 [Urban Air Mobility of EVTOL](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Urban%20Air%20Mobility%20of%20EVTOL/presentation.ipynb) — Urban air mobility of EVTOL aircraft in Singapore
 

@@ -92,7 +92,7 @@ def has_quad_zone_sight(
         p2: np.ndarray,
         network: QuadNetwork,
         step: Optional[float] = None,
-        min_zone:int = 1
+        min_zone:int = 2
     ) -> Tuple[bool, Optional[int], Optional[QuadNode]]:
 
     """

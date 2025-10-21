@@ -298,7 +298,7 @@ class QuadTree():
 
         out = []
         for child in quad.children:
-            out.extend(self.__search_leaves__(child, depth=depth+1, max_depth=max_depth))
+            out.extend(self.__search_leaves__(child, depth=depth+1))
 
         return out
 

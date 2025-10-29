@@ -1,4 +1,4 @@
-# Larp: Last-Mile Restrictive Planning
+# Larp: Last-Mile Route Planning
 
 A fast, flexible Python toolkit for autonomous navigation planning optimized for dynamic environments and complex spatial constraints.
 
@@ -14,22 +14,20 @@ Although originally developed for Unmanned Aerial Vehicles (UAVs) in urban air m
 
 ### 🚀 Key Features
 
-- **Restrictive Potential Fields**  
+- **Repulsive Artificial Potential Fields**  
   Models obstacles and constraints using artificial repulsive fields that guide navigation using non-binary influence.
 
 - **Multi-Scale Cell Decomposition**  
   Hierarchical spatial partitioning enables fast lookups and efficient field evaluations.
 
 - **Path Planning**  
-  Supports potential fields with spatial decomposition for rapid, constraint-aware path planning.
+  Supports potential fields with spatial decomposition for rapid, constraint-aware global path planning.
 
 - **Trajectory Generation**  
-  Includes dynamics-aware MPC and iLQR-based trajectory generation that respects repulsive field constraints.
+  Includes dynamics-aware MPC and iLQR-based trajectory planner that respects repulsive field constraints.
 
 - **Flexible Application Domains**  
   Applicable to UAVs, autonomous ground vehicles, mobile robots, and more.
-
-![Route Graph](https://github.com/wzjoriv/Larp/blob/main/docs/imgs/route_graph.png?raw=true)
 
 ---
 
@@ -65,7 +63,7 @@ Explore Larp’s capabilities through interactive Jupyter Notebook demos:
 
 ## 📚 Citation
 
-If you use Larp in your work, please cite the following:
+If you use Larp in your work, please cite the following works:
 
 ```bibtex
 @article{rivera2024multi,

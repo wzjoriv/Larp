@@ -1,5 +1,5 @@
 
-from typing import List, Tuple, Union
+from typing import Any, List, Tuple, Union
 import numpy as np
 from larp.types import Point
 from pyproj import CRS, Transformer
@@ -11,7 +11,10 @@ Tfrom_crs = lru_cache(Transformer.from_crs)
 Author: Josue N Rivera
 """
 
-def route_distance(route:Union[np.ndarray, List[Point]], return_joints = False) -> Union[float, Tuple[float, np.ndarray]]:
+def bmatvec(matrix:np.ndarray, vector:np.ndarray) -> Any:
+    return np.einsum('bnm,bm->bn', matrix, vector)
+
+def route_distance(route:Union[np.ndarray, List[Point]], return_joints = False) -> Union[float|np.float64, Tuple[float, np.ndarray]]:
     """
     Return distance of a path defined by a list of continuous points
     """
@@ -46,7 +49,14 @@ def interpolate_along_route(route:Union[List[Point], np.ndarray], step=1e-3, n=0
     Return a set of equally spaced points along a route
     """
     route = np.array(route)
-    total_dist, joints_dist = route_distance(route, return_joints=True)
+
+    route_dist_result = route_distance(route, return_joints=True)
+    if isinstance(route_dist_result, tuple):
+        total_dist, joints_dist = route_dist_result
+    else:
+        total_dist = route_dist_result
+        joints_dist = np.array([total_dist])
+
     if n <= 0:
         offset = np.arange(0.0, total_dist, step)
         n = len(offset)

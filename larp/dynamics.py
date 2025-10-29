@@ -4,6 +4,8 @@ import numpy as np
 from scipy.linalg import expm
 from itertools import chain
 
+from larp.fn import bmatvec
+
 """
 Author: Josue N Rivera
 """
@@ -71,10 +73,10 @@ class Dynamics(ABC):
     """
 
     def __init__(self, 
-                 constants:Optional[Dict] = None,
                  state_derivative_orders:List[int] = [1],
                  control_derivative_orders:List[int] = [0],
-                 holonomic:bool = False) -> None:
+                 constants:Optional[Dict] = None,
+                 holonomic:Optional[bool] = None) -> None:
         
         """
         Initialize the base dynamics model.
@@ -91,8 +93,8 @@ class Dynamics(ABC):
             Derivative orders for each primitive control. Most time it would be 0.
         """
 
-        self.constants = constants
-        self.holonomic = holonomic
+        self.constants = {} if constants is None else constants 
+        self.holonomic = False if holonomic is None else holonomic
 
         # Maximum derivitive order for each primitive state needed to represent the system's state vector (same for control)
         
@@ -114,7 +116,7 @@ class Dynamics(ABC):
 
         self.first_order_state_n, self.first_order_control_n = (sum(state_derivative_orders) + self.primitive_state_n, sum(control_derivative_orders) + self.primitive_control_n)
     
-    def split_first(self, first: np.ndarray) -> Tuple[np.ndarray]:
+    def split_first(self, first: np.ndarray) -> List[np.ndarray]:
         """
         Splits the concatenated first-order vector into primitive segments.
 
@@ -128,7 +130,7 @@ class Dynamics(ABC):
         tuple of np.ndarray
             Tuple of shape (batch_size, 1) per primitive component.
         """
-        return tuple([first[:, i:i+1] for i in range(first.shape[1])])
+        return [first[:, i:i+1] for i in range(first.shape[1])]
 
     def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
         """
@@ -201,7 +203,7 @@ class Dynamics(ABC):
 
     def discretize(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate=True) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Discretizes the linearized system at point (x0, u0) using zero-order hold (ZOH)
+        Discretizes the linearized system at point (x0, u0) using zero-order hold (ZOH).
 
         .. math::
 
@@ -220,18 +222,18 @@ class Dynamics(ABC):
             Time step for discretization
 
         estimate : bool
-            Whether to estimate discretization
+            If True, uses first-order Euler approximation instead of matrix exponential.
 
         Returns
         -------
-        f : np.ndarray
-            Time derivative of the state.
-            
         Ad : np.ndarray
-            Discrete-time state matrix
+            Discrete-time state matrix, shape (batch_size, state_dim, state_dim)
 
         Bd : np.ndarray
-            Discrete-time control matrix
+            Discrete-time control matrix, shape (batch_size, state_dim, control_dim)
+
+        fd : np.ndarray
+            Discretized dynamics offset, shape (batch_size, state_dim)
         """
         state_dim = self.first_order_state_n
 
@@ -240,22 +242,28 @@ class Dynamics(ABC):
         if estimate:
             Ad = np.eye(state_dim) + A*dt
             Bd = B*dt
+            fd = (f - bmatvec(A, x0) - bmatvec(B, u0))*dt
 
         else:
             batch_size = x0.shape[0]
             control_dim = self.first_order_control_n
 
-            M = np.zeros((batch_size, state_dim + control_dim, state_dim + control_dim))
+            M = np.zeros((batch_size, state_dim + control_dim + 1, state_dim + control_dim + 1))
             M[:, :state_dim, :state_dim] = A
-            M[:, :state_dim, state_dim:] = B
+            M[:, :state_dim, state_dim:state_dim+control_dim] = B
+            M[:, :state_dim, state_dim+control_dim:] = f[..., None]
 
             AdBd = expm(dt * M)[:, :state_dim, :]
-            Ad, Bd = AdBd[:, :, :state_dim], AdBd[:, :, state_dim:]
+            Ad, Bd = AdBd[:, :, :state_dim], AdBd[:, :, state_dim:state_dim+control_dim]
+            c = AdBd[:, :, state_dim+control_dim:]
+            c = np.squeeze(c, axis=-1)
 
-        return Ad, Bd, f*dt
+            fd = c - bmatvec(Ad, x0) - bmatvec(Bd, u0) + x0
+
+        return Ad, Bd, fd
 
     def first_state_names(self) -> List[str]:
-        """
+        r"""
         Returns symbolic names for each component of the first-order state vector.
 
         Returns
@@ -267,7 +275,7 @@ class Dynamics(ABC):
         return [f'x_{{{o_idx}}}^{{[{i}]}}' for o_idx in range(len(orders)) for i in range(orders[o_idx]+1)]
 
     def first_control_names(self) -> List[str]:
-        """
+        r"""
         Returns symbolic names for each component of the first-order control vector.
 
         Returns
@@ -276,7 +284,7 @@ class Dynamics(ABC):
             Labels such as `u_0^{[0]}`, `u_0^{[1]}`, etc.
         """
         orders = self.control_derivative_orders
-        return [f'u_{{{o_idx}}}^{{[{i}]}}' for o_idx in range(len(orders)) for i in range(orders[o_idx]+1)]
+        return [rf'u_{{{o_idx}}}^{{[{i}]}}' for o_idx in range(len(orders)) for i in range(orders[o_idx]+1)]
 
     def first_names(self) -> Tuple[List[str], List[str]]:
         """
@@ -288,6 +296,50 @@ class Dynamics(ABC):
             Tuple of lists (state_names, control_names)
         """
         return self.first_state_names(), self.first_control_names()
+    
+    def __repr__(self, verbose: bool = False) -> str:
+        """
+        Return a string representation of the Dynamics object.
+
+        Provides either a concise single-line summary or a verbose detailed
+        summary including derivative orders, symbolic names, and constants.
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            If True, returns a detailed multi-line description including 
+            derivative orders, symbolic state/control names, and constants. 
+            Default is False (concise single-line summary).
+
+        Returns
+        -------
+        str
+            String representation of the Dynamics instance, formatted for
+            easy inspection in notebooks or console output.
+        """
+
+        cls_name = self.__class__.__name__
+        state_names, control_names = self.first_names()
+        
+        if verbose:
+            return (
+                f"<{cls_name}>\n"
+                f"Primitive states: {self.primitive_state_n}, Primitive controls: {self.primitive_control_n}\n"
+                f"First-order state size: {self.first_order_state_n}, First-order control size: {self.first_order_control_n}\n"
+                f"State derivative orders: {self.state_derivative_orders.tolist()}\n"
+                f"Control derivative orders: {self.control_derivative_orders.tolist()}\n"
+                f"State names: {state_names}\n"
+                f"Control names: {control_names}\n"
+                f"Holonomic: {self.holonomic}\n"
+                f"Constants: {self.constants}\n"
+            )
+        else:
+            return (
+                f"<{cls_name} | "
+                f"Primitive states={self.primitive_state_n}, primitive_controls={self.primitive_control_n}, "
+                f"First order state names={state_names}, first order control names={control_names}, "
+                f"holonomic={self.holonomic}>"
+            )
     
 class WMRDynamics(Dynamics):
     """
@@ -338,14 +390,14 @@ class WMRDynamics(Dynamics):
         """
 
         constants = {
-            'wheels distance': wheels_distance
+            'wheels_distance': wheels_distance
         }
 
         super().__init__(constants=constants,
                          state_derivative_orders=[0, 0, 0],   # x, y, theta
                          control_derivative_orders=[0, 0])    # v, omega
 
-        self.wd = self.constants['wheels distance']
+        self.wd = self.constants['wheels_distance']
 
     def extract_wheel_speed(self, first_order_control: np.ndarray) -> np.ndarray:
         """

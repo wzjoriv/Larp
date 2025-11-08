@@ -16,7 +16,7 @@ class Solver:
 
     def __init__(self, field:PotentialField,
                  dynamics:Dynamics,
-                 dt: float = 0.01,
+                 dt: float = 0.1,
                  horizon: TrajHorizon = 50,
                  control_horizon:Optional[int] = None,
                  Q=None, R=None,

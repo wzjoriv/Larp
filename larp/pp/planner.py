@@ -4,6 +4,7 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
 from larp.field import PotentialField
+from larp.fn import interpolate_along_route
 from larp.pp.network import QuadNetwork
 
 from larp.quad import QuadNode, QuadTree
@@ -228,6 +229,12 @@ class Planner():
         """
 
         raise NotImplementedError
+    
+    @classmethod
+    def get_reference_path(self, path:List[Point] | np.ndarray, pace:float=1.0, dt=0.1) -> np.ndarray:
+
+        return interpolate_along_route(route=path,
+                                       step=pace*dt)
 
 class FieldPlanner(Planner):
 
@@ -304,7 +311,7 @@ class QuadPlanner(Planner):
         """
         self.memory.clear()
 
-    def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, smooth_path = True, **kargs) -> Optional[Union[List[Point], np.ndarray]]:
+    def find_path(self, start_point:Point, end_point:Point, refresh_network = True, reset_memory = False, smooth_path = True, **kargs) -> Optional[List[Point] | np.ndarray]:
         """
         Executes the selected path planning algorithm from start to goal.
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from abc import ABC
 from collections.abc import Iterable
 from typing import List, Optional, Tuple, Union
 import warnings
@@ -14,7 +15,7 @@ x are assumed to be a list of point coordinates in euclidean space
 
 """
 
-class RGJGeometry():
+class RGJGeometry(ABC):
 
     RGJType = None
 
@@ -122,7 +123,9 @@ class RGJGeometry():
 
         return f"{self.__class__.__name__}(coordinates={ndnumpy_to_str(self.coordinates)} repulsion={ndnumpy_to_str(self.repulsion)})"
 
-class MultiRGJGeometry(RGJGeometry):
+class MultiRGJGeometry(RGJGeometry, ABC):
+    
+    RGJType = None
 
     def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
         raise NotImplementedError
@@ -474,6 +477,423 @@ class GeometryCollectionRGJ(MultiRGJGeometry):
             "geometry": {
                 "type": self.RGJType,
                 "geometries": [rgj.toRGeoJSON()["geometry"] for rgj in self.rgjs]
+            }
+        }
+
+class PolygonRGJ(RGJGeometry):
+    RGJType = "Polygon"
+    ON_EDGE_EPS = 1e-9
+
+    def __init__(
+        self,
+        coordinates: Union[np.ndarray, List[Union[List, tuple]]],
+        repulsion: Optional[np.ndarray] = None,
+        properties: Optional[dict] = None,
+        optional_dim: int = 2,
+        **kwargs
+    ) -> None:
+        """
+        Highly optimized Polygon RGJ.
+
+        coordinates may be:
+          - single ring: [(x,y), (x,y), ...]  or np.array([[x,y],...])
+          - list of rings: [outer_ring, hole1, hole2, ...]
+        """
+        # ---------- normalize input to list of rings ----------
+        if isinstance(coordinates, np.ndarray):
+            if coordinates.ndim == 2 and coordinates.shape[1] == 2:
+                rings = [coordinates.astype(float)]
+            else:
+                rings = [np.asarray(r, float) for r in coordinates]
+        elif isinstance(coordinates, (list, tuple)):
+            # detect single flat ring vs list-of-rings
+            if len(coordinates) > 0 and isinstance(coordinates[0], (int, float, np.floating)):
+                # flat sequence of coords => single ring
+                rings = [np.asarray(coordinates, float).reshape(-1, 2)]
+            elif len(coordinates) > 0 and isinstance(coordinates[0], (list, tuple, np.ndarray)) and \
+                 np.shape(coordinates)[-1] == 2 and isinstance(coordinates[0][0], (int, float, np.floating)):
+                # also handle list-of-tuples like [(x,y),(x,y),...]
+                rings = [np.asarray(coordinates, float).reshape(-1, 2)]
+            else:
+                # nested rings
+                rings = [np.asarray(r, float).reshape(-1, 2) for r in coordinates]
+        else:
+            raise TypeError("Coordinates must be ndarray or (list/tuple) of coordinates or rings.")
+
+        # ensure each ring is closed
+        self.rings: List[np.ndarray] = []
+        for r in rings:
+            if r.ndim != 2 or r.shape[1] != 2:
+                r = r.reshape(-1, 2)
+            if r.size > 0 and not np.allclose(r[0], r[-1]):
+                r = np.vstack([r, r[0]])
+            self.rings.append(r.astype(float))
+
+        # ---------- build segment arrays (concatenate all rings' segments) ----------
+        segments = []
+        self.ring_segment_counts = []
+        for r in self.rings:
+            if r.shape[0] >= 2:
+                segs = np.stack([r[:-1], r[1:]], axis=1)  # (num_segments, 2, 2)
+                segments.append(segs)
+                self.ring_segment_counts.append(segs.shape[0])
+            else:
+                self.ring_segment_counts.append(0)
+
+        self.points_in_line_pair = np.concatenate(segments, axis=0) if segments else np.zeros((0, 2, 2))
+
+        # ---------- cached per-segment arrays ----------
+        if self.points_in_line_pair.size:
+            self._p1 = self.points_in_line_pair[:, 0]      # (S,2)
+            self._p2 = self.points_in_line_pair[:, 1]      # (S,2)
+            self._v  = self._p2 - self._p1                 # (S,2)
+            self._v_dot_v = (self._v * self._v).sum(axis=1)  # (S,)
+            # avoid strict zero denom
+            self._denom = np.where(self._v_dot_v <= 0, 1.0, self._v_dot_v)
+            self._S = self._p1.shape[0]
+        else:
+            self._p1 = np.zeros((0,2))
+            self._p2 = np.zeros((0,2))
+            self._v = np.zeros((0,2))
+            self._v_dot_v = np.zeros((0,))
+            self._denom = np.zeros((0,))
+            self._S = 0
+
+        # ---------- base class attributes ----------
+        self.coordinates = np.array([r.tolist() for r in self.rings], dtype=object)
+        self.repulsion = np.eye(optional_dim) if repulsion is None else np.array(repulsion)
+        self.inv_repulsion = np.linalg.inv(self.repulsion)
+        self.eye_repulsion = np.eye(len(self.repulsion))
+        self.properties = {} if properties is None else properties
+        self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
+
+        # metric cache (anisotropic distance matrix M)
+        self.metric = self.get_dist_matrix(scaled=True, inverted=True)
+
+        # ---------- bbox across all rings ----------
+        all_pts = np.vstack(self.rings) if self.rings else np.zeros((0,2))
+        self.bbox = np.array([all_pts.min(axis=0), all_pts.max(axis=0)]) if all_pts.size else np.array([[0.0,0.0],[0.0,0.0]])
+
+    def set_coordinates(self, new_coords):
+        # Rebuild everything by reinitializing with same repulsion/properties
+        self.__init__(coordinates=new_coords, repulsion=self.repulsion, properties=self.properties)
+
+    def set_repulsion(self, new_repulsion):
+        super().set_repulsion(new_repulsion)
+        # update cached metric
+        self.metric = self.get_dist_matrix(scaled=True, inverted=True)
+        self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
+
+    # ---------------- vectorized helpers ----------------
+
+    def _points_on_segments_vectorized(self, pts: np.ndarray, eps: float = ON_EDGE_EPS) -> np.ndarray:
+        """
+        Vectorized check whether each point is exactly on any segment.
+        Returns boolean array shape (N,) True if on boundary.
+        """
+        if self._S == 0:
+            return np.zeros(pts.shape[0], dtype=bool)
+
+        # pts (N,2), _p1 (S,2), _v (S,2)
+        w = pts[:, None, :] - self._p1[None, :, :]    # (N,S,2)
+        cross = self._v[None, :, 0] * w[..., 1] - self._v[None, :, 1] * w[..., 0]  # (N,S)
+        cross_ok = np.abs(cross) <= eps
+
+        dot = (w * self._v[None, :, :]).sum(axis=2)   # (N,S)
+        dot_ok = (dot >= -eps) & (dot <= self._v_dot_v[None, :] + eps)
+
+        on_seg = cross_ok & dot_ok
+        return on_seg.any(axis=1)
+
+    def _ray_cast_ring_vectorized(self, pts: np.ndarray, ring: np.ndarray) -> np.ndarray:
+        """
+        Vectorized even-odd ray cast for a single ring.
+        pts: (N,2), ring: (R,2) closed (first==last)
+        returns boolean array (N,) True if point inside ring (ignoring on-edge cases)
+        """
+        if ring.shape[0] < 2:
+            return np.zeros(pts.shape[0], dtype=bool)
+
+        xi = ring[:-1, 0]  # (E,)
+        yi = ring[:-1, 1]
+        xj = ring[1:, 0]
+        yj = ring[1:, 1]
+
+        x = pts[:, 0][:, None]  # (N,1)
+        y = pts[:, 1][:, None]  # (N,1)
+
+        # edge crossing predicate
+        cond_y = ((yi > y) != (yj > y))              # (N,E) via broadcasting
+        # compute x coordinate of intersection point of edge with horizontal ray
+        # avoid division by zero: (yj - yi) may be zero but then cond_y is False
+        x_inter = (xj - xi)[None, :] * (y - yi[None, :]) / (yj - yi)[None, :] + xi[None, :]
+        cond_x = x < x_inter
+        intersects = cond_y & cond_x
+        # Even-odd rule: count intersections mod 2
+        inside = intersects.sum(axis=1) % 2 == 1
+        return inside
+
+    def _point_in_polygon_vectorized(self, pts: np.ndarray) -> np.ndarray:
+        """
+        Vectorized inside check including holes and on-edge -> True.
+        """
+        n = pts.shape[0]
+        if len(self.rings) == 0:
+            return np.zeros(n, dtype=bool)
+
+        # bbox fast rejection
+        outside_bbox = np.any((pts < self.bbox[0]) | (pts > self.bbox[1]), axis=1)
+        inside = np.zeros(n, dtype=bool)
+
+        # On-edge detection across all segments
+        on_edge = self._points_on_segments_vectorized(pts, eps=self.ON_EDGE_EPS)
+        inside[on_edge] = True
+
+        # For points that are not on-edge and inside bbox, do ray cast
+        candidates_idx = np.where(~inside & ~outside_bbox)[0]
+        if candidates_idx.size == 0:
+            return inside
+
+        cand_pts = pts[candidates_idx]
+
+        # outer ring test
+        outer = self.rings[0]
+        outer_inside = self._ray_cast_ring_vectorized(cand_pts, outer)
+
+        # holes: if any hole contains point -> it's outside
+        if len(self.rings) > 1:
+            hole_contains = np.zeros(cand_pts.shape[0], dtype=bool)
+            for hole in self.rings[1:]:
+                hole_inside = self._ray_cast_ring_vectorized(cand_pts, hole)
+                hole_contains |= hole_inside
+            final = outer_inside & (~hole_contains)
+        else:
+            final = outer_inside
+
+        inside[candidates_idx] = final
+        return inside
+
+    # ---------------- main API ----------------
+
+    def repulsion_vector(self, x: np.ndarray, min_dist_select: bool = True, **kwargs) -> np.ndarray:
+        """
+        Vectorized and optimized repulsion vector:
+         - inside points -> zero vector
+         - outside points -> vector from closest point on boundary to x
+        """
+        x = np.atleast_2d(x).astype(float)
+        N = x.shape[0]
+
+        if self._S == 0:
+            return np.zeros((N, 2), dtype=float)
+
+        # compute inside flags
+        inside = self._point_in_polygon_vectorized(x)
+
+        # if all inside -> zeros
+        if inside.all():
+            return np.zeros((N, 2), dtype=float)
+
+        # indices of outside points (need repulsion)
+        outside_idx = np.where(~inside)[0]
+        xo = x[outside_idx]                       # (K,2)
+        K = xo.shape[0]
+
+        # broadcasted vectors for projection:
+        # w = xo[:, None, :] - p1[None, :, :]  => shape (K, S, 2)
+        w = xo[:, None, :] - self._p1[None, :, :]
+
+        # projection scalar t: (K,S) = sum(w * v) / denom
+        # einsum 'kmi,mi->km'
+        t = np.einsum("kmi,mi->km", w, self._v) / self._denom
+        t = np.clip(t, 0.0, 1.0)
+
+        # closest points on each segment: proj = p1 + t[...,None] * v
+        proj = self._p1[None, :, :] + t[..., None] * self._v[None, :, :]
+        diff = xo[:, None, :] - proj  # (K,S,2)
+
+        # metric distance squared with precomputed metric M:
+        # dist2[k,s] = diff[k,s] @ M @ diff[k,s].T
+        # single einsum pass:
+        dist2 = np.einsum("kmi,ij,kmj->km", diff, self.metric, diff)  # (K,S)
+
+        # choose nearest segment per point
+        idx_min = np.argmin(dist2, axis=1)               # (K,)
+        chosen = diff[np.arange(K), idx_min]             # (K,2)
+
+        # prepare result and write chosen vectors back
+        out = np.zeros((N, 2), dtype=float)
+        out[outside_idx] = chosen
+        return out
+
+    # ---------------- misc ----------------
+
+    def in_bbox(self, x: np.ndarray) -> bool:
+        x = np.asarray(x)
+        return np.all(x >= self.bbox[0]) and np.all(x <= self.bbox[1])
+
+    def toRGeoJSON(self) -> RGeoJSONObject:
+        return {
+            "type": "Feature",
+            "properties": self.properties,
+            "geometry": {
+                "type": self.RGJType,
+                "coordinates": [r.tolist() for r in self.rings],
+                "repulsion": self.repulsion.tolist(),
+            },
+        }
+    
+class MultiPolygonRGJ(MultiRGJGeometry):
+    RGJType = "MultiPolygon"
+    ON_EDGE_EPS = 1e-9
+
+    def __init__(
+        self,
+        coordinates: List[Union[np.ndarray, list]],
+        repulsion: Optional[np.ndarray] = None,
+        properties: Optional[dict] = None,
+        optional_dim: int = 2,
+        **kwargs
+    ):
+        """
+        MultiPolygon RGJ.
+        coordinates: list of polygons, where each polygon is either
+            - a single ring: [(x,y),...]
+            - list of rings: [outer_ring, hole1, ...]
+        """
+        # Store polygons as PolygonRGJ objects
+        self.polygons: List[PolygonRGJ] = [
+            PolygonRGJ(poly_coords, repulsion=repulsion,
+                       properties=properties, optional_dim=optional_dim)
+            for poly_coords in coordinates
+        ]
+
+        # Repulsion and matrices
+        self.repulsion = np.eye(optional_dim) if repulsion is None else np.array(repulsion)
+        self.inv_repulsion = np.linalg.inv(self.repulsion)
+        self.eye_repulsion = np.eye(len(self.repulsion))
+        self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
+
+        # Pre-collect all segments
+        all_segments = []
+        self.poly_segment_ranges = []   # (start,end) per polygon
+
+        cursor = 0
+        for poly in self.polygons:
+            S = poly._S
+            if S > 0:
+                all_segments.append(poly.points_in_line_pair)
+                self.poly_segment_ranges.append((cursor, cursor + S))
+                cursor += S
+            else:
+                self.poly_segment_ranges.append((cursor, cursor))
+
+        self.points_in_line_pair = (
+            np.concatenate(all_segments, axis=0) if all_segments else np.zeros((0, 2, 2))
+        )
+
+        # Precompute segment arrays
+        if self.points_in_line_pair.size:
+            self._p1 = self.points_in_line_pair[:, 0]
+            self._p2 = self.points_in_line_pair[:, 1]
+            self._v = self._p2 - self._p1
+            self._v_dot_v = (self._v * self._v).sum(axis=1)
+            self._denom = np.where(self._v_dot_v <= 0, 1.0, self._v_dot_v)
+            self._S = len(self._p1)
+        else:
+            self._p1 = np.zeros((0, 2))
+            self._p2 = np.zeros((0, 2))
+            self._v = np.zeros((0, 2))
+            self._v_dot_v = np.zeros((0,))
+            self._denom = np.zeros((0,))
+            self._S = 0
+
+        # Compute global bbox across all polygons
+        if len(self.polygons) > 0:
+            bboxes = np.array([p.bbox for p in self.polygons]).reshape(-1, 2)
+            self.bbox = np.array([bboxes.min(0), bboxes.max(0)])
+        else:
+            self.bbox = np.array([[0, 0], [0, 0]])
+
+        self.properties = {} if properties is None else properties
+
+    def set_coordinates(self, new_coords):
+        # Reset polygons with updated geometry
+        self.__init__(
+            coordinates=new_coords,
+            repulsion=self.repulsion,
+            properties=self.properties,
+            optional_dim=len(self.repulsion),
+        )
+
+    def in_bbox(self, x: Point) -> bool:
+        return any(poly.in_bbox(x) for poly in self.polygons)
+
+    def get_center_point(self):
+        centers = np.array([p.get_center_point() for p in self.polygons])
+        return np.array([centers.min(0), centers.max(0)]).mean(0)
+
+    def __repulsion_vector_all_segments__(self, x: np.ndarray) -> np.ndarray:
+        """
+        Vectorized projection of points x onto all polygon segments.
+        Returns shape (S, N, 2).
+        """
+        if self._S == 0:
+            return np.zeros((0, len(x), 2))
+
+        X = x[None, :, :]          # (1,N,2)
+        P1 = self._p1[:, None, :]  # (S,1,2)
+        V = self._v[:, None, :]    # (S,1,2)
+        den = self._denom[:, None] # (S,1)
+
+        XP = X - P1
+        t = ((XP * V).sum(axis=2, keepdims=True)) / den[..., None]
+        t = np.clip(t, 0.0, 1.0)
+
+        proj = P1 + t * V  # (S,N,2)
+        return (x[None,:,:] - proj)
+
+    def repulsion_vector(self, x: np.ndarray, min_dist_select=True, **kwargs) -> np.ndarray:
+        x = np.atleast_2d(x)
+        N = x.shape[0]
+
+        if self._S == 0:
+            return np.zeros((N, 2))
+
+        # Compute repulsion vs all segments
+        diff = self.__repulsion_vector_all_segments__(x)  # (S,N,2)
+
+        if min_dist_select:
+            diff = diff.transpose(1, 0, 2)  # (N,S,2)
+            M = self.inv_repulsion
+            Adiff = diff @ M
+            dist = (diff * Adiff).sum(axis=2)
+            idx = dist.argmin(1)
+            return diff[np.arange(N), idx]
+
+        # Return full S×N list
+        return diff.transpose(1, 0, 2).reshape(-1, 2)
+
+    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, **kwargs):
+        v = self.repulsion_vector(x, min_dist_select=True)
+        M = self.get_dist_matrix(scaled=scaled, inverted=inverted)
+        return ((v @ M) * v).sum(axis=1)
+
+    def eval(self, x: np.ndarray):
+        return np.exp(-self.squared_dist(x))
+
+    def gradient(self, x: np.ndarray, **kwargs):
+        rep = self.repulsion_vector(x, min_dist_select=True)
+        return -self.eval(x).reshape(-1,1) * (rep @ self.grad_matrix.T)
+
+    def toRGeoJSON(self):
+        return {
+            "type": "Feature",
+            "properties": self.properties,
+            "geometry": {
+                "type": "MultiPolygon",
+                "coordinates": [poly.rings for poly in self.polygons],
+                "repulsion": self.repulsion.tolist(),
             }
         }
     

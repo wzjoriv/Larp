@@ -68,7 +68,7 @@ def __deduplicate_with_index_map__(array: List) -> Tuple[List, List[int]]:
 class QuadTree():
 
     def __init__(self, field: PotentialField,
-                 minimum_length_limit:float = 5.0,
+                 minimum_length_limit:Optional[float] = None,
                  maximum_length_limit:float = np.inf,
                  edge_bounds:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
                  size:Optional[float] = None,
@@ -76,7 +76,7 @@ class QuadTree():
                  build_tree:bool = True) -> None:
         
         self.field = field
-        self.min_sector_size = minimum_length_limit
+        self.min_sector_size = (np.min(field.size)/64.0 or 5.0) if minimum_length_limit is None else minimum_length_limit
         self.max_sector_size = maximum_length_limit
         self.size = size if size is not None else np.max(self.field.size)
 

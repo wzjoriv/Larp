@@ -72,10 +72,10 @@ class Dynamics(ABC):
         Total length of first-order control vector.
     """
 
-    def __init__(self, 
+    def __init__(self,
+                 constants:Optional[Dict] = None, 
                  state_derivative_orders:List[int] = [1],
                  control_derivative_orders:List[int] = [0],
-                 constants:Optional[Dict] = None,
                  holonomic:Optional[bool] = None) -> None:
         
         """
@@ -94,7 +94,7 @@ class Dynamics(ABC):
         """
 
         self.constants = {} if constants is None else constants 
-        self.holonomic = False if holonomic is None else holonomic
+        self.holonomic = holonomic
 
         # Maximum derivitive order for each primitive state needed to represent the system's state vector (same for control)
         
@@ -395,7 +395,8 @@ class WMRDynamics(Dynamics):
 
         super().__init__(constants=constants,
                          state_derivative_orders=[0, 0, 0],   # x, y, theta
-                         control_derivative_orders=[0, 0])    # v, omega
+                         control_derivative_orders=[0, 0],    # v, omega
+                         holonomic=False)
 
         self.wd = self.constants['wheels_distance']
 
@@ -1123,7 +1124,7 @@ class QuadcopterV2Dynamics(Dynamics):
             'motor inertia': motor_inertia
         }
 
-        super().__init__(constants,
+        super().__init__(constants=constants,
                          state_derivative_orders=[1]*6,
                          control_derivative_orders=[0]*4)
         

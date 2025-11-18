@@ -104,7 +104,7 @@ class Solver:
 
         raise NotImplementedError
     
-class MPCTrackSolver(Solver):
+class MPCSolver(Solver):
     def __init__(self, field:PotentialField, dynamics:Dynamics,
                 dt: float = 0.01,
                 horizon: int = 50,

@@ -4,13 +4,13 @@ import numpy as np
 from typing import Optional, Tuple, List, Union
 
 from larp.field import PotentialField
-from larp.tp.solver import Solver, MPCTrackSolver
+from larp.mp.solver import Solver, MPCTrackSolver
 from larp.types import Point, Trajectory
 
 """
 Author: Josue N Rivera
 
-Module providing trajectory planning algorithms. They start from a provided reference parg.
+Module providing motion planning algorithms. They start from a provided reference parg.
 """
 
 class Planner():

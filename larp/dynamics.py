@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import expm
@@ -8,31 +8,31 @@ from larp.fn import bmatvec
 
 """
 Author: Josue N Rivera
+
+Dynamics classes
 """
         
 class Dynamics(ABC):
 
-    """
+    r"""
     Base class for representing general dynamical systems with support for
-    higher-order derivatives of states and controls.
+    higher-order derivatives and batched operations.
 
-    This class assumes the system is represented in terms of its *first-order form*:
+    This class assumes the system can be represented in a *first-order form*:
 
-    .. math::
+    .. math:: \dot{x} = f(x, u)
 
-        \\dot{x} = f(x, u)
-
-    where:
-
-    - :math:`x \\in \\mathbb{R}^n` is the **state vector**
-    - :math:`u \\in \\mathbb{R}^m` is the **control vector**
-
-    For higher-order systems (e.g., involving acceleration, jerk), this class uses the notion
-    of *primitive states* and builds up the first-order representation accordingly.
+    where :math:`x \in \mathbb{R}^{n}` is the state vector and :math:`u \in \mathbb{R}^{m}`
+    is the control vector. It maps "primitive" configuration variables (order-0)
+    to flattened first-order vectors.
 
     Attributes
     ----------
-    constants : dict, optional
+    state_dim : int
+        Total dimension of the flattened first-order state vector.
+    control_dim : int
+        Total dimension of the flattened first-order control vector.
+        constants : dict, optional
         Dictionary of any physical or system constants needed for the dynamics.
 
     state_derivative_orders : list of int
@@ -70,37 +70,64 @@ class Dynamics(ABC):
 
     first_order_control_n : int
         Total length of first-order control vector.
+        
+    first_angle_state_mask : np.ndarray
+        Boolean mask of shape ``(state_dim,)``. True at indices corresponding to
+        states that require angular wrapping.
+
+    Examples
+    --------
+    >>> dyn = Dynamics(state_derivative_orders=[1, 1], holonomic=True)
+    >>> print(dyn.state_dim)
+    4
     """
 
     def __init__(self,
-                 constants:Optional[Dict] = None, 
-                 state_derivative_orders:List[int] = [1],
-                 control_derivative_orders:List[int] = [0],
-                 holonomic:Optional[bool] = None) -> None:
+                 constants: Optional[Dict] = None, 
+                 state_derivative_orders: List[int] = [1],
+                 control_derivative_orders: List[int] = [0],
+                 wrapable_primitive_state: Optional[List[int]] = None,
+                 holonomic: Optional[bool] = None) -> None:
         
-        """
+        """"
         Initialize the base dynamics model.
 
         Parameters
         ----------
         constants : dict, optional
-            Physical parameters or constants used in dynamics computations.
+            Physical parameters or constants used in the model (default: None, treated as empty dict).
 
         state_derivative_orders : list of int
-            Derivative orders for each primitive state (e.g., `[2]` → position, velocity, and acceleration are needed to represent f).
+            Highest derivative order for each primitive state dynamics function.
+            Example: [2, 1] →
+              primitive 0 → position, velocity, acceleration
+              primitive 1 → position, velocity
 
         control_derivative_orders : list of int
-            Derivative orders for each primitive control. Most time it would be 0.
+            Same structure as state_derivative_orders but for controls.
+
+        wrapable_primitive_state : list[int], optional
+            Primitive state indices that correspond to angles (or any wrapable variable).
+            These will be marked in first_order space using first_angle_state_mask.
+
+        holonomic : bool, optional
+            If True, indicates the system is holonomic; otherwise non-holonomic.
         """
 
         self.constants = {} if constants is None else constants 
         self.holonomic = holonomic
-
-        # Maximum derivitive order for each primitive state needed to represent the system's state vector (same for control)
         
+        # --- Dimensions and Orders ---
         self.state_derivative_orders = np.array(state_derivative_orders, dtype=int)
         self.control_derivative_orders = np.array(control_derivative_orders, dtype=int)
         
+        self.primitive_state_n = len(state_derivative_orders)
+        self.primitive_control_n = len(control_derivative_orders)
+
+        self.state_block_sizes = self.state_derivative_orders + 1
+        self.control_block_sizes = self.control_derivative_orders + 1
+        
+        # --- Masks and Indices ---
         # Privitive state devitive order for each system state
         self.first_state_orders = np.concatenate([np.arange(i+1, dtype=int) for i in self.state_derivative_orders])
         self.first_control_orders = np.concatenate([np.arange(i+1, dtype=int) for i in self.control_derivative_orders])
@@ -111,6 +138,13 @@ class Dynamics(ABC):
         
         self.state_primitive_mask = np.array(list(chain(*[[True]+[False]*i for i in state_derivative_orders])), dtype=bool).reshape(-1)
         self.control_primitive_mask = np.array(list(chain(*[[True]+[False]*i for i in control_derivative_orders])), dtype=bool).reshape(-1)
+
+        self.first_angle_state_mask = np.zeros_like(self.state_primitive_mask)
+        if wrapable_primitive_state and len(wrapable_primitive_state):
+
+            # wrappable_primitve_state_in_first_order_mask
+            # self.first_angle_state_mask[wrappable_primitve_state_in_first_order_mask] = True
+            pass
 
         self.primitive_state_n, self.primitive_control_n = (len(state_derivative_orders), len(control_derivative_orders))
 
@@ -132,6 +166,7 @@ class Dynamics(ABC):
         """
         return [first[:, i:i+1] for i in range(first.shape[1])]
 
+    @abstractmethod
     def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
         """
         Defines the time derivative of the state: \\( \\dot{x} = f(x, u) \\)
@@ -151,6 +186,7 @@ class Dynamics(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
     def dfdx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
         """
         Jacobian of \\( f(x, u) \\) with respect to \\( x \\)
@@ -162,6 +198,7 @@ class Dynamics(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
     def dfdu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
         """
         Jacobian of \\( f(x, u) \\) with respect to \\( u \\)
@@ -262,6 +299,7 @@ class Dynamics(ABC):
 
         return Ad, Bd, fd
 
+    @property
     def first_state_names(self) -> List[str]:
         r"""
         Returns symbolic names for each component of the first-order state vector.
@@ -274,6 +312,7 @@ class Dynamics(ABC):
         orders = self.state_derivative_orders
         return [f'x_{{{o_idx}}}^{{[{i}]}}' for o_idx in range(len(orders)) for i in range(orders[o_idx]+1)]
 
+    @property
     def first_control_names(self) -> List[str]:
         r"""
         Returns symbolic names for each component of the first-order control vector.
@@ -286,6 +325,7 @@ class Dynamics(ABC):
         orders = self.control_derivative_orders
         return [rf'u_{{{o_idx}}}^{{[{i}]}}' for o_idx in range(len(orders)) for i in range(orders[o_idx]+1)]
 
+    @property
     def first_names(self) -> Tuple[List[str], List[str]]:
         """
         Returns symbolic names for both state and control vectors.

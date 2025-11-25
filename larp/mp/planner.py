@@ -42,9 +42,9 @@ class Planner():
         self.reset_path()
 
     def reset_waypoint(self):
-        self.way_idx = 1
+        self.way_idx = 0
 
-    def reset_path(self, path:Union[List[Point], np.ndarray]):
+    def update_path(self, path:Union[List[Point], np.ndarray]):
         self.path = path
         self.reset_waypoint()
 

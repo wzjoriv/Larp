@@ -606,13 +606,9 @@ class PolygonRGJ(RGJGeometry):
         return on_seg.any(axis=1)
 
     def _ray_cast_ring_vectorized(self, pts: np.ndarray, ring: np.ndarray) -> np.ndarray:
-        """
-        Vectorized even-odd ray cast for a single ring.
-        pts: (N,2), ring: (R,2) closed (first==last)
-        returns boolean array (N,) True if point inside ring (ignoring on-edge cases)
-        """
+        N = pts.shape[0]
         if ring.shape[0] < 2:
-            return np.zeros(pts.shape[0], dtype=bool)
+            return np.zeros(N, dtype=bool)
 
         xi = ring[:-1, 0]  # (E,)
         yi = ring[:-1, 1]
@@ -622,15 +618,30 @@ class PolygonRGJ(RGJGeometry):
         x = pts[:, 0][:, None]  # (N,1)
         y = pts[:, 1][:, None]  # (N,1)
 
-        # edge crossing predicate
-        cond_y = ((yi > y) != (yj > y))              # (N,E) via broadcasting
-        # compute x coordinate of intersection point of edge with horizontal ray
-        # avoid division by zero: (yj - yi) may be zero but then cond_y is False
-        x_inter = (xj - xi)[None, :] * (y - yi[None, :]) / (yj - yi)[None, :] + xi[None, :]
+        # For each edge, compute dy and dx
+        dy = (yj - yi)[None, :]  # shape (1, E)
+        dx = (xj - xi)[None, :]
+
+        # Condition: ray crosses vertical span, and edge is not horizontal (dy != 0)
+        cond_y = ((yi > y) != (yj > y))  # shape (N, E)
+        non_horiz = (dy != 0)[0, :]      # shape (E,)
+
+        # Combined mask
+        mask = cond_y & non_horiz[None, :]
+
+        if not mask.any():
+            return np.zeros(N, dtype=bool)
+
+        # Safe compute t = (y - yi) / dy only where mask is True
+        # Use np.divide with where=mask to avoid division by zero
+        t = np.zeros_like(mask, dtype=float)
+        np.divide((y - yi[None, :]), dy, out=t, where=mask)
+
+        x_inter = xi[None, :] + t * dx  # (N, E)
         cond_x = x < x_inter
-        intersects = cond_y & cond_x
-        # Even-odd rule: count intersections mod 2
-        inside = intersects.sum(axis=1) % 2 == 1
+
+        intersects = mask & cond_x
+        inside = (intersects.sum(axis=1) % 2) == 1
         return inside
 
     def _point_in_polygon_vectorized(self, pts: np.ndarray) -> np.ndarray:

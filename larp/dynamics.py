@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+import importlib.util
+import inspect
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import expm
@@ -25,6 +27,27 @@ class Dynamics(ABC):
     where :math:`x \in \mathbb{R}^{n}` is the state vector and :math:`u \in \mathbb{R}^{m}`
     is the control vector. It maps "primitive" configuration variables (order-0)
     to flattened first-order vectors.
+
+    Parameters
+    ----------
+    constants : dict, optional
+        Physical parameters or constants used in the model (default: None, treated as empty dict).
+
+    state_derivative_orders : list of int
+        Highest derivative order for each primitive state dynamics function.
+        Example: [2, 1] →
+            primitive 0 → position, velocity, acceleration
+            primitive 1 → position, velocity
+
+    control_derivative_orders : list of int
+        Same structure as state_derivative_orders but for controls.
+
+    wrapable_primitive_state : list[int], optional
+        Primitive state indices that correspond to angles (or any wrapable variable).
+        These will be marked in first_order space using first_angle_state_mask.
+
+    holonomic : bool, optional
+        If True, indicates the system is holonomic; otherwise non-holonomic.
 
     Attributes
     ----------
@@ -88,31 +111,6 @@ class Dynamics(ABC):
                  control_derivative_orders: List[int] = [0],
                  wrapable_primitive_state: Optional[List[int]] = None,
                  holonomic: Optional[bool] = None) -> None:
-        
-        """"
-        Initialize the base dynamics model.
-
-        Parameters
-        ----------
-        constants : dict, optional
-            Physical parameters or constants used in the model (default: None, treated as empty dict).
-
-        state_derivative_orders : list of int
-            Highest derivative order for each primitive state dynamics function.
-            Example: [2, 1] →
-              primitive 0 → position, velocity, acceleration
-              primitive 1 → position, velocity
-
-        control_derivative_orders : list of int
-            Same structure as state_derivative_orders but for controls.
-
-        wrapable_primitive_state : list[int], optional
-            Primitive state indices that correspond to angles (or any wrapable variable).
-            These will be marked in first_order space using first_angle_state_mask.
-
-        holonomic : bool, optional
-            If True, indicates the system is holonomic; otherwise non-holonomic.
-        """
 
         self.constants = {} if constants is None else constants 
         self.holonomic = holonomic
@@ -126,6 +124,9 @@ class Dynamics(ABC):
 
         self.state_block_sizes = self.state_derivative_orders + 1
         self.control_block_sizes = self.control_derivative_orders + 1
+
+        self.first_order_state_n = int(np.sum(self.state_block_sizes))
+        self.first_order_control_n = int(np.sum(self.control_block_sizes))
         
         # --- Masks and Indices ---
         # Privitive state devitive order for each system state
@@ -139,16 +140,54 @@ class Dynamics(ABC):
         self.state_primitive_mask = np.array(list(chain(*[[True]+[False]*i for i in state_derivative_orders])), dtype=bool).reshape(-1)
         self.control_primitive_mask = np.array(list(chain(*[[True]+[False]*i for i in control_derivative_orders])), dtype=bool).reshape(-1)
 
-        self.first_angle_state_mask = np.zeros_like(self.state_primitive_mask)
-        if wrapable_primitive_state and len(wrapable_primitive_state):
+        self.primitive_to_first_map = np.cumsum(
+            np.concatenate(([0], self.state_derivative_orders[:-1] + 1))
+        )
+        
+        self.first_wrapped_state_mask = np.zeros(self.first_order_state_n, dtype=bool)
+        if wrapable_primitive_state:
+            self.first_wrapped_state_mask[self.primitive_to_first_map[wrapable_primitive_state]] = True
 
-            # wrappable_primitve_state_in_first_order_mask
-            # self.first_angle_state_mask[wrappable_primitve_state_in_first_order_mask] = True
-            pass
+        # --- Auto-JAX Jacobians ---
+        self.dfdx_jax = None
+        self.dfdu_jax = None
 
-        self.primitive_state_n, self.primitive_control_n = (len(state_derivative_orders), len(control_derivative_orders))
+        # can it autodiff
+        if "np" in inspect.signature(self.f).parameters and importlib.util.find_spec("jax") is not None:
 
-        self.first_order_state_n, self.first_order_control_n = (sum(state_derivative_orders) + self.primitive_state_n, sum(control_derivative_orders) + self.primitive_control_n)
+            try:
+                self.dfdx(np.zeros((10, self.first_order_state_n)), np.zeros((10, self.first_order_control_n)))
+            except NotImplementedError:
+                try:
+                    import jax.numpy as jnp
+                    from jax import jacfwd, jit, vmap
+
+                    def f_jax(x, u):
+                        return self.f(x[None], u[None], np=jnp)[0]
+
+                    dfdx_single = jacfwd(f_jax, argnums=0)
+                    temp_dfdx_jax = jit(vmap(dfdx_single, in_axes=(0, 0)))
+                    self.dfdx_jax = temp_dfdx_jax
+
+                except Exception:
+                    print("Error")
+
+            try:
+                self.dfdu(np.zeros((10, self.first_order_state_n)), np.zeros((10, self.first_order_control_n)))
+            except NotImplementedError:
+                try:
+                    import jax.numpy as jnp
+                    from jax import jacfwd, jit, vmap
+
+                    def f_jax(x, u):
+                        return self.f(x[None], u[None], np=jnp)[0]
+
+                    dfdu_single = jacfwd(f_jax, argnums=1)
+                    temp_dfdu_jax = jit(vmap(dfdu_single, in_axes=(0, 0)))
+                    self.dfdu_jax = temp_dfdu_jax
+
+                except Exception:
+                    print("Error 2")
     
     def split_first(self, first: np.ndarray) -> List[np.ndarray]:
         """
@@ -167,10 +206,35 @@ class Dynamics(ABC):
         return [first[:, i:i+1] for i in range(first.shape[1])]
 
     @abstractmethod
-    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np = np) -> np.ndarray:
         """
-        Defines the time derivative of the state: \\( \\dot{x} = f(x, u) \\)
+        Time-derivative of the first-order state vector: dot{x} = f(x, u).
 
+        Parameters
+        ----------
+        first_order_state : np.ndarray
+            Batched first-order state array with shape (batch_size, state_dim).
+
+        first_order_control : np.ndarray
+            Batched first-order control array with shape (batch_size, control_dim).
+
+        np : module, optional
+            Numerical backend to use for computations. Defaults to standard
+            NumPy. When JAX autodiff is active, the training wrapper will pass
+            `jax.numpy` here so implementations must use *only* the provided
+            `np` for numerical ops (np.sin, np.cos, np.concatenate, etc.).
+
+        Returns
+        -------
+        np.ndarray
+            Time derivative of the state.
+        """
+        raise NotImplementedError
+
+    def dfdx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+        """
+        Jacobian of \\( f(x, u) \\) with respect to \\( x \\)
+        
         Parameters
         ----------
         first_order_state : np.ndarray
@@ -182,33 +246,49 @@ class Dynamics(ABC):
         Returns
         -------
         np.ndarray
-            Time derivative of the state.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def dfdx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Jacobian of \\( f(x, u) \\) with respect to \\( x \\)
-
-        Returns
-        -------
-        np.ndarray
             Partial derivatives \\( \\frac{\\partial f}{\\partial x} \\)
         """
-        raise NotImplementedError
 
-    @abstractmethod
+        if self.dfdx_jax is not None:
+            import jax.numpy as jnp
+            x = jnp.asarray(first_order_state)
+            u = jnp.asarray(first_order_control)
+            return np.asarray(self.dfdx_jax(x, u))
+
+        raise NotImplementedError(
+            "dfdx is not implemented and JAX is not installed. "
+            "Install JAX to enable automatic Jacobians."
+        )
+
     def dfdu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
         """
         Jacobian of \\( f(x, u) \\) with respect to \\( u \\)
+        
+        Parameters
+        ----------
+        first_order_state : np.ndarray
+            First-order state vector, shape (batch_size, state_dim)
+
+        first_order_control : np.ndarray
+            First-order control vector, shape (batch_size, control_dim)
 
         Returns
         -------
         np.ndarray
             Partial derivatives \\( \\frac{\\partial f}{\\partial u} \\)
         """
-        raise NotImplementedError
+
+        if self.dfdu_jax is not None:
+            import jax.numpy as jnp
+            x = jnp.asarray(first_order_state)
+            u = jnp.asarray(first_order_control)
+            return np.asarray(self.dfdu_jax(x, u))
+
+        raise NotImplementedError(
+            "dfdu is not implemented and JAX is not installed. "
+            "Install JAX to enable automatic Jacobians."
+        )
+
 
     def linearize(self, x0: np.ndarray, u0: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -335,7 +415,7 @@ class Dynamics(ABC):
         Tuple[List[str], List[str]]
             Tuple of lists (state_names, control_names)
         """
-        return self.first_state_names(), self.first_control_names()
+        return self.first_state_names, self.first_control_names
     
     def __repr__(self, verbose: bool = False) -> str:
         """
@@ -359,7 +439,7 @@ class Dynamics(ABC):
         """
 
         cls_name = self.__class__.__name__
-        state_names, control_names = self.first_names()
+        state_names, control_names = self.first_names
         
         if verbose:
             return (
@@ -984,7 +1064,8 @@ class QuadcopterV1Dynamics(Dynamics):
 
         super().__init__(constants=constants,
                          state_derivative_orders=[1] * 3 + [0]*6,   # states
-                         control_derivative_orders=[0] * 4)  # 4 control inputs
+                         control_derivative_orders=[0] * 4, # 4 control inputs
+                         wrapable_primitive_state=[3, 4, 5])
 
         self.m = mass
         self.g = gravity

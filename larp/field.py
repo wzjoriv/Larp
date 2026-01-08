@@ -1062,14 +1062,12 @@ class PotentialField():
             self.center_point = self.__calculate_center_point__()
 
     def addField(self, new_field:PotentialField, reload_bbox = True):
-
-        """
+        r"""
         Adds all RGJs from another potential field to this field.
 
         Args:
             new_field (PotentialField): A potential field containing RGJs to add.
-            reload_bbox (bool, optional): Whether to recompute the bounding box after addition.
-                                        Defaults to True.
+            reload_bbox (bool, optional): Whether to recompute the bounding box after addition. Defaults to True.
         """
         og_reload_center = self.__reload_center
         self.__reload_center = False

@@ -8,7 +8,7 @@ A fast, flexible Python toolkit for autonomous navigation planning optimized for
 
 **Larp** (/lärp/) is a framework for autonomous navigation that leverages *repulsive artificial potential fields* to model obstacles and environmental constraints. By decomposing a complex dynamical space into a hierarchical cell structure, Larp enables efficient spatial queries, scalable path and trajectory planning across large environments, and optimized computing.
 
-See [larp/docs/demos](https://github.com/wzjoriv/Larp/blob/main/docs/demos/) for example applications, ranging from urban air mobility to wheeled robot navigation.
+See [larp/examples](https://github.com/wzjoriv/Larp/blob/main/examples/) for example applications, ranging from urban air mobility to wheeled robot navigation.
 
 Although originally developed for Unmanned Aerial Vehicles (UAVs) in urban air mobility scenarios, Larp’s modular design makes it suitable for a wide range of autonomous systems.
 
@@ -54,10 +54,10 @@ pip install larp
 Explore Larp’s capabilities through interactive Jupyter Notebook demos:
 
 - 📌 [General Demo](https://github.com/wzjoriv/Larp/blob/main/presentation.ipynb) — Introduction to core functionality  
-- 🔁 [Hot Reloading in Room](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Hot%20Reloading%20in%20Room/presentation.ipynb) — Dynamic updates of obstacles
-- 🏛️ [City Center in Lafayette, IN](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Lafayette%20Court%20House/presentation.ipynb) — Path planning around building
-- 🏫 [Aerial Cargo Delivery](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Aerial%20Cargo%20Delivery/presentation.ipynb) — Low-altitude aerial cargo delivery planning on university campus
-- 🛫 [Urban Air Mobility of EVTOL](https://github.com/wzjoriv/Larp/blob/main/docs/demos/Urban%20Air%20Mobility%20of%20EVTOL/presentation.ipynb) — Urban air mobility of EVTOL aircraft in Singapore
+- 🔁 [Hot Reloading in Room Scene](https://github.com/wzjoriv/Larp/blob/main/examples/Hot%20Reloading%20in%20Room/presentation.ipynb) — Dynamic updates of obstacles
+- 🏛️ [City Center in Lafayette, IN](https://github.com/wzjoriv/Larp/blob/main/examples/Lafayette%20Court%20House/presentation.ipynb) — Path planning around building
+- 🏫 [Aerial Cargo Delivery](https://github.com/wzjoriv/Larp/blob/main/examples/Aerial%20Cargo%20Delivery/presentation.ipynb) — Low-altitude aerial cargo delivery planning on university campus
+- 🛫 [Urban Air Mobility of EVTOL](https://github.com/wzjoriv/Larp/blob/main/examples/Urban%20Air%20Mobility%20of%20EVTOL/presentation.ipynb) — Urban air mobility of EVTOL aircraft in Singapore
 
 ---
 

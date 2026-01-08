@@ -51,6 +51,7 @@ def interpolate_along_route(route:Union[List[Point], np.ndarray], step=1e-3, n=0
     route = np.array(route)
 
     route_dist_result = route_distance(route, return_joints=True)
+    
     if isinstance(route_dist_result, tuple):
         total_dist, joints_dist = route_dist_result
     else:

@@ -1,12 +1,20 @@
 from abc import ABC, abstractmethod
 import importlib.util
 import inspect
+from types import ModuleType
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import expm
 from itertools import chain
 
 from larp.fn import bmatvec
+
+JAX_INSTALLED = importlib.util.find_spec("jax") is not None
+
+if JAX_INSTALLED:
+    import jax.numpy as jnp
+    from jax import jacfwd, jit, vmap
+    from jax.scipy.linalg import expm as jexpm
 
 """
 Author: Josue N Rivera
@@ -18,36 +26,25 @@ class Dynamics(ABC):
 
     r"""
     Base class for representing general dynamical systems with support for
-    higher-order derivatives and batched operations.
+    higher-order derivatives, batched operations, and automatic differentiation via JAX.
 
-    This class assumes the system can be represented in a *first-order form*:
+    This class assumes the system can be represented in a **first-order form**:
 
-    .. math:: \dot{x} = f(x, u)
+    .. math::
+        \dot{x} = f(x, u)
 
-    where :math:`x \in \mathbb{R}^{n}` is the state vector and :math:`u \in \mathbb{R}^{m}`
-    is the control vector. It maps "primitive" configuration variables (order-0)
-    to flattened first-order vectors.
+    where :math:`x \in \mathbb{R}^{n}` is the flattened state vector and 
+    :math:`u \in \mathbb{R}^{m}` is the flattened control vector.
 
-    Parameters
-    ----------
-    constants : dict, optional
-        Physical parameters or constants used in the model (default: None, treated as empty dict).
-
-    state_derivative_orders : list of int
-        Highest derivative order for each primitive state dynamics function.
-        Example: [2, 1] →
-            primitive 0 → position, velocity, acceleration
-            primitive 1 → position, velocity
-
-    control_derivative_orders : list of int
-        Same structure as state_derivative_orders but for controls.
-
-    wrapable_primitive_state : list[int], optional
-        Primitive state indices that correspond to angles (or any wrapable variable).
-        These will be marked in first_order space using first_angle_state_mask.
-
-    holonomic : bool, optional
-        If True, indicates the system is holonomic; otherwise non-holonomic.
+    **Key Concepts:**
+    
+    1.  **Primitives vs. First-Order:** The class maps "primitive" configuration variables 
+        (e.g., position $p$) to a flattened first-order vector containing derivatives 
+        (e.g., $[p, \dot{p}, \ddot{p}]$).
+    2.  **Batched Operations:** All methods expect inputs with a leading batch dimension 
+        (e.g., shape ``(batch_size, state_dim)``).
+    3.  **Auto-Differentiation:** If JAX is installed and the subclass does not implement 
+        analytical ``dfdx``/``dfdu``, this class attempts to generate them automatically.
 
     Attributes
     ----------
@@ -100,9 +97,15 @@ class Dynamics(ABC):
 
     Examples
     --------
-    >>> dyn = Dynamics(state_derivative_orders=[1, 1], holonomic=True)
-    >>> print(dyn.state_dim)
-    4
+    .. code-block:: python
+        # 1 primitive state (pos) with order 2 (pos, vel, acc)
+        # 1 primitive control (jerk) with order 0
+        >>> dyn = Dynamics(state_derivative_orders=[2], control_derivative_orders=[0])
+        
+        # State vector x corresponds to [pos, vel, acc]
+        # Control vector u corresponds to [jerk]
+        >>> dyn.first_order_state_n
+        3
     """
 
     def __init__(self,
@@ -110,7 +113,30 @@ class Dynamics(ABC):
                  state_derivative_orders: List[int] = [1],
                  control_derivative_orders: List[int] = [0],
                  wrapable_primitive_state: Optional[List[int]] = None,
-                 holonomic: Optional[bool] = None) -> None:
+                 holonomic: Optional[bool] = None,
+                 jax_backend=False) -> None:
+        
+        r"""
+        Initializes the Dynamics instance.
+
+        Parameters
+        ----------
+        constants : dict, optional
+            Physical parameters or constants used in the model (e.g., mass, length).
+            Defaults to an empty dict.
+        state_derivative_orders : list of int, default=[1]
+            Highest derivative order for each primitive state dynamics function.
+            
+            * Example: ``[2, 1]`` implies:
+                * Primitive 0: :math:`[x_0, \dot{x}_0, \ddot{x}_0]`
+                * Primitive 1: :math:`[x_1, \dot{x}_1]`
+        control_derivative_orders : list of int, default=[0]
+            Same structure as ``state_derivative_orders`` but for controls.
+        wrapable_primitive_state : list of int, optional
+            Indices of primitive states that represent angles (require wrapping to $[-\pi, \pi]$).
+        holonomic : bool, optional
+            If True, indicates the system is holonomic; otherwise non-holonomic.
+        """
 
         self.constants = {} if constants is None else constants 
         self.holonomic = holonomic
@@ -151,47 +177,82 @@ class Dynamics(ABC):
         # --- Auto-JAX Jacobians ---
         self.dfdx_jax = None
         self.dfdu_jax = None
+        self._linearize_jit = None
+        self._discretize_jit = None
 
-        # can it autodiff
-        if "np" in inspect.signature(self.f).parameters and importlib.util.find_spec("jax") is not None:
+        self.jax_backend = jax_backend and "np" in inspect.signature(self.f).parameters and JAX_INSTALLED
 
-            try:
-                self.dfdx(np.zeros((10, self.first_order_state_n)), np.zeros((10, self.first_order_control_n)))
-            except NotImplementedError:
-                try:
-                    import jax.numpy as jnp
-                    from jax import jacfwd, jit, vmap
+        if self.jax_backend:
+            self._setup_jax_functions()
 
-                    def f_jax(x, u):
-                        return self.f(x[None], u[None], np=jnp)[0]
+    def _setup_jax_functions(self):
+        """
+        Compiles JAX functions for derivatives, linearization, and discretization.
+        This enables end-to-end vectorization on the GPU/TPU.
+        """
+        # 1. Setup Auto-Diff for dfdx/dfdu
+        # Wrapper to ensure f returns unbatched output for jacfwd
+        def f_wrapper(x, u):
+            return self.f(x[None, :], u[None, :], np=jnp)[0]
 
-                    dfdx_single = jacfwd(f_jax, argnums=0)
-                    temp_dfdx_jax = jit(vmap(dfdx_single, in_axes=(0, 0)))
-                    self.dfdx_jax = temp_dfdx_jax
+        # Auto-differentiation
+        self.dfdx_jax = jit(vmap(jacfwd(f_wrapper, argnums=0)))
+        self.dfdu_jax = jit(vmap(jacfwd(f_wrapper, argnums=1)))
 
-                except Exception:
-                    print("Error")
+        # 2. Setup Linearization JIT
+        def _linearize_pure(x, u):
+            """Pure JAX implementation of linearization"""
+            f0 = self.f(x, u, np=jnp)
+            A = self.dfdx_jax(x, u)
+            B = self.dfdu_jax(x, u)
+            return A, B, f0
+        
+        self._linearize_jit = jit(_linearize_pure)
 
-            try:
-                self.dfdu(np.zeros((10, self.first_order_state_n)), np.zeros((10, self.first_order_control_n)))
-            except NotImplementedError:
-                try:
-                    import jax.numpy as jnp
-                    from jax import jacfwd, jit, vmap
+        # 3. Setup Discretization JIT (Exact ZOH)
+        state_dim = self.first_order_state_n
+        control_dim = self.first_order_control_n
 
-                    def f_jax(x, u):
-                        return self.f(x[None], u[None], np=jnp)[0]
+        def _discretize_pure(x0, u0, dt):
+            """Pure JAX implementation of Matrix Exponential Discretization"""
+            A, B, f = self._linearize_jit(x0, u0)
+            
+            # Helper for batch matrix-vector mult (JAX version of bmatvec)
+            def jax_bmatvec(Mat, vec):
+                return jnp.einsum('bnm,bm->bn', Mat, vec)
+            
+            batch_size = x0.shape[0]
+            control_dim = self.first_order_control_n
 
-                    dfdu_single = jacfwd(f_jax, argnums=1)
-                    temp_dfdu_jax = jit(vmap(dfdu_single, in_axes=(0, 0)))
-                    self.dfdu_jax = temp_dfdu_jax
+            # --- Construct M Matrix for ZOH ---
+            # M = [A  B  f]
+            #     [0  0  0]
+            
+            # Because JAX arrays are immutable, we construct parts and concatenate
+            # Top row components:
+            # A shape: (B, N, N)
+            # B shape: (B, N, M)
+            # f shape: (B, N, 1)
 
-                except Exception:
-                    print("Error 2")
+            M = np.zeros((batch_size, state_dim + control_dim + 1, state_dim + control_dim + 1))
+            M[:, :state_dim, :state_dim] = A
+            M[:, :state_dim, state_dim:state_dim+control_dim] = B
+            M[:, :state_dim, state_dim+control_dim:] = f[..., None]
+
+            AdBd = expm(dt * M)[:, :state_dim, :]
+            Ad, Bd = AdBd[:, :, :state_dim], AdBd[:, :, state_dim:state_dim+control_dim]
+            c = AdBd[:, :, state_dim+control_dim:]
+            c = np.squeeze(c, axis=-1)
+
+            fd = c - jax_bmatvec(Ad, x0) - jax_bmatvec(Bd, u0) + x0
+            
+            return Ad, Bd, fd
+
+        self._discretize_jit = jit(_discretize_pure)
     
     def split_first(self, first: np.ndarray) -> List[np.ndarray]:
         """
-        Splits the concatenated first-order vector into primitive segments.
+        Splits the concatenated first-order vector into individual segments.
 
         Parameters
         ----------
@@ -200,158 +261,176 @@ class Dynamics(ABC):
 
         Returns
         -------
-        tuple of np.ndarray
-            Tuple of shape (batch_size, 1) per primitive component.
+        List of np.ndarray
+            List of shape (batch_size, 1) per component.
         """
         return [first[:, i:i+1] for i in range(first.shape[1])]
 
     @abstractmethod
-    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np = np) -> np.ndarray:
-        """
-        Time-derivative of the first-order state vector: dot{x} = f(x, u).
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np:Optional[ModuleType] = None) -> np.ndarray:
+        r"""
+        Computes the time derivative of the state vector.
+        
+        .. math:: \dot{x} = f(x, u)
 
         Parameters
         ----------
         first_order_state : np.ndarray
-            Batched first-order state array with shape (batch_size, state_dim).
-
+            Batched state vector :math:`x`, shape ``(batch_size, state_dim)``.
         first_order_control : np.ndarray
-            Batched first-order control array with shape (batch_size, control_dim).
-
+            Batched control vector :math:`u`, shape ``(batch_size, control_dim)``.
         np : module, optional
-            Numerical backend to use for computations. Defaults to standard
-            NumPy. When JAX autodiff is active, the training wrapper will pass
-            `jax.numpy` here so implementations must use *only* the provided
-            `np` for numerical ops (np.sin, np.cos, np.concatenate, etc.).
+            Numerical backend (numpy or jax.numpy). Should be used for all mathematical 
+            operations inside the method to support auto-differentiation.
 
         Returns
         -------
         np.ndarray
-            Time derivative of the state.
+            The time derivative :math:`\dot{x}`, shape ``(batch_size, state_dim)``.
         """
         raise NotImplementedError
 
     def dfdx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Jacobian of \\( f(x, u) \\) with respect to \\( x \\)
+        r"""
+        Computes the Jacobian of the dynamics with respect to the state.
+
+        .. math:: A = \frac{\partial f(x, u)}{\partial x}
         
         Parameters
         ----------
         first_order_state : np.ndarray
-            First-order state vector, shape (batch_size, state_dim)
-
+            State vector, shape ``(batch_size, state_dim)``.
         first_order_control : np.ndarray
-            First-order control vector, shape (batch_size, control_dim)
+            Control vector, shape ``(batch_size, control_dim)``.
 
         Returns
         -------
         np.ndarray
-            Partial derivatives \\( \\frac{\\partial f}{\\partial x} \\)
+            Jacobian matrix :math:`A`, shape ``(batch_size, state_dim, state_dim)``.
+
+        Raises
+        ------
+        NotImplementedError
+            If JAX is not installed and the subclass does not implement this method analytically.
         """
 
-        if self.dfdx_jax is not None:
-            import jax.numpy as jnp
-            x = jnp.asarray(first_order_state)
-            u = jnp.asarray(first_order_control)
-            return np.asarray(self.dfdx_jax(x, u))
-
-        raise NotImplementedError(
-            "dfdx is not implemented and JAX is not installed. "
-            "Install JAX to enable automatic Jacobians."
-        )
+        if self.jax_backend is None:
+            raise NotImplementedError(
+                "dfdx is not implemented and JAX is not installed. "
+                "Install JAX to enable automatic Jacobians."
+            )
+        
+        x = jnp.asarray(first_order_state)
+        u = jnp.asarray(first_order_control)
+        return np.asarray(self.dfdx_jax(x, u))
 
     def dfdu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Jacobian of \\( f(x, u) \\) with respect to \\( u \\)
+        r"""
+        Computes the Jacobian of the dynamics with respect to the control input.
+
+        .. math:: B = \frac{\partial f(x, u)}{\partial u}
         
         Parameters
         ----------
         first_order_state : np.ndarray
-            First-order state vector, shape (batch_size, state_dim)
-
+            State vector, shape ``(batch_size, state_dim)``.
         first_order_control : np.ndarray
-            First-order control vector, shape (batch_size, control_dim)
+            Control vector, shape ``(batch_size, control_dim)``.
 
         Returns
         -------
         np.ndarray
-            Partial derivatives \\( \\frac{\\partial f}{\\partial u} \\)
+            Jacobian matrix :math:`B`, shape ``(batch_size, state_dim, control_dim)``.
+
+        Raises
+        ------
+        NotImplementedError
+            If JAX is not installed and the subclass does not implement this method analytically.
         """
 
-        if self.dfdu_jax is not None:
-            import jax.numpy as jnp
-            x = jnp.asarray(first_order_state)
-            u = jnp.asarray(first_order_control)
-            return np.asarray(self.dfdu_jax(x, u))
-
-        raise NotImplementedError(
-            "dfdu is not implemented and JAX is not installed. "
-            "Install JAX to enable automatic Jacobians."
-        )
+        if self.dfdu_jax is None:
+            raise NotImplementedError(
+                "dfdu is not implemented and JAX is not installed. "
+                "Install JAX to enable automatic Jacobians."
+            )
+        
+        x = jnp.asarray(first_order_state)
+        u = jnp.asarray(first_order_control)
+        return np.asarray(self.dfdu_jax(x, u))
 
 
     def linearize(self, x0: np.ndarray, u0: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Linearizes the nonlinear dynamics \\( f(x, u) \\) about the reference point \\( (x_0, u_0) \\).
+        r"""
+        Linearizes the nonlinear dynamics about a reference point :math:`(x_0, u_0)`.
+
+        Expands the dynamics using a first-order Taylor series:
+        
+        .. math:: \dot{x} \approx f(x_0, u_0) + A(x - x_0) + B(u - u_0)
 
         Parameters
         ----------
         x0 : np.ndarray
-            Batch of reference states, shape (batch_size, state_dim)
-
+            Reference state batch, shape ``(batch_size, state_dim)``.
         u0 : np.ndarray
-            Batch of reference controls, shape (batch_size, control_dim)
+            Reference control batch, shape ``(batch_size, control_dim)``.
 
         Returns
         -------
         A : np.ndarray
-            Jacobian matrix \\( A = \\frac{\\partial f}{\\partial x} \\)
-
+            State Jacobian :math:`\frac{\partial f}{\partial x}`, shape ``(batch_size, state_dim, state_dim)``.
         B : np.ndarray
-            Jacobian matrix \\( B = \\frac{\\partial f}{\\partial u} \\)
-            
-        f : np.ndarray
-            Time derivative of the state.
+            Control Jacobian :math:`\frac{\partial f}{\partial u}`, shape ``(batch_size, state_dim, control_dim)``.
+        f0 : np.ndarray
+            Nominal dynamics :math:`f(x_0, u_0)`, shape ``(batch_size, state_dim)``.
         """
-        f = self.f(x0, u0)
+        if self.jax_backend and self._linearize_jit:
+            A, B, f0 = self._linearize_jit(jnp.asarray(x0), jnp.asarray(u0))
+            return np.array(A), np.array(B), np.array(f0)
+        
+        f0 = self.f(x0, u0)
         A = self.dfdx(x0, u0)
         B = self.dfdu(x0, u0)
-        return A, B, f
+        return A, B, f0
 
     def discretize(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate=True) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Discretizes the linearized system at point (x0, u0) using zero-order hold (ZOH).
+        r"""
+        Discretizes the linearized system dynamics over a time step :math:`dt`.
 
+        Uses the Matrix Exponential (Zero-Order Hold) for exact discretization of the 
+        linear system, or a first-order Euler approximation.
+
+        **Zero-Order Hold (ZOH):**
+        
         .. math::
 
-            \\begin{bmatrix} A_d & B_d \\\\ 0 & I \\end{bmatrix} =
-            \\exp \\left( dt \\cdot \\begin{bmatrix} A & B \\\\ 0 & 0 \\end{bmatrix} \\right)
+            \exp \left( \begin{bmatrix} A & B & f_0 \\ 0 & 0 & 0 \\ 0 & 0 & 0 \end{bmatrix} dt \right) 
+            \approx \begin{bmatrix} A_d & B_d & f_d \\ 0 & I & 0 \\ 0 & 0 & 1 \end{bmatrix}
 
         Parameters
         ----------
         x0 : np.ndarray
-            Batched state input, shape (batch_size, state_dim)
-
+            Reference state, shape ``(batch_size, state_dim)``.
         u0 : np.ndarray
-            Batched control input, shape (batch_size, control_dim)
-
-        dt : float
-            Time step for discretization
-
-        estimate : bool
-            If True, uses first-order Euler approximation instead of matrix exponential.
+            Reference control, shape ``(batch_size, control_dim)``.
+        dt : float, default=0.1
+            Time step duration in seconds.
+        estimate : bool, default=True
+            If True, uses Euler integration (:math:`A_d = I + A dt`).
+            If False, uses exact matrix exponential (slower but more accurate).
 
         Returns
         -------
         Ad : np.ndarray
-            Discrete-time state matrix, shape (batch_size, state_dim, state_dim)
-
+            Discrete state matrix.
         Bd : np.ndarray
-            Discrete-time control matrix, shape (batch_size, state_dim, control_dim)
-
+            Discrete control matrix.
         fd : np.ndarray
-            Discretized dynamics offset, shape (batch_size, state_dim)
+            Discrete affine term (accounting for the linearization offset).
         """
+        if self.jax_backend and self._discretize_jit:
+            Ad, Bd, fd = self._discretize_jit(jnp.asarray(x0), jnp.asarray(u0), dt)
+            return np.array(Ad), np.array(Bd), np.array(fd)
+
         state_dim = self.first_order_state_n
 
         A, B, f = self.linearize(x0, u0)
@@ -382,12 +461,9 @@ class Dynamics(ABC):
     @property
     def first_state_names(self) -> List[str]:
         r"""
-        Returns symbolic names for each component of the first-order state vector.
-
-        Returns
-        -------
-        List[str]
-            Labels such as `x_0^{[0]}`, `x_0^{[1]}`, etc.
+        List[str]: Symbolic names for the first-order state vector elements.
+        
+        Format: ``x_{primitive_idx}^{[derivative_order]}``
         """
         orders = self.state_derivative_orders
         return [f'x_{{{o_idx}}}^{{[{i}]}}' for o_idx in range(len(orders)) for i in range(orders[o_idx]+1)]
@@ -395,12 +471,9 @@ class Dynamics(ABC):
     @property
     def first_control_names(self) -> List[str]:
         r"""
-        Returns symbolic names for each component of the first-order control vector.
+        List[str]: Symbolic names for the first-order control vector elements.
 
-        Returns
-        -------
-        List[str]
-            Labels such as `u_0^{[0]}`, `u_0^{[1]}`, etc.
+        Format: ``u_{primitive_idx}^{[derivative_order]}``
         """
         orders = self.control_derivative_orders
         return [rf'u_{{{o_idx}}}^{{[{i}]}}' for o_idx in range(len(orders)) for i in range(orders[o_idx]+1)]
@@ -408,12 +481,7 @@ class Dynamics(ABC):
     @property
     def first_names(self) -> Tuple[List[str], List[str]]:
         """
-        Returns symbolic names for both state and control vectors.
-
-        Returns
-        -------
-        Tuple[List[str], List[str]]
-            Tuple of lists (state_names, control_names)
+        Tuple[List[str], List[str]]: Tuple containing (state names, control names).
         """
         return self.first_state_names, self.first_control_names
     
@@ -456,8 +524,9 @@ class Dynamics(ABC):
         else:
             return (
                 f"<{cls_name} | "
+                f"Constants: {self.constants}, "
                 f"Primitive states={self.primitive_state_n}, primitive_controls={self.primitive_control_n}, "
-                f"First order state names={state_names}, first order control names={control_names}, "
+                f"First-order state size: {self.first_order_state_n}, First-order control size: {self.first_order_control_n}, "
                 f"holonomic={self.holonomic}>"
             )
     
@@ -569,37 +638,9 @@ class WMRDynamics(Dynamics):
 
         return np.concatenate([dx, dy, dtheta], axis=1)
 
-    def dfdu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Computes the Jacobian \\( \\frac{\\partial f}{\\partial u} \\) of the WMR dynamics.
-
-        Parameters
-        ----------
-        first_order_state : np.ndarray
-            State vector, shape (batch_size, 3)
-
-        first_order_control : np.ndarray
-            Control vector, shape (batch_size, 2)
-
-        Returns
-        -------
-        np.ndarray
-            Jacobian matrix, shape (batch_size, 3, 2)
-        """
-        _, _, theta = self.split_first(first_order_state)
-        v, w = self.split_first(first_order_control)
-
-        zeros = np.zeros_like(v)
-
-        df1 = np.concatenate([np.cos(theta), zeros], axis=1)
-        df2 = np.concatenate([np.sin(theta), zeros], axis=1)
-        df3 = np.concatenate([zeros, np.ones_like(w)], axis=1)
-
-        return np.stack([df1, df2, df3], axis=1)
-
     def dfdx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Computes the Jacobian \\( \\frac{\\partial f}{\\partial x} \\) of the WMR dynamics.
+        r"""
+        Computes the Jacobian :math:`\left(\frac{\partial f}{\partial x}\right)` of the WMR dynamics.
 
         Parameters
         ----------
@@ -625,20 +666,47 @@ class WMRDynamics(Dynamics):
 
         return np.stack([df1, df2, df3], axis=1)
 
+    def dfdu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+        r"""
+        Computes the Jacobian :math:`\left(\frac{\partial f}{\partial u}\right)` of the WMR dynamics.
+
+        Parameters
+        ----------
+        first_order_state : np.ndarray
+            State vector, shape (batch_size, 3)
+
+        first_order_control : np.ndarray
+            Control vector, shape (batch_size, 2)
+
+        Returns
+        -------
+        np.ndarray
+            Jacobian matrix, shape (batch_size, 3, 2)
+        """
+        _, _, theta = self.split_first(first_order_state)
+        v, w = self.split_first(first_order_control)
+
+        zeros = np.zeros_like(v)
+
+        df1 = np.concatenate([np.cos(theta), zeros], axis=1)
+        df2 = np.concatenate([np.sin(theta), zeros], axis=1)
+        df3 = np.concatenate([zeros, np.ones_like(w)], axis=1)
+
+        return np.stack([df1, df2, df3], axis=1)
+
 class CarDynamics(Dynamics):
-    """
+    r"""
     Dynamics for a rear-wheeled drive car model.
 
     This class implements kinematics for car-like vechicle based-on ackerman steering:
 
     .. math::
-
-        \\begin{align}
-        \\dot{x} &= v \\cos(\\theta) \\\\
-        \\dot{y} &= v \\sin(\\theta) \\\\
-        \\dot{v} &= a
-        \\dot{\\theta} &= v*tan(\\omega)/L
-        \\end{align}
+        \begin{align*}
+        \dot{x} &= v \cos(\theta) \\
+        \dot{y} &= v \sin(\theta) \\
+        \dot{v} &= a \\
+        \dot{\theta} &= v tan(\omega)/L
+        \end{align*}
 
     where:
 
@@ -685,39 +753,26 @@ class CarDynamics(Dynamics):
             'wheels distance': wheels_distance,
             'front rear length': front_rear_length
         }
-
         super().__init__(constants=constants,
                          holonomic=False,
                          state_derivative_orders=[0, 0, 0, 0],   # x, y, v, theta
                          control_derivative_orders=[0, 0])    # a, omega
 
         self.wd = self.constants['wheels distance']
-        self.frd = self.constants['wheels distance']
+        self.frd = self.constants['front rear length']
 
-    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Computes the time derivative \\( \\dot{x} = f(x, u) \\) for the car model.
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np:Optional[ModuleType] = None) -> np.ndarray:
+        if np is None: np = importlib.import_module("numpy")
 
-        Parameters
-        ----------
-        first_order_state : np.ndarray
-            State vector of shape (batch_size, 4): [x, y, v, θ]
-
-        first_order_control : np.ndarray
-            Control vector of shape (batch_size, 2): [a, ω]
-
-        Returns
-        -------
-        np.ndarray
-            Derivative of the state, shape (batch_size, 4)
-        """
-        _, _, v, theta = self.split_first(first_order_state)
-        a, w = self.split_first(first_order_control)
+        v = first_order_state[:, 2:3]
+        theta = first_order_state[:, 3:4]
+        a = first_order_control[:, 0:1]
+        w = first_order_control[:, 1:2]
 
         dx = v * np.cos(theta)
         dy = v * np.sin(theta)
         dv = a
-        dtheta = w
+        dtheta = v * np.tan(w) / self.frd
 
         return np.concatenate([dx, dy, dv, dtheta], axis=1)
 
@@ -781,7 +836,7 @@ class CarDynamics(Dynamics):
         return np.stack([df1, df2, df3, df4], axis=1)
 
 class Quadcopter2DDynamics(Dynamics):
-    """
+    r"""
     Dynamics for a planar (2D) quadcopter system.
 
     The model assumes a rigid body with two vertically-oriented thrust-producing rotors.
@@ -789,34 +844,20 @@ class Quadcopter2DDynamics(Dynamics):
 
     .. math::
 
-        x = [x, \\dot{x}, y, \\dot{y}, \\theta, \\dot{\\theta}]^\\top
+        x = [x, \dot{x}, y, \dot{y}, \theta, \dot{\theta}]^\top
 
     The continuous-time dynamics are given by:
 
     .. math::
 
-        \\begin{align}
-        \\dot{x} &= \\dot{x} \\\\
-        \\dot{\\dot{x}} &= -\\frac{u_1 + u_2}{m} \\sin(\\theta) \\\\
-        \\dot{y} &= \\dot{y} \\\\
-        \\dot{\\dot{y}} &= \\frac{u_1 + u_2}{m} \\cos(\\theta) - g \\\\
-        \\dot{\\theta} &= \\dot{\\theta} \\\\
-        \\dot{\\dot{\\theta}} &= \\frac{L(u_1 - u_2)}{I}
-        \\end{align}
-
-    Parameters
-    ----------
-    mass : float, optional
-        Mass of the quadcopter in kilograms (default: 1.0)
-
-    gravity : float, optional
-        Gravitational acceleration in m/s² (default: 9.81)
-
-    arm_length : float, optional
-        Distance from the center of mass to each rotor in meters (default: 0.5)
-
-    inertia : float, optional
-        Moment of inertia around the out-of-plane axis (default: 0.01)
+        \begin{align}
+        \dot{x} &= \dot{x} \\
+        \d\dot{x} &= -\frac{u_1 + u_2}{m} \sin(\theta) \\
+        \dot{y} &= \dot{y} \\
+        \ddot{y} &= \frac{u_1 + u_2}{m} \cos(\theta) - g \\
+        \dot{\theta} &= \dot{\theta} \\
+        \ddot{\theta} &= \frac{L(u_1 - u_2)}{I}
+        \end{align}
 
     Attributes
     ----------
@@ -839,37 +880,23 @@ class Quadcopter2DDynamics(Dynamics):
 
         Parameters
         ----------
-        mass : float
-            Mass of the quadcopter.
+        mass : float, optional
+            Mass of the quadcopter in kilograms (default: 1.0)
 
-        gravity : float
-            Gravitational acceleration.
+        gravity : float, optional
+            Gravitational acceleration in m/s² (default: 9.81)
 
-        arm_length : float
-            Distance from the center to each rotor.
+        arm_length : float, optional
+            Distance from the center of mass to each rotor in meters (default: 0.5)
 
-        inertia : float
-            Moment of inertia about the out-of-plane axis.
+        inertia : float, optional
+            Moment of inertia around the out-of-plane axis (default: 0.01)
         """
-        constants = {
-            'mass': mass,
-            'gravity': gravity,
-            'arm_length': arm_length,
-            'inertia': inertia,
-        }
+        constants = {'mass': mass, 'gravity': gravity, 'arm_length': arm_length, 'inertia': inertia}
+        super().__init__(constants=constants, state_derivative_orders=[1, 1, 1], control_derivative_orders=[0, 0])
+        self.m, self.g, self.L, self.I = mass, gravity, arm_length, inertia
 
-        super().__init__(
-            constants=constants,
-            state_derivative_orders=[1, 1, 1],
-            control_derivative_orders=[0, 0],
-        )
-
-        self.m = mass
-        self.g = gravity
-        self.L = arm_length
-        self.I = inertia
-
-    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np:Optional[ModuleType] = None) -> np.ndarray:
         """
         Computes the time derivative \\( \\dot{x} = f(x, u) \\) for the 2D quadcopter.
 
@@ -886,99 +913,22 @@ class Quadcopter2DDynamics(Dynamics):
         np.ndarray
             Time derivative of the state, shape (batch_size, 6)
         """
-        x, dx, y, dy, theta, dtheta = self.split_first(first_order_state)
-        u1, u2 = self.split_first(first_order_control)
+        if np is None: np = importlib.import_module("numpy")
+
+        dx = first_order_state[:, 1:2]
+        theta = first_order_state[:, 4:5]
+        dtheta = first_order_state[:, 5:6]
+        dy = first_order_state[:, 3:4]
+        
+        u1 = first_order_control[:, 0:1]
+        u2 = first_order_control[:, 1:2]
 
         total_u = u1 + u2
-
         ddx = -total_u * np.sin(theta) / self.m
         ddy = total_u * np.cos(theta) / self.m - self.g
         ddtheta = self.L * (u1 - u2) / self.I
 
         return np.concatenate([dx, ddx, dy, ddy, dtheta, ddtheta], axis=1)
-
-    def dfdx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Computes the Jacobian \\( \\frac{\\partial f}{\\partial x} \\) of the dynamics.
-
-        Parameters
-        ----------
-        first_order_state : np.ndarray
-            State array of shape (batch_size, 6): [x, dx, y, dy, θ, dθ]
-
-        first_order_control : np.ndarray
-            Control input array of shape (batch_size, 2): [u₁, u₂]
-
-        Returns
-        -------
-        np.ndarray
-            Jacobian tensor of shape (batch_size, 6, 6)
-        """
-        x, dx, y, dy, theta, dtheta = self.split_first(first_order_state)
-        u1, u2 = self.split_first(first_order_control)
-
-        zero = np.zeros_like(x)
-        one = np.ones_like(x)
-
-        total_u = u1 + u2
-        sin_theta = np.sin(theta)
-        cos_theta = np.cos(theta)
-
-        dddx_dtheta = -total_u * cos_theta / self.m
-        dddy_dtheta = -total_u * sin_theta / self.m
-
-        df = [
-            np.concatenate([zero, one, zero, zero, zero, zero], axis=1),             # ∂ẋ/∂x
-            np.concatenate([zero, zero, zero, zero, dddx_dtheta, zero], axis=1),     # ∂ẍ/∂x
-            np.concatenate([zero, zero, zero, one, zero, zero], axis=1),             # ∂ẏ/∂x
-            np.concatenate([zero, zero, zero, zero, dddy_dtheta, zero], axis=1),     # ∂ÿ/∂x
-            np.concatenate([zero, zero, zero, zero, zero, one], axis=1),             # ∂θ̇/∂x
-            np.concatenate([zero, zero, zero, zero, zero, zero], axis=1),            # ∂θ̈/∂x
-        ]
-        return np.stack(df, axis=1)
-
-    def dfdu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Computes the Jacobian \\( \\frac{\\partial f}{\\partial u} \\) of the dynamics.
-
-        Parameters
-        ----------
-        first_order_state : np.ndarray
-            State array of shape (batch_size, 6): [x, dx, y, dy, θ, dθ]
-
-        first_order_control : np.ndarray
-            Control input array of shape (batch_size, 2): [u₁, u₂]
-
-        Returns
-        -------
-        np.ndarray
-            Jacobian tensor of shape (batch_size, 6, 2)
-        """
-        x, dx, y, dy, theta, dtheta = self.split_first(first_order_state)
-        u1, u2 = self.split_first(first_order_control)
-
-        zero = np.zeros_like(u1)
-
-        sin_theta = np.sin(theta)
-        cos_theta = np.cos(theta)
-
-        dddx_du = -sin_theta / self.m
-        dddy_du = cos_theta / self.m
-        ddtheta_du1 = self.L / self.I
-        ddtheta_du2 = -self.L / self.I
-
-        df = [
-            np.concatenate([zero, zero], axis=1),  # ∂ẋ/∂u
-            np.concatenate([dddx_du, dddx_du], axis=1),  # ∂ẍ/∂u
-            np.concatenate([zero, zero], axis=1),  # ∂ẏ/∂u
-            np.concatenate([dddy_du, dddy_du], axis=1),  # ∂ÿ/∂u
-            np.concatenate([zero, zero], axis=1),  # ∂θ̇/∂u
-            np.concatenate([
-                np.full_like(u1, ddtheta_du1),
-                np.full_like(u2, ddtheta_du2)
-            ], axis=1),  # ∂θ̈/∂u
-        ]
-        return np.stack(df, axis=1)
 
 class QuadcopterV1Dynamics(Dynamics):
     """
@@ -1073,148 +1023,50 @@ class QuadcopterV1Dynamics(Dynamics):
         self.Iy = Iy
         self.Iz = Iz
 
-    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Computes the time derivative \\( \\dot{x} = f(x, u) \\) of the quadcopter state.
+    def __init__(self, mass=1.0, gravity=9.81, Ix=0.01, Iy=0.01, Iz=0.02):
+        constants = {'mass': mass, 'gravity': gravity, 'Ix': Ix, 'Iy': Iy, 'Iz': Iz}
+        super().__init__(constants=constants,
+                         state_derivative_orders=[1] * 3 + [0]*6,
+                         control_derivative_orders=[0] * 4,
+                         wrapable_primitive_state=[3, 4, 5])
+        self.m, self.g, self.Ix, self.Iy, self.Iz = mass, gravity, Ix, Iy, Iz
 
-        Parameters
-        ----------
-        first_order_state : np.ndarray
-            State vector of shape (batch_size, 12)
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np:Optional[ModuleType] = None) -> np.ndarray:
+        if np is None: np = importlib.import_module("numpy")
+        
+        # Slicing state: [x, y, z, vx, vy, vz, phi, theta, psi, p, q, r]
+        # x=0, y=1, z=2 are unused in deriv calc directly
+        vx = first_order_state[:, 3:4]
+        vy = first_order_state[:, 4:5]
+        vz = first_order_state[:, 5:6]
+        phi = first_order_state[:, 6:7]
+        theta = first_order_state[:, 7:8]
+        psi = first_order_state[:, 8:9]
+        p = first_order_state[:, 9:10]
+        q = first_order_state[:, 10:11]
+        r = first_order_state[:, 11:12]
 
-        first_order_control : np.ndarray
-            Control vector of shape (batch_size, 4)
+        u1 = first_order_control[:, 0:1]
+        u2 = first_order_control[:, 1:2]
+        u3 = first_order_control[:, 2:3]
+        u4 = first_order_control[:, 3:4]
 
-        Returns
-        -------
-        np.ndarray
-            Derivative of the state, shape (batch_size, 12)
-        """
-        x, y, z, vx, vy, vz, phi, theta, psi, p, q, r = self.split_first(first_order_state)
-        u1, u2, u3, u4 = self.split_first(first_order_control)
-
-        m, g, Ix, Iy, Iz = self.m, self.g, self.Ix, self.Iy, self.Iz
-
-        dx = vx
-        dy = vy
-        dz = vz
-
-        sin, cos = np.sin, np.cos
-
-        dvx = u1 / m * (cos(phi) * sin(theta) * cos(psi) + sin(phi) * sin(psi))
-        dvy = u1 / m * (cos(phi) * sin(theta) * sin(psi) - sin(phi) * cos(psi))
-        dvz = u1 / m * (cos(phi) * cos(theta)) - g
-
-        dphi = p + q * sin(phi) * np.tan(theta) + r * cos(phi) * np.tan(theta)
-        dtheta = q * cos(phi) - r * sin(phi)
-        dpsi = q * sin(phi) / cos(theta) + r * cos(phi) / cos(theta)
-
-        dp = (u2 + (Iy - Iz) * q * r) / Ix
-        dq = (u3 + (Iz - Ix) * p * r) / Iy
-        dr = (u4 + (Ix - Iy) * p * q) / Iz
-
-        return np.concatenate([dx, dy, dz, dvx, dvy, dvz, dphi, dtheta, dpsi, dp, dq, dr], axis=1)
-
-    def dfdx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Computes the Jacobian \\( \\frac{\\partial f}{\\partial x} \\) of the dynamics.
-
-        Parameters
-        ----------
-        first_order_state : np.ndarray
-            State vector, shape (batch_size, 12)
-
-        first_order_control : np.ndarray
-            Control vector, shape (batch_size, 4)
-
-        Returns
-        -------
-        np.ndarray
-            Jacobian matrix, shape (batch_size, 12, 12)
-        """
-        _, _, _, _, _, _, phi, theta, psi, p, q, r = self.split_first(first_order_state)
-        u1, _, _, _ = self.split_first(first_order_control)
-
-        m, Ix, Iy, Iz = self.m, self.Ix, self.Iy, self.Iz
         sin, cos = np.sin, np.cos
         tan = np.tan
 
-        dfdx = np.zeros((first_order_state.shape[0], 12, 12))
+        dvx = u1 / self.m * (cos(phi) * sin(theta) * cos(psi) + sin(phi) * sin(psi))
+        dvy = u1 / self.m * (cos(phi) * sin(theta) * sin(psi) - sin(phi) * cos(psi))
+        dvz = u1 / self.m * (cos(phi) * cos(theta)) - self.g
 
-        # Linear velocity to position
-        dfdx[:, 0, 3] = 1
-        dfdx[:, 1, 4] = 1
-        dfdx[:, 2, 5] = 1
+        dphi = p + q * sin(phi) * tan(theta) + r * cos(phi) * tan(theta)
+        dtheta = q * cos(phi) - r * sin(phi)
+        dpsi = q * sin(phi) / cos(theta) + r * cos(phi) / cos(theta)
 
-        # Acceleration w.r.t. angles
-        dfdx[:, 3, 6] = -u1[:, 0] / m * (sin(phi) * sin(theta) * cos(psi) - cos(phi) * sin(psi))
-        dfdx[:, 3, 7] =  u1[:, 0] / m * (cos(phi) * cos(theta) * cos(psi))
-        dfdx[:, 3, 8] = -u1[:, 0] / m * (cos(phi) * sin(theta) * sin(psi) + sin(phi) * cos(psi))
+        dp = (u2 + (self.Iy - self.Iz) * q * r) / self.Ix
+        dq = (u3 + (self.Iz - self.Ix) * p * r) / self.Iy
+        dr = (u4 + (self.Ix - self.Iy) * p * q) / self.Iz
 
-        dfdx[:, 4, 6] = -u1[:, 0] / m * (sin(phi) * sin(theta) * sin(psi) + cos(phi) * cos(psi))
-        dfdx[:, 4, 7] =  u1[:, 0] / m * (cos(phi) * cos(theta) * sin(psi))
-        dfdx[:, 4, 8] =  u1[:, 0] / m * (cos(phi) * sin(theta) * cos(psi) - sin(phi) * sin(psi))
-
-        dfdx[:, 5, 6] = -u1[:, 0] / m * sin(phi) * cos(theta)
-        dfdx[:, 5, 7] = -u1[:, 0] / m * cos(phi) * sin(theta)
-
-        # Euler angle kinematics
-        dfdx[:, 6, 9]  = 1
-        dfdx[:, 6, 10] = sin(phi) * tan(theta)
-        dfdx[:, 6, 11] = cos(phi) * tan(theta)
-
-        dfdx[:, 7, 10] = cos(phi)
-        dfdx[:, 7, 11] = -sin(phi)
-
-        dfdx[:, 8, 10] = sin(phi) / cos(theta)
-        dfdx[:, 8, 11] = cos(phi) / cos(theta)
-
-        # Angular acceleration terms
-        dfdx[:, 9, 10] = (Iy - Iz) * r / Ix
-        dfdx[:, 9, 11] = (Iy - Iz) * q / Ix
-        dfdx[:, 10, 9] = (Iz - Ix) * r / Iy
-        dfdx[:, 10, 11] = (Iz - Ix) * p / Iy
-        dfdx[:, 11, 9] = (Ix - Iy) * q / Iz
-        dfdx[:, 11, 10] = (Ix - Iy) * p / Iz
-
-        return dfdx
-
-    def dfdu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        """
-        Computes the Jacobian \\( \\frac{\\partial f}{\\partial u} \\) of the dynamics.
-
-        Parameters
-        ----------
-        first_order_state : np.ndarray
-            State vector, shape (batch_size, 12)
-
-        first_order_control : np.ndarray
-            Control vector, shape (batch_size, 4)
-
-        Returns
-        -------
-        np.ndarray
-            Jacobian matrix, shape (batch_size, 12, 4)
-        """
-        phi, theta, psi = self.split_first(first_order_state)[6:9]
-        u1, u2, u3, u4 = self.split_first(first_order_control)
-
-        m, Ix, Iy, Iz = self.m, self.Ix, self.Iy, self.Iz
-        sin, cos = np.sin, np.cos
-
-        dfdu = np.zeros((first_order_state.shape[0], 12, 4))
-
-        # ∂acceleration/∂u1
-        dfdu[:, 3, 0] = 1 / m * (cos(phi) * sin(theta) * cos(psi) + sin(phi) * sin(psi))[:, 0]
-        dfdu[:, 4, 0] = 1 / m * (cos(phi) * sin(theta) * sin(psi) - sin(phi) * cos(psi))[:, 0]
-        dfdu[:, 5, 0] = 1 / m * (cos(phi) * cos(theta))[:, 0]
-
-        # ∂angular_acceleration/∂u2, u3, u4
-        dfdu[:, 9, 1] = 1 / Ix
-        dfdu[:, 10, 2] = 1 / Iy
-        dfdu[:, 11, 3] = 1 / Iz
-
-        return dfdu
+        return np.concatenate([vx, vy, vz, dvx, dvy, dvz, dphi, dtheta, dpsi, dp, dq, dr], axis=1)
     
 class QuadcopterV2Dynamics(Dynamics):
     """
@@ -1222,213 +1074,124 @@ class QuadcopterV2Dynamics(Dynamics):
     
     """
 
-    def __init__(self, 
-                 inertia = [3.8e-3, 3.8e-3, 7.1e-3],
-                 mass = 5.2,
-                 gravity = 9.807,
-                 arm_length = 0.32,
-                 thrust_constant = 3.13e-5,
-                 translational_drag = [0.1, 0.1, 0.15],
-                 torque_constant = 7.5e-7,
-                 rotational_drag = [0.1, 0.1, 0.15],
-                 motor_inertia = 6e-5) -> None:
-
+    """
+    Quadcopter dynamics using individual rotor speeds.
+    """
+    def __init__(self, inertia = [3.8e-3, 3.8e-3, 7.1e-3], mass = 5.2, gravity = 9.807,
+                 arm_length = 0.32, thrust_constant = 3.13e-5, translational_drag = [0.1, 0.1, 0.15],
+                 torque_constant = 7.5e-7, rotational_drag = [0.1, 0.1, 0.15], motor_inertia = 6e-5) -> None:
         constants = {
-            'inertia': inertia,
-            'mass': mass,
-            'gravity': gravity,
-            'arm length': arm_length,
-            'thrust constant': thrust_constant,
-            'translational drag': translational_drag,
-            'torque constant': torque_constant,
-            'rotational drag': rotational_drag,
-            'motor inertia': motor_inertia
+            'inertia': inertia, 'mass': mass, 'gravity': gravity, 'arm length': arm_length,
+            'thrust constant': thrust_constant, 'translational drag': translational_drag,
+            'torque constant': torque_constant, 'rotational drag': rotational_drag, 'motor inertia': motor_inertia
         }
-
-        super().__init__(constants=constants,
-                         state_derivative_orders=[1]*6,
-                         control_derivative_orders=[0]*4)
+        super().__init__(constants=constants, state_derivative_orders=[1]*6, control_derivative_orders=[0]*4)
         
-        self.m = mass
-        self.I = inertia
-        self.g = gravity
-        self.l = arm_length
-        self.b = thrust_constant
-        self.d = torque_constant
-        self.Ct = translational_drag
-        self.Cr = rotational_drag
-        self.Jr = motor_inertia
+        self.m, self.I, self.g = mass, inertia, gravity
+        self.l, self.b, self.d = arm_length, thrust_constant, torque_constant
+        self.Ct, self.Cr, self.Jr = translational_drag, rotational_drag, motor_inertia
 
+        # --- Mixing Matrix (M) ---
+        # Maps squared rotor speeds [w1^2, w2^2, w3^2, w4^2] to [Thrust, Roll_Torque, Pitch_Torque, Yaw_Torque]
+        # u = M * w^2
+        
+        # Row 1: Thrust = b * (w1^2 + w2^2 + w3^2 + w4^2)
+        # Row 2: Roll   = b * l * (w4^2 - w2^2)
+        # Row 3: Pitch  = b * l * (w3^2 - w1^2)
+        # Row 4: Yaw    = d * (w1^2 - w2^2 + w3^2 - w4^2)
+        
+        b, l, d = self.b, self.l, self.d
+        
         self.M = np.array([
-            [],
-            [],
-            [],
-            []
+            [b,      b,      b,      b],      # Thrust (u1)
+            [0,     -b*l,    0,      b*l],    # Roll Torque (u2)
+            [-b*l,   0,      b*l,    0],      # Pitch Torque (u3)
+            [d,     -d,      d,     -d]       # Yaw Torque (u4)
         ])
 
-    def extract_force(self, first_order_control):
+    def extract_force(self, first_order_control: np.ndarray) -> np.ndarray:
+        """ 
+        Converts vector of rotor speeds (w) to body frame forces/torques (u).
+        
+        u = M @ (w^2)
 
-        """ Convert vector of controls to """
+        Parameters
+        ----------
+        first_order_control : np.ndarray
+            Rotor speeds [w1, w2, w3, w4], shape (Batch, 4)
 
+        Returns
+        -------
+        np.ndarray
+            Forces [Thrust, Roll, Pitch, Yaw], shape (Batch, 4)
+        """
+        # Element-wise square of rotor speeds
         w_2 = first_order_control**2
         
-        return w_2@self.M
+        # Batch matrix multiplication: (B, 4) @ (4, 4).T -> (B, 4)
+        # We use self.M.T because w_2 is a row vector per batch item
+        return w_2 @ self.M.T
 
-    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        # State
-        _, dx, _, dy, _, dz, phi, dphi, theta, dtheta, psi, dpsi = self.split_first(first_order_state)
-        # Rotor speeds
-        w1, w2, w3, w4 = self.split_first(first_order_control)
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np:Optional[ModuleType] = None) -> np.ndarray:
+        if np is None: np = importlib.import_module("numpy")
 
-        # Precompute square of speeds
+        # --- State Extraction ---
+        # Indices: x(0), dx(1), y(2), dy(3), z(4), dz(5), phi(6), dphi(7), theta(8), dtheta(9), psi(10), dpsi(11)
+        # Using slicing [:, i:i+1] to keep dimensions (Batch, 1)
+        dx     = first_order_state[:, 1:2]
+        dy     = first_order_state[:, 3:4]
+        dz     = first_order_state[:, 5:6]
+        phi    = first_order_state[:, 6:7]
+        dphi   = first_order_state[:, 7:8]
+        theta  = first_order_state[:, 8:9]
+        dtheta = first_order_state[:, 9:10]
+        psi    = first_order_state[:, 10:11]
+        dpsi   = first_order_state[:, 11:12]
+
+        # --- Control Extraction & Force Calculation ---
+        # Note: We implement the mixing logic manually here for JIT efficiency
+        # instead of calling self.extract_force (which uses numpy/self.M) to avoid
+        # capturing large constants in the JAX trace if not strictly necessary.
+        
+        w1 = first_order_control[:, 0:1]
+        w2 = first_order_control[:, 1:2]
+        w3 = first_order_control[:, 2:3]
+        w4 = first_order_control[:, 3:4]
+
         w1_2, w2_2, w3_2, w4_2 = w1**2, w2**2, w3**2, w4**2
 
-        # Compute forces/torques
+        # Forces/Torques
         u1 = self.b * (w1_2 + w2_2 + w3_2 + w4_2)
         u2 = self.b * self.l * (w4_2 - w2_2)
         u3 = self.b * self.l * (w3_2 - w1_2)
         u4 = self.d * (w1_2 - w2_2 + w3_2 - w4_2)
 
-        # Intermediates
+        # --- Dynamics ---
         cos, sin = np.cos, np.sin
+        
+        # Rotation matrix components
         ux = cos(psi)*sin(theta)*cos(phi) + sin(psi)*sin(phi)
         uy = cos(phi)*sin(psi)*sin(theta) - cos(psi)*sin(phi)
-
+        
+        # Residual rotor angular momentum
         omega_r = w1 - w2 + w3 - w4
 
-        # Dynamics
+        # Linear Accelerations
         ddx = (u1 * ux - self.Ct[0] * dx) / self.m
         ddy = (u1 * uy - self.Ct[1] * dy) / self.m
         ddz = (u1 * cos(theta) * cos(phi) - self.Ct[2] * dz) / self.m - self.g
 
+        # Angular Accelerations
         Ix, Iy, Iz = self.I
         ddphi = (u2 - self.Cr[0] * dphi**2 - self.Jr * omega_r * dtheta - (Iz - Iy) * dtheta * dpsi) / Ix
         ddtheta = (u3 - self.Cr[1] * dtheta**2 + self.Jr * omega_r * dphi - (Ix - Iz) * dphi * dpsi) / Iy
         ddpsi = (u4 - self.Cr[2] * dpsi**2 - (Iy - Ix) * dphi * dtheta) / Iz
 
         return np.concatenate([
-            dx,
-            ddx,
-            dy,
-            ddy,
-            dz,
-            ddz,
-            dphi,
-            ddphi,
-            dtheta,
-            ddtheta,
-            dpsi,
-            ddpsi
+            dx, ddx,
+            dy, ddy,
+            dz, ddz,
+            dphi, ddphi,
+            dtheta, ddtheta,
+            dpsi, ddpsi
         ], axis=1)
-
-    def dfdx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        dfdx = np.zeros((first_order_state.shape[0], 12, 12))
-
-        _, _, _, _, _, _, phi, dphi, theta, dtheta, psi, dpsi = self.split_first(first_order_state)
-        w1, w2, w3, w4 = self.split_first(first_order_control)
-        omega_r = w1 - w2 + w3 - w4
-
-        m = self.m
-        Ix, Iy, Iz = self.I
-        Jr = self.Jr
-        Cx, Cy, Cz = self.Ct
-        Crx, Cry, Crz = self.Cr
-
-        cos, sin = np.cos, np.sin
-
-        u1 = self.b * (w1**2 + w2**2 + w3**2 + w4**2)
-
-        # dx/dx
-        dfdx[:, 0, 1] = 1.0
-        dfdx[:, 1, 1] = -Cx / m
-        dfdx[:, 1, 6] = (u1 / m) * (-sin(phi)*cos(psi)*sin(theta) + sin(psi)*cos(phi))
-        dfdx[:, 1, 8] = (u1 / m) * (cos(phi)*cos(psi)*cos(theta))
-        dfdx[:, 1,10] = (u1 / m) * (-sin(psi)*sin(theta)*cos(phi) + cos(psi)*sin(phi))
-
-        # dy/dy
-        dfdx[:, 2, 3] = 1.0
-        dfdx[:, 3, 3] = -Cy / m
-        dfdx[:, 3, 6] = (u1 / m) * (-sin(psi)*cos(phi) - cos(psi)*sin(theta)*sin(phi))
-        dfdx[:, 3, 8] = (u1 / m) * (cos(phi)*sin(psi)*cos(theta))
-        dfdx[:, 3,10] = (u1 / m) * (cos(psi)*cos(phi)*sin(theta) + sin(psi)*sin(phi))
-
-        # dz/dz
-        dfdx[:, 4, 5] = 1.0
-        dfdx[:, 5, 5] = -Cz / m
-        dfdx[:, 5, 6] = -(u1 / m) * cos(theta) * sin(phi)
-        dfdx[:, 5, 8] = -(u1 / m) * cos(phi) * sin(theta)
-
-        # dφ/dt, dθ/dt, dψ/dt
-        dfdx[:, 6, 7] = 1.0
-        dfdx[:, 8, 9] = 1.0
-        dfdx[:,10,11] = 1.0
-
-        # Rotational dynamics
-        dfdx[:, 7, 7] = -2 * Crx * dphi / Ix
-        dfdx[:, 7, 9] = -Jr * omega_r / Ix - (Iz - Iy) * dpsi / Ix
-        dfdx[:, 7,11] = -(Iz - Iy) * dtheta / Ix
-
-        dfdx[:, 9, 7] = Jr * omega_r / Iy - (Ix - Iz) * dpsi / Iy
-        dfdx[:, 9, 9] = -2 * Cry * dtheta / Iy
-        dfdx[:, 9,11] = -(Ix - Iz) * dphi / Iy
-
-        dfdx[:,11, 7] = -(Iy - Ix) * dtheta / Iz
-        dfdx[:,11, 9] = -(Iy - Ix) * dphi / Iz
-        dfdx[:,11,11] = -2 * Crz * dpsi / Iz
-
-        return dfdx
-
-    def dfdu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
-        dfdu = np.zeros((first_order_state.shape[0], 12, 4))
-
-        _, _, _, _, _, _, phi, dphi, theta, dtheta, psi, dpsi = self.split_first(first_order_state)
-    
-        w1, w2, w3, w4 = self.split_first(first_order_control)
-
-        m = self.m
-        Ix, Iy, Iz = self.I
-        b, d, l = self.b, self.d, self.l
-
-        cos, sin = np.cos, np.sin
-        ux = cos(psi)*sin(theta)*cos(phi) + sin(psi)*sin(phi)
-        uy = cos(phi)*sin(psi)*sin(theta) - cos(psi)*sin(phi)
-
-        dfdu[:, 1, 0] = (2 * b * w1 * ux) / m
-        dfdu[:, 1, 1] = (2 * b * w2 * ux) / m
-        dfdu[:, 1, 2] = (2 * b * w3 * ux) / m
-        dfdu[:, 1, 3] = (2 * b * w4 * ux) / m
-
-        dfdu[:, 3, 0] = (2 * b * w1 * uy) / m
-        dfdu[:, 3, 1] = (2 * b * w2 * uy) / m
-        dfdu[:, 3, 2] = (2 * b * w3 * uy) / m
-        dfdu[:, 3, 3] = (2 * b * w4 * uy) / m
-
-        common_z = cos(theta) * cos(phi)
-        dfdu[:, 5, 0] = (2 * b * w1 * common_z) / m
-        dfdu[:, 5, 1] = (2 * b * w2 * common_z) / m
-        dfdu[:, 5, 2] = (2 * b * w3 * common_z) / m
-        dfdu[:, 5, 3] = (2 * b * w4 * common_z) / m
-
-        # ∂φ̈
-        dfdu[:, 7, 1] = -2 * b * l * w2 / Ix
-        dfdu[:, 7, 3] =  2 * b * l * w4 / Ix
-        dfdu[:, 7, 0] = -dtheta * self.Jr / Ix
-        dfdu[:, 7, 1] = dfdu[:, 7, 1] + dtheta * self.Jr / Ix
-        dfdu[:, 7, 2] = dfdu[:, 7, 2] - dtheta * self.Jr / Ix
-        dfdu[:, 7, 3] = dfdu[:, 7, 3] + dtheta * self.Jr / Ix
-
-        # ∂θ̈
-        dfdu[:, 9, 2] = 2 * b * l * w3 / Iy
-        dfdu[:, 9, 0] = -2 * b * l * w1 / Iy
-        dfdu[:, 9, 0] += dphi * self.Jr / Iy
-        dfdu[:, 9, 1] += -dphi * self.Jr / Iy
-        dfdu[:, 9, 2] += dphi * self.Jr / Iy
-        dfdu[:, 9, 3] += -dphi * self.Jr / Iy
-
-        # ∂ψ̈
-        dfdu[:,11,0] =  2 * d * w1 / Iz
-        dfdu[:,11,1] = -2 * d * w2 / Iz
-        dfdu[:,11,2] =  2 * d * w3 / Iz
-        dfdu[:,11,3] = -2 * d * w4 / Iz
-
-        return dfdu

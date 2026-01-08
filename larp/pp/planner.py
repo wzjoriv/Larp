@@ -600,7 +600,7 @@ def find_path_dijkstra_e(
         return [start_point, end_point]
 
     if scaler is None:
-        scaler = lambda p: 1.0 + p
+        scaler = lambda p: 1.0 + 4*(p**2)
 
     open_set = []
     open_set_hash = set()

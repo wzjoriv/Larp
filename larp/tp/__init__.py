@@ -3,5 +3,5 @@
 Author: Josue N Rivera
 
 
-Motion Planner Module
+Trajectory Planner
 """

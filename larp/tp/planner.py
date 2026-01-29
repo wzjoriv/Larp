@@ -2,7 +2,7 @@ from typing import Optional, Tuple, List, Union
 import numpy as np
 from scipy.interpolate import CubicSpline
 
-from larp.mp.solver import MPCSolver
+from larp.tp.solver import SQPSolver
 from larp.types import Point, Trajectory
 
 """
@@ -18,7 +18,7 @@ class Planner:
     Generates a smooth state reference trajectory by projecting the robot's 
     position onto a cached spline geometry and sampling ahead in arc-length.
     """
-    def __init__(self, solver: MPCSolver,
+    def __init__(self, solver: SQPSolver,
                  path: Union[List[Point], np.ndarray],
                  stable_state: np.ndarray,
                  ref_state_indices: Optional[List[int]] = None,
@@ -315,7 +315,7 @@ class Planner:
         """
         Simulates the closed-loop execution of the planner until the goal is reached.
         
-        This method iteratively solves the MPC optimization problem, executes a 
+        This method iteratively solves the QP optimization problem, executes a 
         segment of the result (defined by 'stride'), and replans from the new state.
 
         :param x0: Initial state vector.
@@ -411,11 +411,11 @@ class LinearPlanner:
     1. Linearly connects the robot's CURRENT position to the current target waypoint.
     2. Then follows the subsequent path segments linearly.
     
-    This is often more stable for MPC because the reference always starts 
+    This is often more stable for QP because the reference always starts 
     exactly at the robot's position, reducing initial error terms in the solver.
     """
 
-    def __init__(self, solver: MPCSolver,
+    def __init__(self, solver: SQPSolver,
                  path: Union[List[Point], np.ndarray],
                  stable_state: np.ndarray,
                  ref_state_indices: Optional[List[int]] = None,

@@ -82,12 +82,12 @@ def loadGeoJSON(geojson: Union[dict, str], size_offset = 0.0):
                 coords.extend(coord)
             geojson["coordinates"] = coords
 
-        elif geojson["type"].lower() == "geometrycollection":
+        if geojson["type"].lower() == "geometrycollection":
             for idx in range(len(geojson["geometries"])):
                 __prune_polygons__(geojson["geometries"][idx])
 
-    for idx in range(len(geojson["features"])):
-        __prune_polygons__(geojson["features"][idx]["geometry"])
+    #for idx in range(len(geojson["features"])):
+    #    __prune_polygons__(geojson["features"][idx]["geometry"])
 
     return loadRGeoJSON(geojson, size_offset=size_offset)
 
@@ -107,21 +107,39 @@ def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG
 
     def __prune_coords__(rgj:RGJGeometry):
 
-        if rgj.RGJType.lower() == "geometrycollection":
+        t_type = rgj.RGJType.lower()
+
+        if t_type == "geometrycollection":
             for rgj_n in rgj.rgjs:
                 __prune_coords__(rgj_n)
-        elif rgj.RGJType.lower() in ["point", "ellipse"]:
+        
+        elif t_type in ["point", "ellipse"]:
             rgj.set_coordinates(np.array(proj.transform(rgj.coordinates[0], rgj.coordinates[1])))
-        elif rgj.RGJType.lower() in ["linestring", "rectangle", "multipoint", "multiellipse"]:
+        
+        elif t_type in ["linestring", "rectangle", "multipoint", "multiellipse"]:
             rgj.set_coordinates(np.stack(proj.transform(rgj.coordinates[:,0], rgj.coordinates[:, 1]), axis=1))
-        elif rgj.RGJType.lower() == "multirectangle":
+        
+        elif t_type == "multirectangle":
             rgj.set_coordinates(np.stack(proj.transform(rgj.coordinates[:,:,0], rgj.coordinates[:,:,1]), axis=2))
-        elif rgj.RGJType.lower() == "multilinestring":
+        
+        elif t_type in ["polygon", "multilinestring"]:
             new_coords = []
-            for coord_idx in range(len(rgj.coordinates)):
-                new_coords.append(np.stack(proj.transform(rgj.coordinates[coord_idx][:, 0],\
-                                                                     rgj.coordinates[coord_idx][:, 1]), axis=1))
+            for ring in rgj.coordinates:
+                ring_array = np.asarray(ring)
+                projected_ring = np.stack(proj.transform(ring_array[:, 0], ring_array[:, 1]), axis=1)
+                new_coords.append(projected_ring)
             rgj.set_coordinates(new_coords)
+
+        elif t_type == "multipolygon":
+            new_poly_coords = []
+            for polygon in rgj.coordinates:
+                new_rings = []
+                for ring in polygon:
+                    ring_array = np.asarray(ring)
+                    projected_ring = np.stack(proj.transform(ring_array[:, 0], ring_array[:, 1]), axis=1)
+                    new_rings.append(projected_ring)
+                new_poly_coords.append(new_rings)
+            rgj.set_coordinates(new_poly_coords)
 
     for rgj in field:
         __prune_coords__(rgj)

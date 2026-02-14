@@ -67,8 +67,10 @@ def __deduplicate_with_index_map__(array: List) -> Tuple[List, List[int]]:
 
 class QuadTree():
 
+    MAX_DEPTH = 1000
+
     def __init__(self, field: PotentialField,
-                 minimum_length_limit:Optional[float] = None,
+                 minimum_length_limit:float | None = None,
                  maximum_length_limit:float = np.inf,
                  edge_bounds:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
                  size:Optional[float] = None,
@@ -76,7 +78,7 @@ class QuadTree():
                  build_tree:bool = True) -> None:
         
         self.field = field
-        self.min_sector_size = (np.min(field.size)/64.0 or 5.0) if minimum_length_limit is None else minimum_length_limit
+        self.min_sector_size = (np.min(field.size)/200.0 or 5.0) if minimum_length_limit is None else minimum_length_limit
         self.max_sector_size = maximum_length_limit
         self.size = size if size is not None else np.max(self.field.size)
 
@@ -86,8 +88,6 @@ class QuadTree():
         self.ZONEToMaxRANGE = np.concatenate([[1.0, 1.0], self.edge_bounds])
         self.ZONEToMinRANGE = np.concatenate([self.edge_bounds[0:1], self.edge_bounds, [0.0]])
         self.conservative = conservative
-
-        self.MAX_DEPTH = 1000
 
         self.root = None
         self.leaves:Set[QuadNode] = set()
@@ -261,7 +261,7 @@ class QuadTree():
         x = np.atleast_2d(x).astype(float)
         n_points = len(x)
         if max_depth is None:
-            max_depth = self.MAX_DEPTH
+            max_depth = QuadTree.MAX_DEPTH
 
         results = [[] for _ in range(n_points)]  # chain for each point
 
@@ -298,13 +298,13 @@ class QuadTree():
 
         out = []
         for child in quad.children:
-            out.extend(self.__search_leaves__(child, depth=depth+1))
+            out.extend(self.__search_leaves__(child, depth=depth+1, max_depth=max_depth))
 
         return out
 
     def search_leaves(self, quad:Optional[QuadNode] = None, max_depth:Optional[int] = None) -> Set[QuadNode]:
         quad = self.root if quad is None else quad
-        max_depth = self.MAX_DEPTH if max_depth is None else max_depth
+        max_depth = QuadTree.MAX_DEPTH if max_depth is None else max_depth
 
         return set(self.__search_leaves__(quad, depth=0, max_depth=max_depth))
     
@@ -992,40 +992,40 @@ class QPotentailField(PotentialField):
             return self.field.repulsion_vectors(points=points, filted_idx=filted_idx, min_dist_select=min_dist_select, return_reference=return_reference)
 
         points = np.atleast_2d(points).astype(float)
-        n_points = len(points)
         
-        repulsion_vectors = np.zeros((n_points, 2), dtype=float)
-        rgj_reference_ids = np.zeros(n_points, dtype=int) if return_reference else None
+        all_vectors = []
+        all_refs = []
 
         unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
 
         for quad_idx, pt_indices in quad_to_point_indices.items():
             quad = unique_quads[quad_idx]
             rgj_indices = quad.rgj_idx
+            if len(rgj_indices) == 0: continue
 
             group_points = points[pt_indices]
-            if return_reference:
-                group_vectors, group_rgj_ids = self.field.repulsion_vectors(
-                    points=group_points,
-                    filted_idx=rgj_indices,
-                    min_dist_select=min_dist_select,
-                    return_reference=True
-                )
-                repulsion_vectors[pt_indices] = group_vectors
-                rgj_reference_ids[pt_indices] = group_rgj_ids
-            else:
-                group_vectors = self.field.repulsion_vectors(
-                    points=group_points,
-                    filted_idx=rgj_indices,
-                    min_dist_select=min_dist_select,
-                    return_reference=False
-                )
-                repulsion_vectors[pt_indices] = group_vectors
+            
+            # This call returns (Num_RGJs * Num_Points_in_Group, 2)
+            res = self.field.repulsion_vectors(
+                points=group_points,
+                filted_idx=rgj_indices,
+                min_dist_select=min_dist_select,
+                return_reference=return_reference
+            )
 
+            if return_reference:
+                all_vectors.append(res[0])
+                all_refs.append(res[1])
+            else:
+                all_vectors.append(res)
+
+        if not all_vectors:
+            return (np.zeros((0, 2)), np.array([], dtype=int)) if return_reference else np.zeros((0, 2))
+
+        final_vectors = np.concatenate(all_vectors, axis=0)
         if return_reference:
-            return repulsion_vectors, rgj_reference_ids
-        else:
-            return repulsion_vectors
+            return final_vectors, np.concatenate(all_refs, axis=0)
+        return final_vectors
         
     def contact_points(
         self,
@@ -1058,39 +1058,37 @@ class QPotentailField(PotentialField):
             return self.field.contact_points(points=points, filted_idx=filted_idx, min_dist_select=min_dist_select, return_reference=return_reference)
 
         points = np.atleast_2d(points).astype(float)
-        n_points = len(points)
-        contact_points = np.zeros((n_points, 2), dtype=float)
-        rgj_reference_ids = np.zeros(n_points, dtype=int) if return_reference else None
+        all_points = []
+        all_refs = []
 
         unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
 
         for quad_idx, pt_indices in quad_to_point_indices.items():
             quad = unique_quads[quad_idx]
             rgj_indices = quad.rgj_idx
+            if len(rgj_indices) == 0: continue
 
             group_points = points[pt_indices]
-            if return_reference:
-                group_vectors, group_rgj_ids = self.field.contact_points(
-                    points=group_points,
-                    filted_idx=rgj_indices,
-                    min_dist_select=min_dist_select,
-                    return_reference=True
-                )
-                contact_points[pt_indices] = group_vectors
-                rgj_reference_ids[pt_indices] = group_rgj_ids
-            else:
-                group_vectors = self.field.contact_points(
-                    points=group_points,
-                    filted_idx=rgj_indices,
-                    min_dist_select=min_dist_select,
-                    return_reference=False
-                )
-                contact_points[pt_indices] = group_vectors
+            res = self.field.contact_points(
+                points=group_points,
+                filted_idx=rgj_indices,
+                min_dist_select=min_dist_select,
+                return_reference=return_reference
+            )
 
+            if return_reference:
+                all_points.append(res[0])
+                all_refs.append(res[1])
+            else:
+                all_points.append(res)
+
+        if not all_points:
+            return (np.zeros((0, 2)), np.array([], dtype=int)) if return_reference else np.zeros((0, 2))
+
+        final_points = np.concatenate(all_points, axis=0)
         if return_reference:
-            return contact_points, rgj_reference_ids
-        else:
-            return contact_points
+            return final_points, np.concatenate(all_refs, axis=0)
+        return final_points
         
     def gradient(self, points, min_dist_select=True, max_depth=2):
         points = np.atleast_2d(points).astype(float)
@@ -1213,7 +1211,7 @@ class QPotentailField(PotentialField):
         for quad_idx, pt_indices in quad_to_point_indices.items():
             quad = unique_quads[quad_idx]
             rgj_indices = quad.rgj_idx
-            if not rgj_indices:
+            if not len(rgj_indices):
                 continue
 
             group_points = points[pt_indices]

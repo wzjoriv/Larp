@@ -430,38 +430,36 @@ class LinearPlanner:
         """
         
         self.solver = solver
-        # If solver has field, use it, otherwise ignore
-        self.field = getattr(solver, 'field', None)
+        self.stable_state = np.array(stable_state, dtype=float)
         
+        # Default to [0, 1, 2] if not provided
         self.ref_idx = ref_state_indices if ref_state_indices is not None else [0, 1, 2]
-
         self.waypoint_tol = waypoint_tol
         
         self.way_idx = 0
         self.prev_us = None
-        self.path = None
-        self.stable_state = np.array(stable_state, dtype=float)
-
-        # Cache containers
-        self.cached_seg_lens = None
-        self.cached_directions = None
-        self.cached_cum_len = None
+        
+        # Containers
+        self.path: Optional[np.ndarray] = None
+        self.cached_seg_lens: Optional[np.ndarray] = None
+        self.cached_directions: Optional[np.ndarray] = None
+        self.cached_seg_headings: Optional[np.ndarray] = None # Used for look-ahead mode
+        self.cached_cum_len: Optional[np.ndarray] = None
+        self.use_custom_heading: bool = False
 
         self.update_path(path)
 
     def obtain_waypoint(self, x0: Optional[np.ndarray] = None):
         """
-        Checks if the robot (x0) has reached the current waypoint.
-        If so, increments the waypoint index.
+        Advances the internal waypoint index if the robot is within tolerance.
         """
         if x0 is not None:
-            # Only check X,Y distance
+            # Check Euclidean distance (X, Y only)
             pos = x0[:2]
             target = self.path[self.way_idx, :2]
-            
             dist = np.linalg.norm(pos - target)
             
-            # While we are close to current waypoint, advance to next
+            # Advance index while within tolerance (skip close stacked waypoints)
             while dist < self.waypoint_tol:
                 if self.way_idx >= len(self.path) - 1:
                     break
@@ -476,126 +474,143 @@ class LinearPlanner:
         self.prev_us = None
     
     def update_path(self, path: Union[List[Point], np.ndarray]):
-        self.path = np.atleast_2d(np.copy(path))
-
-        # 1. Handle Headings (if only X,Y provided)
-        # We compute orientation based on the segment direction
-        if self.path.shape[1] == 2:
-            deltas = self.path[1:] - self.path[:-1]
-            headings = np.arctan2(deltas[:, 1], deltas[:, 0])
-            if headings.size > 0:
-                headings = np.append(headings, headings[-1])
-            else:
-                headings = np.array([0.0])
-            self.path = np.hstack((self.path, headings[:, None]))
+        points = np.atleast_2d(np.copy(path))
         
-        # 2. Pre-compute Segment Math
-        # A. Spatial Deltas (X, Y)
-        d_xy = self.path[1:, :2] - self.path[:-1, :2]
+        # 1. Separate Spatial Data
+        xy = points[:, :2]
+        d_xy = xy[1:] - xy[:-1]
         
-        # B. Segment Lengths (N-1,)
-        # Use maximum to avoid division by zero
+        # 2. Pre-compute Segment Lengths & Spatial Directions
         self.cached_seg_lens = np.maximum(np.linalg.norm(d_xy, axis=1), 1e-6)
+        self.cached_directions = d_xy / self.cached_seg_lens[:, None]
         
-        # C. Angular Deltas (Theta) with Wrapping
-        d_theta = self.path[1:, 2] - self.path[:-1, 2]
-        d_theta = (d_theta + np.pi) % (2*np.pi) - np.pi
-        
-        # D. Normalized Direction Vectors (N-1, 3) for [x, y, theta]
-        # This vector represents the change per meter of arc length
-        vecs = np.column_stack((d_xy, d_theta))
-        self.cached_directions = vecs / self.cached_seg_lens[:, None]
-        
-        # E. Cumulative Length from start of path (N,)
+        # 3. Determine Heading Strategy
+        if points.shape[1] >= 3:
+            # Case A: User Provided Headings (N, 3)
+            self.use_custom_heading = True
+            self.path = points[:, :3] # Store exactly what user gave
+            self.cached_seg_headings = None # Not needed
+        else:
+            # Case B: Auto-compute Headings (N, 2)
+            self.use_custom_heading = False
+            
+            # Compute angle of every segment
+            seg_headings = np.arctan2(d_xy[:, 1], d_xy[:, 0])
+            
+            # Pad last point with previous heading
+            final_heading = seg_headings[-1] if seg_headings.size > 0 else 0.0
+            full_headings = np.append(seg_headings, final_heading)
+            
+            self.path = np.column_stack((xy, full_headings))
+            self.cached_seg_headings = seg_headings
+
+        # 4. Cumulative Length (for fast lookups)
         self.cached_cum_len = np.concatenate(([0.0], np.cumsum(self.cached_seg_lens)))
 
         self.reset_path()
     
     def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
         """
-        Generates N reference points.
-        
-        Strategy:
-        1. Calculate vector from Robot -> Current Waypoint.
-        2. Generate reference points along this vector until the waypoint is reached.
-        3. If horizon extends past the waypoint, continue along the cached path segments.
+        Generates N reference states.
+        1. Approach Phase: Robot -> Current Waypoint (Linear X/Y, Point-at Theta)
+        2. Following Phase: Current Waypoint -> End of Path
         """
-        step_size = nominal_speed * self.solver.dt
+        dt = self.solver.dt
         N = self.solver.N
+        step_size = nominal_speed * dt
         
-        # 1. Update waypoint index based on current robot position
-        # We use indices from ref_state_indices to extract [x, y, theta]
-        path_x0 = x0[self.ref_idx]
-        self.obtain_waypoint(path_x0)
+        # Extract Robot State
+        # Assuming x0 is the full state vector, we extract [x, y, theta]
+        # map indices to 0,1,2 for local calculation
+        rx, ry, rth = x0[self.ref_idx[0]], x0[self.ref_idx[1]], x0[self.ref_idx[2]]
+        robot_pos = np.array([rx, ry])
         
-        # 2. Dynamic approach vector (Robot Pos -> Next Waypoint)
+        # Update Waypoint Index
+        self.obtain_waypoint(x0[self.ref_idx])
         curr_waypoint = self.path[self.way_idx]
         
-        # Diff X, Y
-        diff_xy = curr_waypoint[:2] - path_x0[:2]
-        dist_0 = np.linalg.norm(diff_xy)
-        dist_0 = max(dist_0, 1e-6)
+        # --- 1. Approach Vector ---
+        diff_xy = curr_waypoint[:2] - robot_pos
+        dist_to_waypoint = np.linalg.norm(diff_xy)
+        dist_to_waypoint = max(dist_to_waypoint, 1e-6) # Avoid div/0
         
-        # Diff Theta (Wrapped)
-        diff_theta = (curr_waypoint[2] - path_x0[2] + np.pi) % (2*np.pi) - np.pi
-        
-        # Direction vector for the "Approach Phase"
-        dir_0 = np.append(diff_xy, diff_theta) / dist_0
+        # Direction to snap to
+        if self.use_custom_heading:
+            target_heading = curr_waypoint[2]
+        else:
+            target_heading = np.arctan2(diff_xy[1], diff_xy[0])
 
-        # 3. Generate Reference Points
-        # Distances along the prediction horizon
+        # --- 2. Generate Horizon Distances ---
         s_vals = step_size * np.arange(N)
         
-        # Container for [x, y, theta]
+        # Prepare Output Container (N, 3)
         ref_path = np.zeros((N, 3))
         
-        # A. Approach Phase (Points before reaching the current waypoint)
-        mask_head = s_vals <= dist_0
-        if np.any(mask_head):
-            # Linearly interpolate from robot pos to waypoint
-            ref_path[mask_head] = path_x0 + dir_0 * s_vals[mask_head, None]
-
-        # B. Path Following Phase (Points after reaching the current waypoint)
-        if np.any(~mask_head):
-            if self.way_idx >= len(self.path) - 1:
-                # End of path reached: Just stay at the last waypoint
-                ref_path[~mask_head] = curr_waypoint
-            else:
-                # We need to sample from the cached segments starting from the current waypoint
-                
-                # Distance remaining after reaching the current waypoint
-                s_tail = s_vals[~mask_head] - dist_0
-                
-                # Get lengths of segments remaining in the path
-                path_cum_lens = self.cached_cum_len[self.way_idx:] 
-                local_cum_len = path_cum_lens - path_cum_lens[0]
-                
-                # Find which segment each s_tail falls into
-                idx = np.searchsorted(local_cum_len, s_tail, side="right") - 1
-                
-                # Clip to valid segments
-                max_seg_idx = len(self.cached_seg_lens) - self.way_idx - 1
-                idx = np.clip(idx, 0, max_seg_idx)
-                
-                # Map local index back to global path index
-                global_idx = self.way_idx + idx
-                
-                # Distance into that specific segment
-                ds = s_tail - local_cum_len[idx]
-                
-                # Interpolate: Start of Segment + Direction * Distance into segment
-                ref_path[~mask_head] = (self.path[global_idx] + 
-                                        self.cached_directions[global_idx] * ds[:, None])
-
-        # 4. Finalize
-        # Wrap theta one last time to be safe
-        ref_path[:, 2] = (ref_path[:, 2] + np.pi) % (2 * np.pi) - np.pi
-
-        # Fill the full state vector (e.g. including velocities which we set to 0 or stable_state)
-        full_ref = np.empty((N, len(self.stable_state)))
-        full_ref[:] = self.stable_state
+        # --- 3. Fill Reference (Vectorized) ---
         
-        # Overwrite the [x, y, theta] indices with our computed path
+        # Mask: Which steps are still approaching the first waypoint?
+        mask_approach = s_vals <= dist_to_waypoint
+        
+        # A. Approach Phase (Before reaching waypoint)
+        if np.any(mask_approach):
+            # Linear Interp Position: Robot + Dir * Dist
+            dir_vec = diff_xy / dist_to_waypoint
+            ref_path[mask_approach, :2] = robot_pos + dir_vec * s_vals[mask_approach, None]
+            # Heading: Snap to target immediately
+            ref_path[mask_approach, 2] = target_heading
+
+        # B. Following Phase (After reaching waypoint)
+        if np.any(~mask_approach):
+            if self.way_idx >= len(self.path) - 1:
+                # End of path reached -> Hold last pose
+                ref_path[~mask_approach] = curr_waypoint
+            else:
+                # Calculate distance *past* the current waypoint
+                s_past = s_vals[~mask_approach] - dist_to_waypoint
+                
+                # Get relevant section of cumulative lengths
+                # Normalize so current waypoint is at 0.0
+                local_path_s = self.cached_cum_len[self.way_idx:] - self.cached_cum_len[self.way_idx]
+                
+                # Find which segment we are in using binary search
+                # -1 because searchsorted returns insertion point (right side)
+                seg_indices = np.searchsorted(local_path_s, s_past, side='right') - 1
+                
+                # Clip to prevent index out of bounds
+                # Max valid segment index = (Total Segments) - (Current Waypoint Index) - 1
+                max_local_seg = len(self.cached_seg_lens) - self.way_idx - 1
+                seg_indices = np.clip(seg_indices, 0, max_local_seg)
+                
+                # Map back to global indices
+                global_indices = self.way_idx + seg_indices
+                
+                # Distance into the specific segment
+                ds = s_past - local_path_s[seg_indices]
+                
+                # -- Set Position --
+                # Start of Segment + Direction * Distance into Segment
+                ref_path[~mask_approach, :2] = (self.path[global_indices, :2] + 
+                                                self.cached_directions[global_indices] * ds[:, None])
+                
+                # -- Set Heading --
+                if self.use_custom_heading:
+                    # Use the heading stored in the point itself
+                    # (Note: This snaps heading at waypoint boundaries)
+                    ref_path[~mask_approach, 2] = self.path[global_indices, 2]
+                else:
+                    # Use the segment direction we calculated earlier
+                    ref_path[~mask_approach, 2] = self.cached_seg_headings[global_indices]
+
+        # --- 4. Post-Processing ---
+        
+        # Unwrap Angles:
+        # We unwrap relative to the *robot's current heading* to ensure continuity.
+        # This prevents the solver from seeing a jump like 3.13 -> -3.13.
+        #ref_path_theta = np.concatenate(([rth], ref_path[:, 2]))
+        #ref_path[:, 2] = np.unwrap(ref_path_theta)[1:]
+        
+        # Fill Full State Matrix
+        full_ref = np.tile(self.stable_state, (N, 1))
         full_ref[:, self.ref_idx] = ref_path
         
         return full_ref
@@ -609,21 +624,17 @@ class LinearPlanner:
         """
 
         if reset:
-            # On reset, we might want to iterate more to converge
             max_iters = max(max_iters, 20)
             self.reset_path()
 
-        # Generate reference using nominal_speed
         ref_traj = self.get_ref(x0, nominal_speed=nominal_speed)
-
-        # Solve MPC
+        
         xs, us = self.solver.solve(x0, ref_traj, us_init=self.prev_us, max_iters=max_iters)
-
-        # Cache controls for warm start
+        
         self.prev_us = np.vstack([us[1:], us[-1:]])
-
+        
         return xs, us
     
     def get_full_ref(self, nominal_speed=2.0):
-        # Fallback if you need visualization of the full path
+        """Returns the full path geometry."""
         return self.path

@@ -22,7 +22,7 @@ def angle_diff(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     d = (d + np.pi) % (2*np.pi) - np.pi
     return d
 
-class SQPSolver:
+class Solver:
     def __init__(self, 
                  field: PotentialField|QPotentailField, 
                  dynamics: Dynamics,
@@ -36,7 +36,7 @@ class SQPSolver:
                  minimum_dist: float = 0.1,
                  statefield_idxs: List[int] = [],
                  linearize_every: int = 1,
-                 field_every: int = 3,          # Field update frequency
+                 field_every: int = 3,
                  tol: float = 1e-4,
                  verbose: bool = False):
         
@@ -48,109 +48,143 @@ class SQPSolver:
         self.minimum_dist = minimum_dist
         self.tol = tol
         self.verbose = verbose
-
-        self.angle_idxs = dynamics.angle_indices
         
         # Frequencies
         self.linearize_every = linearize_every
         self.field_every = field_every
 
+        # Dimensions & Indices
         self.n = dynamics.first_order_state_n
         self.m = dynamics.first_order_control_n
-        
-        self.num_x_vars = self.N * self.n
-        self.num_u_vars = self.N * self.m
-        self.var_count = self.num_x_vars + self.num_u_vars
+        self.angle_idxs = dynamics.angle_indices
+        self.statefield_idxs = np.array(statefield_idxs, dtype=int) if statefield_idxs else np.array([0, 1], dtype=int)
 
         # Weights
         self.Q = Q if Q is not None else 1e-3 * np.eye(self.n)
         self.R = R if R is not None else 1e-3 * np.eye(self.m)
         self.Qf = Qf if Qf is not None else self.Q
 
-        # Default Bounds (Parsed once)
-        self.x_min_def, self.x_max_def = self._parse_bounds(x_bounds, self.n)
-        self.u_min_def, self.u_max_def = self._parse_bounds(u_bounds, self.m)
+        # Bounds (Parsed once)
+        self.x_min, self.x_max = self._parse_bounds(x_bounds, self.n)
+        self.u_min, self.u_max = self._parse_bounds(u_bounds, self.m)
 
-        self.statefield_idxs = np.array(statefield_idxs, dtype=int) if statefield_idxs else np.array([0, 1], dtype=int)
-
-        # Matrices
-        P_x_blocks = [sparse.csc_matrix(2 * self.Q) for _ in range(self.N - 1)]
-        P_x_blocks.append(sparse.csc_matrix(2 * self.Qf))
-        self.P = sparse.block_diag(P_x_blocks + [sparse.kron(sparse.eye(self.N), sparse.csc_matrix(2 * self.R))], format='csc')
-        self.A_box = sparse.eye(self.var_count, format='csc')
+        # Cache System
+        self.num_x_vars = self.N * self.n
+        self.num_u_vars = self.N * self.m
+        self.var_count = self.num_x_vars + self.num_u_vars
+        
         self.cache: Dict[str, Any] = {
-            "A_dyn": None, "l_dyn": None, "u_dyn": None,
-            "A_field": None, "l_field": None, "u_field": None,
-            "l_box": None, "u_box": None
+            "A_dyn": None, "l_dyn": None, "u_dyn": None, # Dynamics constraints
+            "A_field": None, "l_field": None, "u_field": None, # Obstacle constraints
+            "l_box": None, "u_box": None # Bound constraints
         }
+        # Initialize box cache
         self._update_bounds_cache(None, None, None, None)
-        self.prob = osqp.OSQP()
-    
+
     def _parse_bounds(self, bounds, dim):
         lb = np.asarray(bounds[0])
         ub = np.asarray(bounds[1])
         if lb.ndim == 0: lb = np.full(dim, lb)
         if ub.ndim == 0: ub = np.full(dim, ub)
         return lb, ub
-    
-    def rollout(self, x0: np.ndarray, us: np.ndarray) -> np.ndarray:
-        """
-        Simulates trajectory using RK4. 
-        Optimized to use JAX JIT compilation if available.
-        """
-        x0 = np.asarray(x0).reshape(-1)
+
+    def _update_bounds_cache(self, xmin, xmax, umin, umax):
+        """Updates l_box/u_box in cache ONLY if input bounds differ from defaults."""
+        xn = xmin if xmin is not None else self.x_min
+        xm = xmax if xmax is not None else self.x_max
+        un = umin if umin is not None else self.u_min
+        um = umax if umax is not None else self.u_max
+
+        # Check if we need to update
+        is_default = (xmin is None and xmax is None and umin is None and umax is None)
+        if is_default and self.cache["l_box"] is not None:
+            return 
+
+        xn_vec, xm_vec = self._parse_bounds((xn, xm), self.n)
+        un_vec, um_vec = self._parse_bounds((un, um), self.m)
+
+        x_lo, x_up = np.tile(xn_vec, self.N), np.tile(xm_vec, self.N)
+        u_lo, u_up = np.tile(un_vec, self.N), np.tile(um_vec, self.N)
         
-        # JAX Optimization: Use lax.scan for compiled loop
+        self.cache["l_box"] = np.hstack([x_lo, u_lo])
+        self.cache["u_box"] = np.hstack([x_up, u_up])
+
+    def rollout(self, x0: np.ndarray, us: np.ndarray) -> np.ndarray:
+        """Simulates trajectory using RK4 (JAX or Python)."""
+        x0 = np.asarray(x0).reshape(-1)
         if self.dynamics.jax_backend and JAX_INSTALLED:
             return np.asarray(self._rollout_jax(x0, us))
-
-        # Fallback to Python loop (existing implementation)
         return self._rollout_python(x0, us)
 
     def _rollout_python(self, x0, us):
-        # ... [Your existing loop code here] ...
         xs = np.zeros((self.N + 1, self.n))
         xs[0] = x0
         dt = self.dt
-        
         curr_x = x0.reshape(1, -1)
-        
         for k in range(self.N):
             u_k = us[k:k+1]
-            
             k1 = self.dynamics.f(curr_x, u_k)[0]
             k2 = self.dynamics.f(curr_x + 0.5 * dt * k1, u_k)[0]
             k3 = self.dynamics.f(curr_x + 0.5 * dt * k2, u_k)[0]
             k4 = self.dynamics.f(curr_x + dt * k3, u_k)[0]
-            
             curr_x = curr_x + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
             xs[k+1] = curr_x
-            
         return xs
     
     @partial(jit, static_argnums=(0,))
     def _rollout_jax(self, x0, us):
         dt = self.dt
-        
         def rk4_step(x_prev, u_curr):
-            # Ensure batch dimension (1, n) for dynamics.f
-            x_in = x_prev[None, :]
-            u_in = u_curr[None, :]
-            
-            # Pass np=jnp to enforce JAX operations
+            x_in, u_in = x_prev[None, :], u_curr[None, :]
             k1 = self.dynamics.f(x_in, u_in, np=jnp)[0]
             k2 = self.dynamics.f(x_in + 0.5 * dt * k1, u_in, np=jnp)[0]
             k3 = self.dynamics.f(x_in + 0.5 * dt * k2, u_in, np=jnp)[0]
             k4 = self.dynamics.f(x_in + dt * k3, u_in, np=jnp)[0]
-            
             x_next = x_prev + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
             return x_next, x_next
-
-        # scan carries state, returns stacked outputs
         _, xs_traj = lax.scan(rk4_step, x0, us)
-        
-        # Concatenate initial state [x0] with trajectory
         return jnp.concatenate([x0[None, :], xs_traj], axis=0)
+
+    def _get_nearby_repulsion(self, x_curr: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """
+        Common helper to get raw repulsion vectors and distances.
+        Returns: (repulsion_vecs, norms) or (None, None)
+        """
+        if self.field is None: return None, None
+        
+        origin = x_curr[self.statefield_idxs]
+
+        if self.is_qfield:
+            quad = self.field.quadtree.find_quad(origin, max_depth=20)[0]
+            if not len(quad.rgj_idx): return None, None
+            repulsion_vecs = -self.field.field.repulsion_vectors(origin, filted_idx=quad.rgj_idx, min_dist_select=True)
+        else:
+            repulsion_vecs = -self.field.repulsion_vectors(origin, min_dist_select=False)
+
+        if len(repulsion_vecs) == 0: return None, None
+
+        norms = np.linalg.norm(repulsion_vecs, axis=1)
+        valid_mask = norms > 1e-8
+        
+        if not np.any(valid_mask): return None, None
+        
+        return repulsion_vecs[valid_mask], norms[valid_mask]
+
+    def solve(self, *args, **kwargs):
+        raise NotImplementedError("Use a subclass (SQPSolver, PenaltyDDPSolver, ALDDPSolver)")
+
+
+class SQPSolver(Solver):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # SQP Matrices Construction
+        P_x_blocks = [sparse.csc_matrix(2 * self.Q) for _ in range(self.N - 1)]
+        P_x_blocks.append(sparse.csc_matrix(2 * self.Qf))
+        self.P = sparse.block_diag(P_x_blocks + [sparse.kron(sparse.eye(self.N), sparse.csc_matrix(2 * self.R))], format='csc')
+        self.A_box = sparse.eye(self.var_count, format='csc')
+        
+        self.prob = osqp.OSQP()
 
     def _get_field_constraints(self, x_curr: np.ndarray, live_fields:List[PotentialField]|None = None) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         if self.field is None: return None, None
@@ -186,18 +220,7 @@ class SQPSolver:
         return A_local, b_local
 
     def _update_dynamics(self, x0, xs_lin, us_lin):
-        """Recomputes dynamics matrices (Ad, Bd, Gd) and constructs A_dyn."""
-
-        # Check Inputs
-        #assert not (np.isnan(x0).any() or np.isinf(x0).any()), f"NaN/Inf found in state x0: {x0}"
-        #assert not (np.isnan(xs_lin).any() or np.isinf(xs_lin).any()), "NaN/Inf found in linearization trajectory xs_lin" 
-        #assert not (np.isnan(us_lin).any() or np.isinf(us_lin).any()), "NaN/Inf found in linearization controls us_lin"
-
         Ad_list, Bd_list, Gd_list = self.dynamics.discretize(xs_lin[:-1], us_lin, dt=self.dt)
-
-        #assert not np.isnan(Ad_list).any(), "NaN found in Ad_list (Jacobian). Likely a mathematical singularity in dynamics."
-        #assert not np.isnan(Bd_list).any(), "NaN found in Bd_list."
-        #assert not np.isnan(Gd_list).any(), "NaN found in Gd_list."
         
         data_list, row_list, col_list = [], [], []
         l_bounds, u_bounds = [], []
@@ -233,12 +256,7 @@ class SQPSolver:
             (np.concatenate(data_list), (np.concatenate(row_list), np.concatenate(col_list))),
             shape=(self.N * self.n, self.var_count)
         )
-        self.cache["l_dyn"] = np.hstack(l_bounds)
-        self.cache["u_dyn"] = np.hstack(u_bounds)
-
-        #assert not np.isnan(self.cache["A_dyn"].data).any(), "NaN found in constructed A_dyn sparse matrix data"
-        #assert not np.isnan(self.cache["l_dyn"]).any(), "NaN found in l_dyn vector"
-        #assert not np.isnan(self.cache["u_dyn"]).any(), "NaN found in u_dyn vector"
+        self.cache["l_dyn"] = np.hstack(l_bounds); self.cache["u_dyn"] = np.hstack(u_bounds)
 
     def _update_field(self, xs_lin, live_fields:List[PotentialField]|None=None):
         """Recomputes field constraints and constructs A_field."""
@@ -277,33 +295,6 @@ class SQPSolver:
             #assert not np.isnan(self.cache["u_field"]).any(), "NaN found in u_field"
         else:
             self.cache["A_field"] = None
-
-
-    def _update_bounds_cache(self, xmin, xmax, umin, umax):
-        """
-        Updates l_box/u_box in cache ONLY if input bounds differ from defaults.
-        Uses a simple tuple key check to avoid recomputing large arrays.
-        """
-        # Determine effective bounds
-        xn = xmin if xmin is not None else self.x_min_def
-        xm = xmax if xmax is not None else self.x_max_def
-        un = umin if umin is not None else self.u_min_def
-        um = umax if umax is not None else self.u_max_def
-
-        is_default = (xmin is None and xmax is None and umin is None and umax is None)
-        
-        if is_default and self.cache["l_box"] is not None:
-            return # Already cached defaults
-
-        # Regenerate vectors
-        xn_vec, xm_vec = self._parse_bounds((xn, xm), self.n)
-        un_vec, um_vec = self._parse_bounds((un, um), self.m)
-
-        x_lo, x_up = np.tile(xn_vec, self.N), np.tile(xm_vec, self.N)
-        u_lo, u_up = np.tile(un_vec, self.N), np.tile(um_vec, self.N)
-        
-        self.cache["l_box"] = np.hstack([x_lo, u_lo])
-        self.cache["u_box"] = np.hstack([x_up, u_up])
 
     def _assemble_qp_matrices(self) -> Tuple[sparse.csc_matrix, np.ndarray, np.ndarray]:
         """

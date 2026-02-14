@@ -405,7 +405,7 @@ class Quadcopter(Robot):
 # ==========================================
 
 class QuadcopterV1Perspective(Robot):
-    def __init__(self, config: dict, color='k', projection='orthographic', camera_dist=1.0, shadow_z=0.0):
+    def __init__(self, config: dict, color='k', projection='orthographic', camera_dist=100, shadow_z=20.0):
         # 1. Use V1 Dynamics
         dynamics = QuadcopterV1Dynamics(**config)
         super().__init__(dynamics)
@@ -472,13 +472,13 @@ class QuadcopterV1Perspective(Robot):
 
     def create_painter(self, ax: plt.Axes):
         painter = {}
-        shadow_style = {'color': 'black', 'alpha': 0.15, 'zorder': 0.1, 'lw': 2}
+        shadow_style = {'color': 'grey', 'alpha': 0.4, 'zorder': 1.5, 'lw': 2}
         painter['shadow_arm1'], = ax.plot([], [], '-', **shadow_style)
         painter['shadow_arm2'], = ax.plot([], [], '-', **shadow_style)
-        painter['shadow_props'] = [ax.add_patch(patches.Polygon(np.zeros((40, 2)), fc='black', alpha=0.1, zorder=0.1)) for _ in range(4)]
+        painter['shadow_props'] = [ax.add_patch(patches.Polygon(np.zeros((40, 2)), fc='black', alpha=0.3, zorder=1.5)) for _ in range(4)]
 
-        painter['arm1'], = ax.plot([], [], '-', color=self.color, lw=1.5, zorder=2)
-        painter['arm2'], = ax.plot([], [], '-', color=self.color, lw=1.5, zorder=2)
+        painter['arm1'], = ax.plot([], [], '-', color=self.color, lw=1.5, zorder=2002)
+        painter['arm2'], = ax.plot([], [], '-', color=self.color, lw=1.5, zorder=2002)
         
         painter['prop_fills'] = []
         painter['prop_lines'] = []
@@ -487,14 +487,14 @@ class QuadcopterV1Perspective(Robot):
         colors = ['blue', 'blue', 'red', 'red'] 
         
         for i in range(4):
-            poly = patches.Polygon(np.zeros((40, 2)), fc=colors[i], alpha=0.8, zorder=3)
-            line, = ax.plot([], [], color=colors[i], lw=0.5, zorder=4)
+            poly = patches.Polygon(np.zeros((40, 2)), fc=colors[i], alpha=0.8, zorder=2003)
+            line, = ax.plot([], [], color=colors[i], lw=0.5, zorder=2004)
             ax.add_patch(poly)
             painter['prop_fills'].append(poly)
             painter['prop_lines'].append(line)
         
         painter['heading'] = patches.Polygon(np.zeros((3, 2)), fc='magenta', alpha=0.99, zorder=2100, label="Heading")
-        #ax.add_patch(painter['heading'])
+        ax.add_patch(painter['heading'])
         painter['vel_head'] = patches.Polygon(np.zeros((3, 2)), fc='skyblue', alpha=0.99, zorder=2099, label="Velocity Vector")
         ax.add_patch(painter['vel_head'])
         return painter
@@ -505,44 +505,91 @@ class QuadcopterV1Perspective(Robot):
         phi, theta, psi = x_state[6], x_state[7], x_state[8]
         
         R = self._get_rotation_matrix(phi, theta, psi)
-        offset = 0.2 if self.projection_mode == 'orthographic' else 0.0
         
-        p_world_motors = (R @ self.body_pts_3d) + np.array([[px], [py], [pz]])
+        # --- 1. Calculate Local 3D Points (Rotated) ---
+        # These are relative to the drone's center of mass (0,0,0)
+        p_local = R @ self.body_pts_3d
         
-        # Shadows
-        p_s = p_world_motors.copy()
-        p_s[0:2, :] += offset; p_s[2, :] = self.shadow_z
-        s_2d = self._project(p_s)
-        painter['shadow_arm1'].set_data(s_2d[0, [0, 2]], s_2d[1, [0, 2]])
-        painter['shadow_arm2'].set_data(s_2d[0, [1, 3]], s_2d[1, [1, 3]])
+        # --- 2. Calculate Perspective Factors ---
+        # We scale the *offsets* based on how close they are to the camera
+        z_points = p_local[2, :] + pz
+        
+        if self.projection_mode == 'orthographic':
+            factors = 1.0
+            shadow_factor = 1.0
+        else:
+            # Body Factor: d / (d - z)
+            factors = self.camera_dist / (self.camera_dist - np.clip(z_points, -100, self.camera_dist * 0.9))
+            # Shadow Factor: d / (d - z_ground)
+            shadow_factor = self.camera_dist / (self.camera_dist - self.shadow_z)
 
-        # Body
-        p_2d = self._project(p_world_motors)
-        painter['arm1'].set_data(p_2d[0, [0, 2]], p_2d[1, [0, 2]])
-        painter['arm2'].set_data(p_2d[0, [1, 3]], p_2d[1, [1, 3]])
+        # --- 3. Update Shadows (Projected to Ground) ---
+        offset = 0.2 if self.projection_mode == 'orthographic' else 0.2
         
-        # Rotors
+        # Scale local shape by shadow factor (usually ~1.0) and add global pos
+        s_offsets = p_local[0:2, :] * shadow_factor
+        s_x = s_offsets[0, :] + px + offset
+        s_y = s_offsets[1, :] + py + offset
+        
+        painter['shadow_arm1'].set_data(s_x[[0, 2]], s_y[[0, 2]])
+        painter['shadow_arm2'].set_data(s_x[[1, 3]], s_y[[1, 3]])
+
+        # --- 4. Update Body (Projected at Altitude) ---
+        # Scale local shape by altitude factor (Get bigger as we go up)
+        p_2d_offsets = p_local[0:2, :] * factors
+        
+        # Add Global Position *AFTER* scaling offsets
+        p_world_x = p_2d_offsets[0, :] + px
+        p_world_y = p_2d_offsets[1, :] + py
+        
+        painter['arm1'].set_data(p_world_x[[0, 2]], p_world_y[[0, 2]])
+        painter['arm2'].set_data(p_world_x[[1, 3]], p_world_y[[1, 3]])
+        
+        # --- 5. Update Props ---
         t = np.linspace(0, 2*np.pi, 40)
-        circle = np.array([self.prop_radius*np.cos(t), self.prop_radius*np.sin(t), np.zeros(40)])
+        base_circle = np.array([self.prop_radius*np.cos(t), self.prop_radius*np.sin(t), np.zeros(40)])
+        
         for i in range(4):
-            r_3d = R @ (circle + self.body_pts_3d[:, i:i+1]) + np.array([[px], [py], [pz]])
-            r_2d = self._project(r_3d).T
-            painter['prop_fills'][i].set_xy(r_2d)
-            painter['prop_lines'][i].set_data(r_2d[:, 0], r_2d[:, 1])
+            # Calculate Prop Circle in Local Body Frame
+            motor_center = self.body_pts_3d[:, i:i+1]
+            prop_local_3d = R @ (base_circle + motor_center)
             
-            rs_3d = r_3d.copy(); rs_3d[0:2, :] += offset; rs_3d[2, :] = self.shadow_z
-            painter['shadow_props'][i].set_xy(self._project(rs_3d).T)
+            # Perspective Scale for Props
+            z_prop = prop_local_3d[2, :] + pz
+            
+            if self.projection_mode == 'orthographic':
+                f_prop = 1.0
+            else:
+                f_prop = self.camera_dist / (self.camera_dist - np.clip(z_prop, -100, self.camera_dist * 0.9))
+            
+            # Apply Scale to Offsets -> Add Global Pos
+            prop_offsets_2d = prop_local_3d[0:2, :] * f_prop
+            r_x = prop_offsets_2d[0, :] + px
+            r_y = prop_offsets_2d[1, :] + py
+            
+            painter['prop_fills'][i].set_xy(np.column_stack((r_x, r_y)))
+            painter['prop_lines'][i].set_data(r_x, r_y)
+            
+            # Shadow Props
+            s_prop_offsets = prop_local_3d[0:2, :] * shadow_factor
+            painter['shadow_props'][i].set_xy(np.column_stack((
+                s_prop_offsets[0, :] + px + offset,
+                s_prop_offsets[1, :] + py + offset
+            )))
 
-        # Heading Arrow: Nose is +Y
+        # --- 6. Heading Arrow ---
         nose_dir_body = np.array([[0], [1], [0]]) 
-        nose_world = (R @ nose_dir_body) 
-        arrow_len = self.dynamics.l * 3.0
+        nose_local = (R @ nose_dir_body) 
         
-        tip_x = px + nose_world[0,0] * arrow_len
-        tip_y = py + nose_world[1,0] * arrow_len
+        # Use average body factor for arrow scale
+        avg_factor = np.mean(factors) if not isinstance(factors, float) else factors
+        arrow_len = self.dynamics.l * 3.0 * avg_factor
         
-        heading_angle = np.arctan2(nose_world[1,0], nose_world[0,0])
-        base_arrow = np.array([[0, 0], [-1.0, 1.0], [-1.0, -1.0]]) * self.dynamics.l
+        tip_x = px + nose_local[0,0] * arrow_len
+        tip_y = py + nose_local[1,0] * arrow_len
+        
+        heading_angle = np.arctan2(nose_local[1,0], nose_local[0,0])
+        base_arrow = np.array([[0, 0], [-1.0, 1.0], [-1.0, -1.0]]) * self.dynamics.l * avg_factor
         c, s = np.cos(heading_angle), np.sin(heading_angle)
         rot_arrow = (np.array([[c, -s], [s, c]]) @ base_arrow.T).T
         painter['heading'].set_xy(rot_arrow + np.array([tip_x, tip_y]))
@@ -551,6 +598,7 @@ class QuadcopterV1Perspective(Robot):
         v_mag = np.hypot(vx, vy)
         if v_mag > 0.1:
             scale = np.clip(v_mag, 1.0, 4.0)
+            # Velocity arrow doesn't need perspective scaling, it's abstract
             v_end_x = px + (vx / v_mag) * scale
             v_end_y = py + (vy / v_mag) * scale
             

@@ -501,24 +501,27 @@ class PolygonRGJ(RGJGeometry):
         """
         # ---------- normalize input to list of rings ----------
         if isinstance(coordinates, np.ndarray):
-            if coordinates.ndim == 2 and coordinates.shape[1] == 2:
+            if coordinates.ndim == 2:
                 rings = [coordinates.astype(float)]
             else:
                 rings = [np.asarray(r, float) for r in coordinates]
         elif isinstance(coordinates, (list, tuple)):
-            # detect single flat ring vs list-of-rings
-            if len(coordinates) > 0 and isinstance(coordinates[0], (int, float, np.floating)):
-                # flat sequence of coords => single ring
-                rings = [np.asarray(coordinates, float).reshape(-1, 2)]
-            elif len(coordinates) > 0 and isinstance(coordinates[0], (list, tuple, np.ndarray)) and \
-                 np.shape(coordinates)[-1] == 2 and isinstance(coordinates[0][0], (int, float, np.floating)):
-                # also handle list-of-tuples like [(x,y),(x,y),...]
-                rings = [np.asarray(coordinates, float).reshape(-1, 2)]
+            if len(coordinates) > 0:
+                first_elem = coordinates[0]
+                # Check if it's a flat list of numbers [x, y, x, y...]
+                if isinstance(first_elem, (int, float, np.floating)):
+                    rings = [np.asarray(coordinates, float).reshape(-1, 2)]
+                # Check if it's a list of points [[x,y], [x,y]...] 
+                # We check the first point without using np.shape on the whole list
+                elif isinstance(first_elem, (list, tuple, np.ndarray)) and len(first_elem) == 2:
+                    rings = [np.asarray(coordinates, float).reshape(-1, 2)]
+                # Otherwise, it's nested rings [[[x,y], [x,y]...], [[x,y]...]]
+                else:
+                    rings = [np.asarray(r, float).reshape(-1, 2) for r in coordinates]
             else:
-                # nested rings
-                rings = [np.asarray(r, float).reshape(-1, 2) for r in coordinates]
+                rings = []
         else:
-            raise TypeError("Coordinates must be ndarray or (list/tuple) of coordinates or rings.")
+            raise TypeError("Coordinates must be ndarray or list/tuple.")
 
         # ensure each ring is closed
         self.rings: List[np.ndarray] = []

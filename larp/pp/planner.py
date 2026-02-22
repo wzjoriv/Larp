@@ -8,7 +8,7 @@ from larp.field import PotentialField
 from larp.fn import interpolate_along_route
 from larp.pp.network import QuadNetwork
 
-from larp.quad import QuadNode, QuadTree
+from larp.quad import QuadNode, QuadTree, QPotentailField
 from larp.types import Scaler, Point
 
 """
@@ -428,13 +428,8 @@ class QuadPlanner(Planner):
 
         return  path
 
-
 # Path planning algorithms
 def smooth_path_line_of_sight(path: np.ndarray, field: PotentialField, threshold: float):
-    """
-    State-of-the-art smoothing: Removes redundant waypoints if a 
-    direct line-of-sight exists without hitting obstacles.
-    """
     if len(path) < 3:
         return path
 
@@ -442,7 +437,8 @@ def smooth_path_line_of_sight(path: np.ndarray, field: PotentialField, threshold
     curr_idx = 0
     
     while curr_idx < len(path) - 1:
-        # Check from last added point to the furthest possible point in the path
+        found_next = False
+        # Try to find the furthest shortcut
         for next_idx in range(len(path) - 1, curr_idx, -1):
             dist = np.linalg.norm(path[next_idx] - smoothed[-1])
             steps = max(3, int(dist / 2.0))
@@ -451,23 +447,34 @@ def smooth_path_line_of_sight(path: np.ndarray, field: PotentialField, threshold
             if not np.any(field.eval(check_pts) > threshold):
                 smoothed.append(path[next_idx])
                 curr_idx = next_idx
+                found_next = True
                 break
+        
+        # FALLBACK: If no shortcut is found, move to the very next point
+        if not found_next:
+            curr_idx += 1
+            smoothed.append(path[curr_idx])
+            
     return np.array(smoothed)
 
 def find_path_irrt_star(
     start_point: Point,
     end_point: Point,
     field: PotentialField,
-    step_size: float = 15.0,     # Increased for better 'wrap-around'
-    search_radius: float = 40.0,
-    max_iter: int = 3000,        # Higher iterations for complex buildings
+    step_size: float | None = None,     # Increased for better 'wrap-around'
+    search_radius: float|None = None,
+    max_iter: int = 300,        # Higher iterations for complex buildings
     collision_threshold: float = 0.7,
-    goal_bias: float = 0.1,
+    collision_step = 2.0,
+    goal_bias: float = 0.2,
     **kwargs
 ) -> Optional[np.ndarray]:
     
     start_point = np.array(start_point, dtype=float)
     end_point = np.array(end_point, dtype=float)
+    step_size = max(field.size)/120 if step_size is None else step_size
+    search_radius = max(field.size)/30 if search_radius is None else search_radius
+
     c_best = np.inf
     best_path = None
     
@@ -513,35 +520,56 @@ def find_path_irrt_star(
         x_new = nodes[near_idx] + (diff / mag * step_size) if mag > step_size else x_samp
 
         # Collision Check (Dynamic)
-        check_steps = max(3, int(np.linalg.norm(x_new - nodes[near_idx]) / 2.0))
+        check_steps = max(3, int(np.linalg.norm(x_new - nodes[near_idx]) / collision_step))
         if np.any(field.eval(np.linspace(nodes[near_idx], x_new, check_steps)) > collision_threshold):
             continue
 
-        # Choose Parent & Rewire (Vectorized)
+        # 2. FIND NEARBY (Vectorized Distance)
         dists_all = np.linalg.norm(nodes[:node_count] - x_new, axis=1)
-        nearby = np.where(dists_all <= search_radius)[0]
+        nearby_mask = dists_all <= search_radius
+        nearby_indices = np.where(nearby_mask)[0]
+        
+        if len(nearby_indices) == 0:
+            nearby_indices = np.array([near_idx])
+
+        # 3. VECTORIZED PARENT SELECTION
+        # Calculate potential costs for all nearby nodes
+        candidate_costs = costs[nearby_indices] + dists_all[nearby_indices]
+        
+        # Sort candidates by cost so we check the cheapest ones first for collisions
+        sorted_nearby_idx = nearby_indices[np.argsort(candidate_costs)]
         
         best_near = near_idx
-        min_cost = costs[near_idx] + np.linalg.norm(x_new - nodes[near_idx])
+        min_cost = costs[near_idx] + dists_all[near_idx]
 
-        for nb in nearby:
-            c_cand = costs[nb] + dists_all[nb]
-            if c_cand < min_cost:
-                if not np.any(field.eval(np.linspace(nodes[nb], x_new, 5)) > collision_threshold):
-                    min_cost = c_cand
-                    best_near = nb
+        # We still need a small loop here for the "first valid" collision check, 
+        # BUT we can check multiple segments at once if we want to be aggressive.
+        for nb in sorted_nearby_idx:
+            # Short-circuiting collision check using your QuadTree awareness
+            if is_segment_valid_vectorized(nodes[nb], x_new, field, collision_threshold):
+                best_near = nb
+                min_cost = costs[nb] + dists_all[nb]
+                break 
 
-        # Add Node
+        # 4. ADD NODE
         nodes[node_count] = x_new
         parents[node_count] = best_near
         costs[node_count] = min_cost
-        
-        # Rewire Neighbors
-        for nb in nearby:
-            if costs[node_count] + dists_all[nb] < costs[nb]:
-                if not np.any(field.eval(np.linspace(x_new, nodes[nb], 5)) > collision_threshold):
-                    parents[nb] = node_count
-                    costs[nb] = costs[node_count] + dists_all[nb]
+
+        # 5. VECTORIZED REWIRING
+        # Calculate: if I am the parent of my neighbors, is it cheaper?
+        new_potential_costs = costs[node_count] + dists_all[nearby_indices]
+        rewire_mask = new_potential_costs < costs[nearby_indices]
+        rewire_indices = nearby_indices[rewire_mask]
+
+        if len(rewire_indices) > 0:
+            # Batch check collisions for all rewire candidates
+            # This is where you get the biggest speedup!
+            valid_rewire_mask = batch_collision_check(x_new, nodes[rewire_indices], field, collision_threshold)
+            
+            final_rewire_targets = rewire_indices[valid_rewire_mask]
+            parents[final_rewire_targets] = node_count
+            costs[final_rewire_targets] = new_potential_costs[rewire_mask][valid_rewire_mask]
 
         node_count += 1
         
@@ -563,6 +591,95 @@ def find_path_irrt_star(
         return smooth_path_line_of_sight(best_path, field, collision_threshold)
     return None
 
+def batch_collision_check(origin: np.ndarray, targets: np.ndarray, field: QPotentailField, threshold: float, num_samples: int = 5):
+    """
+    Checks multiple segments (origin -> targets[i]) for collisions in one go.
+    """
+    # origin: (2,)
+    # targets: (K, 2)
+    K = targets.shape[0]
+    
+    # Create interpolation weights: (num_samples,)
+    alphas = np.linspace(0, 1, num_samples)
+    
+    # Generate all points for all segments: (K, num_samples, 2)
+    # Using broadcasting: (K, 1, 2) + (num_samples, 1) * (K, 1, 2)
+    segments = origin[None, None, :] + alphas[None, :, None] * (targets - origin)[:, None, :]
+    
+    # Reshape to (K * num_samples, 2) to feed into the potential field
+    flat_segments = segments.reshape(-1, 2)
+    
+    # One big vectorized evaluation!
+    # QPotentialField will use the QuadTree internally to make this fast
+    potentials = field.eval(flat_segments)
+    
+    # Reshape back to (K, num_samples)
+    potentials = potentials.reshape(K, num_samples)
+    
+    # A segment is valid if ALL its samples are below the threshold
+    return ~np.any(potentials > threshold, axis=1)
+
+def is_segment_valid_vectorized(
+    p1: np.ndarray, 
+    p2: np.ndarray, 
+    field: QPotentailField, 
+    threshold: float, 
+    min_samples: int = 5
+) -> bool:
+    """
+    Checks if a single segment is collision-free using vectorized sampling.
+    """
+    dist = np.linalg.norm(p2 - p1)
+    if dist < 1e-7:
+        return True
+        
+    # Determine number of samples based on distance (Adaptive Sampling)
+    # We use field.min_sector_size to ensure we don't "jump" over small obstacles
+    step_limit = field.quadtree.min_sector_size / 2.0
+    num_samples = max(min_samples, int(dist / step_limit))
+    
+    # Vectorized point generation: (num_samples, 2)
+    alphas = np.linspace(0, 1, num_samples)[:, None]
+    check_pts = p1 + alphas * (p2 - p1)
+    
+    # QPotentialField.eval handles the QuadTree lookup internally
+    potentials = field.eval(check_pts)
+    
+    # Return True if NO point exceeds the threshold
+    return not np.any(potentials > threshold)
+
+def _fast_segment_check(p1: np.ndarray, p2: np.ndarray, field: PotentialField, threshold: float) -> Tuple[bool, float]:
+    """
+    Optimized collision check with Quadtree short-circuiting.
+    Returns: (is_safe, avg_risk_cost_multiplier)
+    """
+    # 1. Quick Endpoints Check
+    if np.any(field.eval(np.vstack([p1, p2])) > threshold):
+        return False, np.inf
+
+    # 2. Quadtree Awareness (QPotentialField integration)
+    if hasattr(field, 'quadtree'):
+        midpoint = (p1 + p2) / 2.0
+        # Fast look up of the quad containing the midpoint.
+        # If empty (no RGJs), we assume safe zone (risk = 0).
+        q_node = field.quadtree.find_quad([midpoint], max_depth=3)[0]
+        if len(q_node.rgj_idx) == 0:
+            return True, 0.0
+
+    # 3. Dense Check
+    dist = np.linalg.norm(p2 - p1)
+    if dist < 1e-6: return True, 0.0
+    
+    # Adaptive sampling
+    steps = max(3, int(dist / 2.0)) 
+    check_pts = np.linspace(p1, p2, steps)
+    potentials = field.eval(check_pts)
+    
+    if np.any(potentials > threshold):
+        return False, np.inf
+        
+    return True, np.mean(potentials)
+
 def find_path_bit_star(
     start_point: Point,
     end_point: Point,
@@ -573,133 +690,226 @@ def find_path_bit_star(
     risk_penalty: float = 5.0,
     **kwargs
 ) -> Optional[np.ndarray]:
+    """
+    Faithful BIT* implementation (Gammell et al. 2015).
+    Maintains explicit Vertex and Edge queues to ensure optimal search ordering.
+    """
     
     start_pt = np.atleast_1d(start_point).astype(float)
     end_pt = np.atleast_1d(end_point).astype(float)
-    start_tuple = tuple(start_pt)
-    end_tuple = tuple(end_pt)
     
-    # 1. Setup Informed Sampling
+    # Heuristic (Euclidean)
+    def h(p): return np.linalg.norm(p - end_pt)
+    
+    # --- State Management (Array-based for speed) ---
+    # We maintain a master list of all points (Start + Goal + Samples)
+    # Index 0 is Start, Index 1 is Goal.
+    points = [start_pt, end_pt]
+    
+    # Tree properties per index
+    g_scores = {0: 0.0, 1: np.inf}
+    parents = {0: None, 1: None}
+    
+    # Sets for logical tracking
+    tree_indices = {0}      # V_connected
+    sample_indices = {1}    # V_unconnected (Goal starts unconnected)
+    
     c_best = np.inf
     c_min = np.linalg.norm(end_pt - start_pt)
-    x_center = (start_pt + end_pt) / 2.0
     
-    dir_vec = (end_pt - start_pt) / c_min
+    # Informed Sampling Setup
+    x_center = (start_pt + end_pt) / 2.0
+    dir_vec = (end_pt - start_pt) / (c_min + 1e-9)
     angle = np.arctan2(dir_vec[1], dir_vec[0])
     rot = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
-    
-    h = lambda p: np.linalg.norm(np.array(p) - end_pt)
 
-    # 2. State Tracking
-    samples = {end_tuple} 
-    tree = {start_tuple: None}
-    g_scores = {start_tuple: 0.0}
+    # Queues
+    # qv: [(f_score, vertex_idx)]
+    # qe: [(f_score, source_idx, target_idx)]
+    qv = []
+    qe = []
 
-    def get_edge_info(u, v):
-        u_arr, v_arr = np.array(u), np.array(v)
-        dist = np.linalg.norm(v_arr - u_arr)
-        # Collision check density: sample every 5 units for performance
-        steps = max(3, int(dist / 5.0)) 
-        pts = np.linspace(u_arr, v_arr, steps)
-        potentials = field.eval(pts)
+    for batch in range(max_batches):
+        # ----------------------------------------
+        # 1. Pruning & Sampling (Start of Batch)
+        # ----------------------------------------
+        if c_best < np.inf:
+            # Prune unconnected samples that can't improve solution
+            to_remove = []
+            for idx in sample_indices:
+                if idx == 1: continue # Don't delete goal
+                pt = points[idx]
+                # Admissible heuristic estimate > current best
+                # Note: start is at 0. But for unconnected, we estimate f_hat = g_start + dist + h
+                if np.linalg.norm(pt - start_pt) + h(pt) >= c_best:
+                    to_remove.append(idx)
+            
+            for idx in to_remove:
+                sample_indices.remove(idx)
+                # Note: We don't remove from 'points' list to keep indices stable, just ignore them
+
+        # Generate new samples
+        new_indices = []
+        count_needed = batch_size
+        attempts = 0
         
-        if np.any(potentials > collision_threshold):
-            return np.inf, np.inf
-        
-        avg_risk = np.mean(potentials)
-        weighted_cost = dist * (1.0 + risk_penalty * avg_risk)
-        return dist, weighted_cost
-
-    for b in range(max_batches):
-        # --- Batch Generation ---
-        new_samples = []
-        while len(new_samples) < batch_size:
+        while len(new_indices) < count_needed and attempts < count_needed * 10:
+            attempts += 1
             if c_best < np.inf:
-                # Ellipsoidal sampling
-                r_val = np.sqrt(np.random.random())
+                # Ellipsoid
+                r_rand = np.sqrt(np.random.random())
                 theta = np.random.uniform(0, 2 * np.pi)
-                x_ball = np.array([r_val * np.cos(theta), r_val * np.sin(theta)])
-                radii = np.array([c_best, np.sqrt(max(0, c_best**2 - c_min**2))]) / 2.0
-                x_samp = rot @ (x_ball * radii) + x_center
+                x_ball = np.array([r_rand * np.cos(theta), r_rand * np.sin(theta)])
+                a1 = c_best / 2.0
+                a2 = np.sqrt(max(0, c_best**2 - c_min**2)) / 2.0
+                x_samp = rot @ (x_ball * [a1, a2]) + x_center
             else:
+                # Global
                 x_samp = np.random.uniform(field.bbox[0], field.bbox[1])
             
+            # Pruning check
             if np.linalg.norm(x_samp - start_pt) + h(x_samp) < c_best:
-                new_samples.append(tuple(x_samp))
-        
-        samples.update(new_samples)
-        
-        # --- Efficiency Update: Build KD-Tree for samples ---
-        all_samples_list = list(samples)
-        sample_tree = cKDTree(all_samples_list)
-        
-        # Shrinking Radius Formula (Standard RRT* / BIT*)
-        # unit_vol = np.pi (for 2D)
-        eta = 1.1 # optimality factor
-        gamma = 2 * eta * np.sqrt(1.5 * (field.size[0]*field.size[1]) / np.pi)
-        n_total = len(samples) + len(tree)
-        r_disc = min(gamma * np.sqrt(np.log(n_total) / n_total), c_min)
+                points.append(x_samp)
+                idx = len(points) - 1
+                sample_indices.add(idx)
+                new_indices.append(idx)
+                g_scores[idx] = np.inf
+                parents[idx] = None
 
-        # --- Queue Management ---
-        edge_queue = []
-        # Add edges from tree nodes to nearby samples
-        for u_pt in tree.keys():
-            u_arr = np.array(u_pt)
-            # Find indices of samples within radius
-            idxs = sample_tree.query_ball_point(u_arr, r_disc)
-            for idx in idxs:
-                v_pt = all_samples_list[idx]
-                if v_pt == u_pt or v_pt in tree: continue
-                
-                dist_uv = np.linalg.norm(np.array(v_pt) - u_arr)
-                f_val = g_scores[u_pt] + dist_uv + h(v_pt)
-                
-                if f_val < c_best:
-                    heapq.heappush(edge_queue, (f_val, u_pt, v_pt))
+        # ----------------------------------------
+        # 2. Build Spatial Index (for Spherical Search)
+        # ----------------------------------------
+        # We need to query neighbors efficiently.
+        # Tree nodes need to find Sample neighbors.
+        # BIT* defines radius based on total samples 'q'.
+        q = len(points)
+        dim = 2
+        
+        # Calculate R_BIT* (Radius)
+        # Assuming unit volume for simplicity or estimate bbox area
+        area = (field.bbox[1][0] - field.bbox[0][0]) * (field.bbox[1][1] - field.bbox[0][1])
+        zeta_d = np.pi # Unit ball volume in 2D
+        gamma = 2 * (1 + 1/dim)**(1/dim) * (area / zeta_d)**(1/dim)
+        r_disc = gamma * (np.log(q) / q)**(1/dim)
+        r_disc = max(r_disc, 0.5) # Minimum sanity radius
 
-        # --- Ordered Search ---
-        while edge_queue:
-            f_val, u_pt, v_pt = heapq.heappop(edge_queue)
+        # Build KDTree for ALL points to handle queries easily
+        # (Optimized: we only really need to query against 'sample_indices', 
+        # but rebuilding a partial tree every loop is fast enough for <10k points)
+        # Map: kd_idx -> points_idx
+        active_samples_list = list(sample_indices)
+        if not active_samples_list: continue
+        
+        sample_kdtree = cKDTree([points[i] for i in active_samples_list])
+
+        # ----------------------------------------
+        # 3. Queue Initialization
+        # ----------------------------------------
+        # Clear queues for new batch
+        qv = []
+        qe = []
+        
+        # Repopulate Vertex Queue with ALL nodes in Tree (filtered by heuristic)
+        # This allows the tree to "expand" into the new samples
+        for idx in tree_indices:
+            # Only expand if it can theoretically improve solution
+            if g_scores[idx] + h(points[idx]) < c_best:
+                heapq.heappush(qv, (g_scores[idx] + h(points[idx]), idx))
+
+        # ----------------------------------------
+        # 4. Search Loop (The Core of BIT*)
+        # ----------------------------------------
+        while qv or qe:
             
-            if f_val >= c_best: 
-                break # Cannot improve current best
-
-            # Re-check g_score in case a better path to u was found since push
-            if g_scores[u_pt] + np.linalg.norm(np.array(v_pt)-np.array(u_pt)) + h(v_pt) >= c_best:
-                continue
-
-            dist_uv, actual_cost = get_edge_info(u_pt, v_pt)
+            # Stop if the best potential in queue is worse than current solution
+            if not qv and not qe: break
             
-            if actual_cost == np.inf: continue
+            min_qv = qv[0][0] if qv else np.inf
+            min_qe = qe[0][0] if qe else np.inf
+            
+            if min_qv >= c_best and min_qe >= c_best:
+                break
 
-            tentative_g = g_scores[u_pt] + actual_cost
-            if v_pt not in g_scores or tentative_g < g_scores[v_pt]:
-                g_scores[v_pt] = tentative_g
-                tree[v_pt] = u_pt
+            # --- Expand Best Vertex (qv) ---
+            if min_qv <= min_qe:
+                _, v_idx = heapq.heappop(qv)
                 
-                if v_pt == end_tuple:
-                    c_best = min(c_best, g_scores[v_pt])
-                else:
-                    # Expand to neighbors of the newly added node
-                    v_arr = np.array(v_pt)
-                    idxs = sample_tree.query_ball_point(v_arr, r_disc)
-                    for idx in idxs:
-                        next_v_pt = all_samples_list[idx]
-                        if next_v_pt in tree: continue
-                        dist_v_next = np.linalg.norm(np.array(next_v_pt) - v_arr)
-                        f_next = g_scores[v_pt] + dist_v_next + h(next_v_pt)
-                        if f_next < c_best:
-                            heapq.heappush(edge_queue, (f_next, v_pt, next_v_pt))
+                # Pruning check (just in case g_score changed or bounds updated)
+                if g_scores[v_idx] + h(points[v_idx]) >= c_best:
+                    continue
 
-    # Path Reconstruction
-    if end_tuple in tree:
-        path = []
-        curr = end_tuple
+                # Spherical Search: Find unconnected samples near v
+                v_pt = points[v_idx]
+                
+                # Query KDT for neighbors within radius
+                kd_idxs = sample_kdtree.query_ball_point(v_pt, r_disc)
+                
+                for k_idx in kd_idxs:
+                    x_idx = active_samples_list[k_idx]
+                    
+                    # Estimate cost
+                    dist = np.linalg.norm(points[x_idx] - v_pt)
+                    f_hat = g_scores[v_idx] + dist + h(points[x_idx])
+                    
+                    if f_hat < c_best:
+                        # Consistency check: In strict BIT*, we also check if
+                        # g_score[v] + dist < g_score[x].
+                        if g_scores[v_idx] + dist < g_scores.get(x_idx, np.inf) - 1e-6:
+                            heapq.heappush(qe, (f_hat, v_idx, x_idx))
+
+            # --- Expand Best Edge (qe) ---
+            else:
+                _, v_idx, x_idx = heapq.heappop(qe)
+                
+                # 1. Check if this edge is still useful
+                # (The target x might have been reached cheaper already in this batch)
+                dist_g = np.linalg.norm(points[x_idx] - points[v_idx])
+                
+                # We need actual edge cost (Lazy Evaluation happens here)
+                # Using your risk penalty logic for consistency
+                is_safe, avg_risk = _fast_segment_check(points[v_idx], points[x_idx], field, collision_threshold)
+                
+                if not is_safe:
+                    continue
+                    
+                edge_cost = dist_g * (1.0 + risk_penalty * avg_risk)
+                tentative_g = g_scores[v_idx] + edge_cost
+                
+                if tentative_g + h(points[x_idx]) >= c_best:
+                    continue
+
+                # 2. Update if path improves
+                if tentative_g < g_scores.get(x_idx, np.inf):
+                    # Update State
+                    g_scores[x_idx] = tentative_g
+                    parents[x_idx] = v_idx
+                    
+                    # Move to tree if not already
+                    if x_idx in sample_indices:
+                        sample_indices.remove(x_idx)
+                        tree_indices.add(x_idx)
+                        
+                        # Add to Vertex Queue to expand further
+                        heapq.heappush(qv, (tentative_g + h(points[x_idx]), x_idx))
+                    
+                    # If goal update
+                    if x_idx == 1: # Goal index
+                        c_best = tentative_g
+                        # Pruning happens at start of next batch
+
+    # --- Reconstruct Path ---
+    if g_scores[1] < np.inf:
+        path_idxs = []
+        curr = 1
         while curr is not None:
-            path.append(curr)
-            curr = tree[curr]
-        return smooth_path_line_of_sight(np.array(path[::-1]), field, collision_threshold)
-    
+            path_idxs.append(curr)
+            curr = parents[curr]
+        
+        if len(path_idxs) < 2: return None
+        
+        path_pts = np.array([points[i] for i in reversed(path_idxs)])
+        return smooth_path_line_of_sight(path_pts, field, collision_threshold)
+
     return None
 
 # -------------------------------------------------------------------------
@@ -710,9 +920,9 @@ def find_path_modified_apf(
     start_point: Point,
     end_point: Point,
     field: PotentialField,
-    step_size: float = 0.5,
+    step_size: float | None = None,
     max_iter: int = 5000,
-    goal_threshold: float = 2.0,
+    goal_threshold: float | None = None,
     eta: float = 200.0, # Increased Repulsion gain
     xi: float = 5.0,    # Attraction gain
     m: float = 2.0,     # M-APF hyper-parameter
@@ -730,6 +940,8 @@ def find_path_modified_apf(
     path = [np.array(start_point, dtype=float)]
     current_pos = np.atleast_2d(start_point).astype(float)
     end_point = np.array(end_point, dtype=float)
+    step_size = max(field.size)/1000 if step_size is None else step_size
+    goal_threshold = max(field.size)/200 if goal_threshold is None else step_size
     
     velocity = np.zeros(2) 
     momentum = 0.1 
@@ -796,7 +1008,7 @@ def find_path_modified_apf(
         current_pos[0] = pos_vec
         path.append(pos_vec.copy())
 
-    return np.array(path)
+    return None
 
 def find_path_A_star(start_point:Point, end_point:Point, network:QuadNetwork, scaler:Optional[Scaler]=None, max_scale: float = np.inf, **kargs) -> Optional[List[Point]]:
     """

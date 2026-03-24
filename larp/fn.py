@@ -76,3 +76,9 @@ def interpolate_along_route(route:Union[List[Point], np.ndarray], step=1e-3, n=0
     points = line_starts[lines_idx] + uni_vectors[lines_idx]*relative_offset.reshape(-1, 1)
 
     return points if not return_step_n else (points, step, n)
+
+def angle_diff(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Difference x - y wrapped to [-π, π]."""
+    d = x - y
+    d = (d + np.pi) % (2*np.pi) - np.pi
+    return d

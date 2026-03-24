@@ -10,10 +10,31 @@ authors = [
 ]
 description = "Larp (/lärp/): Last-Mile Route Planning"
 readme = "README.md"
-dependencies = ['numpy>=2.0.0', 'pyproj', 'matplotlib', 'scipy', 'osmnx', 'osqp', 'jax[cpu]']
+
+dependencies = [
+    'numpy>=2.0.0',
+    'scipy',
+    'matplotlib',
+    'osmnx',
+    'osqp',
+    'jax[cpu]',
+]
+
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+cuda = [ # NOTE: Future feature 
+    "jax[cuda12]",
+    "osqp[cuda]",
+    "cupy-cuda12x",
+]
+
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
 ]
 
 [project.urls]
@@ -21,7 +42,10 @@ Homepage = "https://github.com/wzjoriv/Larp"
 Issues = "https://github.com/wzjoriv/Larp/issues"
 
 [tool.setuptools.packages.find]
-include = ["larp"]
+include = ["larp*"]
 
 [tool.ruff.lint]
 select = ["NPY201"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]

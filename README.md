@@ -1,12 +1,12 @@
 # Larp: Last-Mile Route Planning
 
-A fast, flexible Python toolkit for autonomous navigation planning optimized for dynamic environments and complex spatial constraints.
+A fast, flexible Python toolkit for autonomous navigation planning optimized for dynamic environments and complex spatial urban constraints.
 
 ---
 
 ## 🔍 Overview
 
-**Larp** (/lärp/) is a framework for autonomous navigation that leverages *repulsive artificial potential fields* to model obstacles and environmental constraints. By decomposing a complex dynamical space into a hierarchical cell structure, Larp enables efficient spatial queries, scalable path and trajectory planning across large environments, and optimized computing.
+**Larp** (/lärp/) is a framework for autonomous navigation that leverages *risk fields* to model obstacles and environmental constraints. By decomposing a complex dynamical space into a hierarchical cell structure, Larp enables efficient spatial queries, scalable path and trajectory planning across large environments, and optimized computing.
 
 See [larp/examples](https://github.com/wzjoriv/Larp/blob/main/examples/) for example applications, ranging from urban air mobility to wheeled robot navigation.
 
@@ -14,20 +14,20 @@ Although originally developed for Unmanned Aerial Vehicles (UAVs) in urban air m
 
 ### 🚀 Key Features
 
-- **Repulsive Artificial Potential Fields**  
+- **Repulsive Artificial Risk Fields**  
   Models obstacles and constraints using artificial repulsive fields that guide navigation using non-binary influence.
 
 - **Multi-Scale Cell Decomposition**  
   Hierarchical spatial partitioning enables fast lookups and efficient field evaluations.
 
 - **Path Planning**  
-  Supports potential fields with spatial decomposition for rapid, constraint-aware global path planning.
+  Supports risk fields with spatial decomposition for rapid, obstacle-aware global path planning.
 
 - **Trajectory Generation**  
-  Includes dynamics-aware MPC and iLQR-based trajectory planner that respects repulsive field constraints.
+  Includes dynamics-aware SQP, DDP, and iLQR-based trajectory planner that respects risk field constraints.
 
 - **Flexible Application Domains**  
-  Applicable to UAVs, autonomous ground vehicles, mobile robots, and more.
+  Primary developed for active UAVs (Quadcopter, VTOL, fixed-wing, STOL) in urban spaces, but also applicable to autonomous ground vehicles, mobile robots, and more.
 
 ---
 
@@ -45,18 +45,20 @@ pip install larp
 - `numpy>=2.0.0`
 - `pyproj`
 - `osqp` (For optimal performance, follow setup instructions: https://osqp.org/docs/get_started/python.html)
-- `matplotlib` (Optional, for visualization)
+- 'jax' (Optional, for automatic differentiation of digital twin dynamics)
+- 'mujoco-mjx' (Optional, for loading complex digital twin models from file)
+- `matplotlib` (Optional, for environnment visualization)
 
 ---
 
-## 🧪 Demos
+## Examples
 
 Explore Larp’s capabilities through interactive Jupyter Notebook demos:
 
 - 📌 [General Demo](https://github.com/wzjoriv/Larp/blob/main/presentation.ipynb) — Introduction to core functionality  
-- 🔁 [Hot Reloading in Room Scene](https://github.com/wzjoriv/Larp/blob/main/examples/Hot%20Reloading%20in%20Room/presentation.ipynb) — Dynamic updates of obstacles
+- 🔁 [Hot Reloading in Room Scene](https://github.com/wzjoriv/Larp/blob/main/examples/Hot%20Reloading%20in%20Room/presentation.ipynb) — Dynamic updates of static obstacles
 - 🏛️ [City Center in Lafayette, IN](https://github.com/wzjoriv/Larp/blob/main/examples/Lafayette%20Court%20House/presentation.ipynb) — Path planning around building
-- 🏫 [Aerial Cargo Delivery](https://github.com/wzjoriv/Larp/blob/main/examples/Aerial%20Cargo%20Delivery/presentation.ipynb) — Low-altitude aerial cargo delivery planning on university campus
+- 🏫 [Aerial Cargo Delivery Path Planning](https://github.com/wzjoriv/Larp/blob/main/examples/Aerial%20Cargo%20Delivery/presentation.ipynb) — Low-altitude aerial cargo delivery planning on university campus
 - 🛫 [Urban Air Mobility of EVTOL](https://github.com/wzjoriv/Larp/blob/main/examples/Urban%20Air%20Mobility%20of%20EVTOL/presentation.ipynb) — Urban air mobility of EVTOL aircraft in Singapore
 
 ---

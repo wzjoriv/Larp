@@ -911,17 +911,17 @@ class MultiPolygonRGJ(MultiRGJGeometry):
             }
         }
     
-class PotentialField():
+class RiskField():
     
     """
-    Represents a potential field composed of a subset of RGJ objects.
+    Represents a risk field composed of a subset of RGJ objects.
 
     This class allows the storage and spatial organization of RGJ geometries, and provides tools
-    for bounding box management and automatic sizing/centering of the potential field based on input RGJs.
+    for bounding box management and automatic sizing/centering of the risk field based on input RGJs.
 
     Attributes:
         rgjs (List[RGJGeometry]): List of RGJ geometries in the field.
-        center_point (Point or None): Central reference point of the potential field. Can be auto-calculated.
+        center_point (Point or None): Central reference point of the risk field. Can be auto-calculated.
         size (np.ndarray or None): Spatial extent of the field (width, height). Can be inferred.
         extra_info (dict): Optional metadata or user-defined information.
         bbox (np.ndarray): Bounding box of all RGJs in the field. Shape (2, 2) -> [[xmin, ymin], [xmax, ymax]].
@@ -1064,12 +1064,12 @@ class PotentialField():
         if self.__reload_center:
             self.center_point = self.__calculate_center_point__()
 
-    def addField(self, new_field:PotentialField, reload_bbox = True):
+    def addField(self, new_field:RiskField, reload_bbox = True):
         r"""
-        Adds all RGJs from another potential field to this field.
+        Adds all RGJs from another risk field to this field.
 
         Args:
-            new_field (PotentialField): A potential field containing RGJs to add.
+            new_field (RiskField): A risk field containing RGJs to add.
             reload_bbox (bool, optional): Whether to recompute the bounding box after addition. Defaults to True.
         """
         og_reload_center = self.__reload_center
@@ -1300,7 +1300,7 @@ class PotentialField():
 
         return f_eval.sum()*step
     
-    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x) -> float:
+    def estimate_route_highest_risk(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)

@@ -17,7 +17,7 @@ def test_network_on_simple_pf():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   build_tree=True,
                                   minimum_length_limit=5,
@@ -39,7 +39,7 @@ def test_refresh_of_network():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   build_tree=True,
                                   minimum_length_limit=5,
@@ -47,7 +47,7 @@ def test_refresh_of_network():
     
     network = larp.pp.QuadNetwork(quadtree=quadtree, build_network=True)
 
-    qfield = larp.QPotentailField(quadtree)
+    qfield = larp.QRiskField(quadtree)
     qfield.delRGJ([1])
     
     network.refresh()

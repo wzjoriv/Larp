@@ -4,17 +4,17 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
 from scipy.spatial import cKDTree
-from larp.field import PotentialField
+from larp.field import RiskField
 from larp.fn import interpolate_along_route
 from larp.pp.network import QuadNetwork
 
-from larp.quad import QuadNode, QuadTree, QPotentailField
+from larp.quad import QuadNode, QuadTree, QRiskField
 from larp.types import Scaler, Point
 
 """
 Author: Josue N Rivera
 
-Module providing path planning algorithms. They can be over a potentiald field or quadtree-based spatial network of the potential field.
+Module providing path planning algorithms. They can be over a riskd field or quadtree-based spatial network of the risk field.
 Implements classic and multi-resolution planning strategies including A* and Dijkstra.
 """
 
@@ -293,7 +293,7 @@ class FieldPlanner(Planner):
     Path planner based on field only
     """
 
-    def __init__(self, field:Union[PotentialField], alg: Optional[PathAlgArg] = None):
+    def __init__(self, field:Union[RiskField], alg: Optional[PathAlgArg] = None):
         super().__init__(None)
         
         self.algs = defaultdict(lambda: None)
@@ -429,7 +429,7 @@ class QuadPlanner(Planner):
         return  path
 
 # Path planning algorithms
-def smooth_path_line_of_sight(path: np.ndarray, field: PotentialField, threshold: float):
+def smooth_path_line_of_sight(path: np.ndarray, field: RiskField, threshold: float):
     if len(path) < 3:
         return path
 
@@ -460,7 +460,7 @@ def smooth_path_line_of_sight(path: np.ndarray, field: PotentialField, threshold
 def find_path_irrt_star(
     start_point: Point,
     end_point: Point,
-    field: PotentialField,
+    field: RiskField,
     step_size: float | None = None,     # Increased for better 'wrap-around'
     search_radius: float|None = None,
     max_iter: int = 300,        # Higher iterations for complex buildings
@@ -533,7 +533,7 @@ def find_path_irrt_star(
             nearby_indices = np.array([near_idx])
 
         # 3. VECTORIZED PARENT SELECTION
-        # Calculate potential costs for all nearby nodes
+        # Calculate risk costs for all nearby nodes
         candidate_costs = costs[nearby_indices] + dists_all[nearby_indices]
         
         # Sort candidates by cost so we check the cheapest ones first for collisions
@@ -558,8 +558,8 @@ def find_path_irrt_star(
 
         # 5. VECTORIZED REWIRING
         # Calculate: if I am the parent of my neighbors, is it cheaper?
-        new_potential_costs = costs[node_count] + dists_all[nearby_indices]
-        rewire_mask = new_potential_costs < costs[nearby_indices]
+        new_risk_costs = costs[node_count] + dists_all[nearby_indices]
+        rewire_mask = new_risk_costs < costs[nearby_indices]
         rewire_indices = nearby_indices[rewire_mask]
 
         if len(rewire_indices) > 0:
@@ -569,7 +569,7 @@ def find_path_irrt_star(
             
             final_rewire_targets = rewire_indices[valid_rewire_mask]
             parents[final_rewire_targets] = node_count
-            costs[final_rewire_targets] = new_potential_costs[rewire_mask][valid_rewire_mask]
+            costs[final_rewire_targets] = new_risk_costs[rewire_mask][valid_rewire_mask]
 
         node_count += 1
         
@@ -591,7 +591,7 @@ def find_path_irrt_star(
         return smooth_path_line_of_sight(best_path, field, collision_threshold)
     return None
 
-def batch_collision_check(origin: np.ndarray, targets: np.ndarray, field: QPotentailField, threshold: float, num_samples: int = 5):
+def batch_collision_check(origin: np.ndarray, targets: np.ndarray, field: QRiskField, threshold: float, num_samples: int = 5):
     """
     Checks multiple segments (origin -> targets[i]) for collisions in one go.
     """
@@ -606,23 +606,23 @@ def batch_collision_check(origin: np.ndarray, targets: np.ndarray, field: QPoten
     # Using broadcasting: (K, 1, 2) + (num_samples, 1) * (K, 1, 2)
     segments = origin[None, None, :] + alphas[None, :, None] * (targets - origin)[:, None, :]
     
-    # Reshape to (K * num_samples, 2) to feed into the potential field
+    # Reshape to (K * num_samples, 2) to feed into the risk field
     flat_segments = segments.reshape(-1, 2)
     
     # One big vectorized evaluation!
-    # QPotentialField will use the QuadTree internally to make this fast
-    potentials = field.eval(flat_segments)
+    # QRiskField will use the QuadTree internally to make this fast
+    risks = field.eval(flat_segments)
     
     # Reshape back to (K, num_samples)
-    potentials = potentials.reshape(K, num_samples)
+    risks = risks.reshape(K, num_samples)
     
     # A segment is valid if ALL its samples are below the threshold
-    return ~np.any(potentials > threshold, axis=1)
+    return ~np.any(risks > threshold, axis=1)
 
 def is_segment_valid_vectorized(
     p1: np.ndarray, 
     p2: np.ndarray, 
-    field: QPotentailField, 
+    field: QRiskField, 
     threshold: float, 
     min_samples: int = 5
 ) -> bool:
@@ -642,13 +642,13 @@ def is_segment_valid_vectorized(
     alphas = np.linspace(0, 1, num_samples)[:, None]
     check_pts = p1 + alphas * (p2 - p1)
     
-    # QPotentialField.eval handles the QuadTree lookup internally
-    potentials = field.eval(check_pts)
+    # QRiskField.eval handles the QuadTree lookup internally
+    risks = field.eval(check_pts)
     
     # Return True if NO point exceeds the threshold
-    return not np.any(potentials > threshold)
+    return not np.any(risks > threshold)
 
-def _fast_segment_check(p1: np.ndarray, p2: np.ndarray, field: PotentialField, threshold: float) -> Tuple[bool, float]:
+def _fast_segment_check(p1: np.ndarray, p2: np.ndarray, field: RiskField, threshold: float) -> Tuple[bool, float]:
     """
     Optimized collision check with Quadtree short-circuiting.
     Returns: (is_safe, avg_risk_cost_multiplier)
@@ -657,7 +657,7 @@ def _fast_segment_check(p1: np.ndarray, p2: np.ndarray, field: PotentialField, t
     if np.any(field.eval(np.vstack([p1, p2])) > threshold):
         return False, np.inf
 
-    # 2. Quadtree Awareness (QPotentialField integration)
+    # 2. Quadtree Awareness (QRiskField integration)
     if hasattr(field, 'quadtree'):
         midpoint = (p1 + p2) / 2.0
         # Fast look up of the quad containing the midpoint.
@@ -673,17 +673,17 @@ def _fast_segment_check(p1: np.ndarray, p2: np.ndarray, field: PotentialField, t
     # Adaptive sampling
     steps = max(3, int(dist / 2.0)) 
     check_pts = np.linspace(p1, p2, steps)
-    potentials = field.eval(check_pts)
+    risks = field.eval(check_pts)
     
-    if np.any(potentials > threshold):
+    if np.any(risks > threshold):
         return False, np.inf
         
-    return True, np.mean(potentials)
+    return True, np.mean(risks)
 
 def find_path_bit_star(
     start_point: Point,
     end_point: Point,
-    field: PotentialField,
+    field: RiskField,
     batch_size: int = 150,
     max_batches: int = 20,
     collision_threshold: float = 0.7,
@@ -821,7 +821,7 @@ def find_path_bit_star(
         # ----------------------------------------
         while qv or qe:
             
-            # Stop if the best potential in queue is worse than current solution
+            # Stop if the best risk in queue is worse than current solution
             if not qv and not qe: break
             
             min_qv = qv[0][0] if qv else np.inf
@@ -919,7 +919,7 @@ def find_path_bit_star(
 def find_path_modified_apf(
     start_point: Point,
     end_point: Point,
-    field: PotentialField,
+    field: RiskField,
     step_size: float | None = None,
     max_iter: int = 5000,
     goal_threshold: float | None = None,
@@ -932,7 +932,7 @@ def find_path_modified_apf(
     """
     Modified Artificial Potential Field (M-APF) using Anisotropic Scaling.
     
-    Uses the gradient of the modified potential function to mitigate local minima
+    Uses the gradient of the modified risk function to mitigate local minima
     when obstacles are near the goal.
     
     Ref: Adapte from - Rostami et al. / Bounini et al.

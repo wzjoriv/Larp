@@ -17,7 +17,7 @@ def test_planner():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   build_tree=True,
                                   minimum_length_limit=5)

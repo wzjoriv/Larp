@@ -1,640 +1,938 @@
-from typing import Optional, Tuple, List, Union
-import numpy as np
-from scipy.interpolate import CubicSpline
+"""
+larp/tp/planner.py
+==================
+Reference-trajectory generators for the larp trajectory-planning framework.
 
-from larp.tp.solver import SQPSolver
+Planner hierarchy
+-----------------
+Planner (ABC)           - shared interface: update_path, get_ref, get_full_ref,
+                          find_trajectory, get_full_trajectory
+├── WaypointPlanner     - arc-length-projection following on the raw piecewise-linear path
+├── SplinePlanner       - cubic-spline (C2) path following with velocity profiling
+└── QuinticPlanner      - quintic B-spline (C4) path following with velocity profiling
+
+Public API summary
+------------------
+``get_ref(x0, nominal_speed)``
+    Dense (N, n) reference for one solver horizon, starting one step ahead of
+    the robot's current position (x₁ … xₙ).  Call this inside a real-time loop.
+
+``get_full_ref(nominal_speed)``
+    Complete (T, n) reference showing the idealised path the robot will
+    follow over its entire journey.  Useful for visualisation and comparing
+    actual vs. intended motion.  A generic piecewise-linear implementation
+    is provided on the base class; subclasses may override for a smoother
+    result (e.g. SplinePlanner and QuinticPlanner sample their fitted curve).
+
+``find_trajectory(x0, ...)``
+    Call ``get_ref`` then run the solver.  Returns the optimised predictive
+    trajectory ``(xs, us)`` for the current horizon.
+
+``get_full_trajectory(x0, ..., stride=1)``
+    Plan the complete trajectory from ``x0`` to the goal **before the robot
+    starts moving**, assuming a static environment.  Useful for pre-computing
+    a route, inspecting solver behaviour end-to-end, or pre-loading a
+    trajectory into a tracking controller.  ``stride`` controls how many
+    simulated steps are taken between replanning calls.
+
+Both planners accept a pre-computed path from any upstream path-finder
+(e.g. ``larp.pp.QuadPlanner``) and produce references that feed directly
+into ``Solver.solve()``.
+
+WaypointPlanner strategy
+~~~~~~~~~~~~~~~~~~~~~~~~
+Progress is determined by arc-length projection: every ``get_ref`` call
+projects the robot's XY position onto the nearest point on the
+piecewise-linear path (arc-length ``s_robot``) and generates reference
+states by walking forward from ``s_robot + lookahead``.  A windowed scan
+with automatic global fallback keeps projection O(W) in the common case
+and O(M) only when recovery is needed.
+
+SplinePlanner strategy
+~~~~~~~~~~~~~~~~~~~~~~
+A natural cubic spline (C2) is fitted through the waypoints and progress is
+tracked by projecting the robot's XY position onto the piecewise-linear
+path skeleton (same windowed + global-fallback projection as WaypointPlanner).
+The reference is then sampled from the smooth spline rather than the skeleton,
+so corners are naturally rounded.  A curvature-based speed limit
+``v <= sqrt(a_lat_max / kappa)`` automatically slows the reference on tight
+bends.  A heading-alignment penalty prevents the projection from snapping to
+the wrong branch on U-shaped or looping paths.
+
+QuinticPlanner strategy
+~~~~~~~~~~~~~~~~~~~~~~~
+Same projection and velocity-profiling approach as SplinePlanner, but uses a
+quintic B-spline (degree 5, C4 continuous) rather than a cubic spline (C2).
+C4 continuity means position, velocity, acceleration, jerk, and snap are all
+continuous across waypoints, giving the smoothest possible acceleration profile.
+This is particularly beneficial for dynamically sensitive systems where abrupt
+changes in acceleration cause vibration or payload disturbance.
+
+For paths with fewer than 6 waypoints the degree is silently reduced so that
+a valid spline can always be fitted: 2 pts → linear, 3 → quadratic, 4 → cubic,
+5 → quartic, 6+ → quintic.
+"""
+
+from abc import ABC, abstractmethod
+from typing import Optional, Tuple, List, Union
+
+import numpy as np
+from scipy.interpolate import CubicSpline, make_interp_spline
+
+from larp.tp.solver import Solver
 from larp.types import Point, Trajectory
 
-"""
-Author: Josue N Rivera
 
-Module providing motion planning algorithms. They start from a provided reference path.
-"""
+# ══════════════════════════════════════════════════════════════════════════════
+# Abstract base
+# ══════════════════════════════════════════════════════════════════════════════
 
-class Planner:
+class Planner(ABC):
     """
-    Trajectory reference planner using Cubic Spline interpolation.
+    Abstract base class for all larp reference-trajectory planners.
 
-    Generates a smooth state reference trajectory by projecting the robot's 
-    position onto a cached spline geometry and sampling ahead in arc-length.
+    Subclasses must implement :meth:`get_ref`.  All other public methods
+    — :meth:`get_full_ref`, :meth:`find_trajectory`, :meth:`get_full_trajectory`
+    — have concrete implementations on this class and are inherited for free.
+
+    Parameters
+    ----------
+    solver : Solver
+        Any concrete ``Solver`` instance; exposes ``dt``, ``N``, and ``solve``.
+    path : array-like, shape (M, 2) or (M, 3)
+        Ordered waypoints in the robot's spatial coordinates.
+        A third column is interpreted as a prescribed heading (radians).
+    stable_state : array-like, shape (n,)
+        Equilibrium state used to fill non-spatial dimensions of each reference
+        point (e.g. zero velocity, nominal altitude).
+    ref_state_indices : list of int, optional
+        Indices ``[i_x, i_y, i_yaw]`` into the full state vector.
+        Defaults to ``[0, 1, 2]``.
     """
-    def __init__(self, solver: SQPSolver,
-                 path: Union[List[Point], np.ndarray],
-                 stable_state: np.ndarray,
-                 ref_state_indices: Optional[List[int]] = None,
-                 lookahead_distance: float = 0.5,
-                 search_window: int = 50,
-                 max_lat_accel: float = 2.0): # Max lateral accel (m/s^2) for speed limiting
-        """
-        :param solver: Solver instance with dt and N (horizon).
-        :param path: Waypoints (N, 2) or (N, 3).
-        :param stable_state: Equilibrium state to fill non-spatial dimensions.
-        :param ref_state_indices: Indices for [x, y, theta, v_x, v_y]. 
-                                  Pass None if dynamics don't have explicit velocity states.
-        :param lookahead_distance: Extra distance ahead of projection to start reference.
-        :param search_window: Number of path segments to search around last position (optimization).
-        :param max_lat_accel: Maximum allowed lateral acceleration. 
-                              Used to slow down reference on curves. 
-                              v_max = sqrt(a_max / curvature)
-        """
+
+    def __init__(
+        self,
+        solver: Solver,
+        path: Union[List[Point], np.ndarray],
+        stable_state: np.ndarray,
+        ref_state_indices: Optional[List[int]] = None,
+    ):
         self.solver = solver
         self.stable_state = np.array(stable_state, dtype=float)
-        
-        if ref_state_indices is None:
-            self.idxs = [0, 1, 2] 
-        else:
-            self.idxs = ref_state_indices
+        self.ref_idx: List[int] = (ref_state_indices
+                                   if ref_state_indices is not None
+                                   else [0, 1, 2])
 
-        self.lookahead = lookahead_distance
-        self.window = search_window
-        self.max_lat_accel = max_lat_accel
-        self.N = self.solver.N
-        
-        # State tracking
-        self.prev_us = None
-        self.last_s = 0.0 
-        
-        self.cs: Optional[CubicSpline] = None
-        self.cum_len: Optional[np.ndarray] = None
-        self.total_len = 0.0
-        self.raw_path: Optional[np.ndarray] = None
-        
-        self.update_path(path)
-
-    def update_path(self, path: Union[List[Point], np.ndarray]):
-        points = np.atleast_2d(np.copy(path))
-        if points.shape[0] < 2:
-            raise ValueError("Path must contain at least 2 points")
-
-        xy = points[:, :2]
-
-        # Compute Arc Lengths
-        deltas = xy[1:] - xy[:-1]
-        dists = np.linalg.norm(deltas, axis=1)
-        dists = np.maximum(dists, 1e-8)
-        
-        self.cum_len = np.concatenate(([0.0], np.cumsum(dists)))
-        self.total_len = self.cum_len[-1]
-
-        # Natural BC = Zero curvature at ends (linear extrapolation)
-        self.cs = CubicSpline(self.cum_len, xy, bc_type='natural')
-        self.raw_path = xy
-        self.last_s = 0.0
-        self.prev_us = None
-
-    def get_projection(self, x_curr: float, y_curr: float, theta_curr: float = None) -> float:
-        """
-        Projects robot onto path.
-        IMPROVEMENT: Penalizes segments that are 'behind' the robot or 
-        moving in the opposite direction of theta_curr to prevent jitter.
-        """
-        if self.cum_len is None: return 0.0
-
-        # 1. Define Search Window
-        idx_est = np.searchsorted(self.cum_len, self.last_s, side='right') - 1
-        # Search backwards a little, forwards a lot
-        start = max(0, idx_est - 5) 
-        end = min(len(self.raw_path) - 1, idx_est + self.window)
-
-        if start >= end:
-            return self.last_s
-
-        # 2. Vectorized Segment Projection
-        P_start = self.raw_path[start:end]
-        P_end = self.raw_path[start+1:end+1]
-        
-        seg_vecs = P_end - P_start
-        robot_vecs = np.array([x_curr, y_curr]) - P_start
-
-        seg_lens_sq = np.sum(seg_vecs**2, axis=1)
-        t_vals = np.sum(robot_vecs * seg_vecs, axis=1) / np.maximum(seg_lens_sq, 1e-8)
-        t_vals = np.clip(t_vals, 0.0, 1.0)
-
-        # Closest points
-        closest_points = P_start + t_vals[:, None] * seg_vecs
-        diffs = closest_points - np.array([x_curr, y_curr])
-        dists_sq = np.sum(diffs**2, axis=1)
-
-        # --- DIRECTIONAL HEURISTIC ---
-        # If theta is provided, penalize segments that point opposite to robot
-        if theta_curr is not None:
-            # Normalized segment directions
-            seg_dirs = seg_vecs / np.sqrt(np.maximum(seg_lens_sq, 1e-8))[:, None]
-            robot_dir = np.array([np.cos(theta_curr), np.sin(theta_curr)])
-            
-            # Dot product: 1.0 = aligned, -1.0 = opposite
-            alignment = np.dot(seg_dirs, robot_dir)
-            
-            # Add huge penalty for opposite facing segments
-            # This prevents snapping to the wrong part of a loop
-            dists_sq[alignment < -0.5] += 1000.0
-
-        # 3. Find Best Segment
-        min_idx = np.argmin(dists_sq)
-        
-        local_s = self.cum_len[start + min_idx] + t_vals[min_idx] * np.sqrt(seg_lens_sq[min_idx])
-        
-        # --- STRICT MONOTONICITY FIX ---
-        # If the new projection is behind the previous one, hold position.
-        if local_s < self.last_s:
-            return self.last_s
-            
-        return local_s
-
-    def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0, stop_at_end: bool = True) -> np.ndarray:
-        """
-        Generates reference trajectory with Dynamic Velocity Profiling.
-        """
-        ix, iy, ith = self.idxs[0], self.idxs[1], self.idxs[2]
-        
-        # 1. Update Progress (Pass theta for better projection)
-        current_s = self.get_projection(x0[ix], x0[iy], theta_curr=x0[ith])
-        self.last_s = current_s
-
-        # 2. Generate Steps
-        dt = self.solver.dt
-        N = self.solver.N
-        
-        # We need to integrate s forward based on variable velocity, 
-        # not just s = s0 + i*v*dt
-        
-        s_future = [current_s + self.lookahead]
-        ref_states = []
-
-        # 3. Iterative Reference Generation (Simulate ahead)
-        for k in range(N + 1):
-            s_curr = s_future[-1]
-            
-            # Clamp to path length
-            s_clamped = np.clip(s_curr, 0, self.total_len)
-            
-            # --- CURVATURE CALCULATION ---
-            # 1st derivative (Tangent)
-            der1 = self.cs(s_clamped, 1) 
-            # 2nd derivative (Acceleration direction)
-            der2 = self.cs(s_clamped, 2)
-            
-            # Curvature k = |x'y'' - y'x''| / (x'^2 + y'^2)^1.5
-            cross = der1[0]*der2[1] - der1[1]*der2[0]
-            norm_sq = der1[0]**2 + der1[1]**2
-            curvature = np.abs(cross) / (norm_sq**1.5 + 1e-8)
-            
-            # --- VELOCITY PROFILING ---
-            # Limit speed: v <= sqrt(a_max / k)
-            # If curvature is 0, max_speed is infinite (clamped to nominal)
-            if curvature > 1e-4:
-                max_curve_speed = np.sqrt(self.max_lat_accel / curvature)
-                target_v = min(nominal_speed, max_curve_speed)
-            else:
-                target_v = nominal_speed
-                
-            # Stop at end logic
-            if stop_at_end and s_curr >= self.total_len:
-                target_v = 0.0
-
-            # --- CALCULATE STATE ---
-            # Position
-            pos = self.cs(s_clamped)
-            
-            # Tangent (Heading)
-            # Normalized tangent vector
-            tan_norm = np.linalg.norm(der1)
-            if tan_norm < 1e-6:
-                tan_vec = np.array([np.cos(x0[ith]), np.sin(x0[ith])]) # Fallback
-            else:
-                tan_vec = der1 / tan_norm
-
-            # Yaw
-            yaw = np.arctan2(tan_vec[1], tan_vec[0])
-            
-            # Unwrap Yaw relative to PREVIOUS reference point (or x0 for first)
-            prev_yaw = ref_states[-1][ith] if len(ref_states) > 0 else x0[ith]
-            yaw_diff = yaw - prev_yaw
-            yaw_diff = (yaw_diff + np.pi) % (2*np.pi) - np.pi
-            yaw = prev_yaw + yaw_diff
-
-            # Assemble State
-            state = self.stable_state.copy()
-            state[ix] = pos[0]
-            state[iy] = pos[1]
-            state[ith] = yaw
-            
-            # If we have velocity indices, fill them
-            if len(self.idxs) >= 5:
-                ivx, ivy = self.idxs[3], self.idxs[4]
-                state[ivx] = tan_vec[0] * target_v
-                state[ivy] = tan_vec[1] * target_v
-            
-            ref_states.append(state)
-            
-            # Integrate s for next step
-            s_future.append(s_curr + target_v * dt)
-
-        return np.array(ref_states)
-    
-    def get_full_ref(self, nominal_speed: float = 2.0) -> np.ndarray:
-        """
-        Generates the complete reference trajectory from the path start to end.
-        Useful for visualization (ground truth) or offline analysis.
-
-        :param nominal_speed: The target speed to traverse the path.
-        :return: Array of shape (M, n_states) representing the full ideal trajectory.
-        """
-        if self.cum_len is None or self.total_len <= 0:
-            return np.empty((0, len(self.stable_state)))
-            
-        dt = self.solver.dt
-        
-        # 1. Determine Sample Points
-        # Total duration = Distance / Speed
-        total_duration = self.total_len / max(nominal_speed, 1e-4)
-        num_steps = int(np.ceil(total_duration / dt))
-        
-        # Generate arc-lengths from 0 to Total Length
-        s_vals = np.linspace(0, self.total_len, num_steps)
-        
-        # 2. Evaluate Spline Geometry (Vectorized)
-        pos_ref = self.cs(s_vals)        # Position (x, y)
-        vel_tan = self.cs(s_vals, 1)     # Tangent (dx/ds, dy/ds)
-        
-        # 3. Compute Kinematics (Velocity & Heading)
-        # Normalize tangent vectors to get unit direction
-        norms = np.linalg.norm(vel_tan, axis=1, keepdims=True)
-        norms[norms < 1e-6] = 1.0
-        
-        # Scale unit direction by nominal speed
-        vel_vec = (vel_tan / norms) * nominal_speed
-        
-        # Compute Yaw from velocity vector
-        headings = np.arctan2(vel_vec[:, 1], vel_vec[:, 0])
-        headings = np.unwrap(headings, discont=np.pi) # Continuous yaw (no jumps)
-        
-        # 4. Assemble Full State Matrix
-        ix, iy, ith = self.idxs[0], self.idxs[1], self.idxs[2]
-        
-        # Initialize with stable state (handles non-spatial dims like arm joint angles)
-        full_ref = np.tile(self.stable_state, (num_steps, 1))
-        
-        # Fill Spatial Dimensions
-        full_ref[:, ix] = pos_ref[:, 0]
-        full_ref[:, iy] = pos_ref[:, 1]
-        full_ref[:, ith] = headings
-        
-        # Fill Velocity Dimensions (if indices provided)
-        if len(self.idxs) >= 5:
-            ivx, ivy = self.idxs[3], self.idxs[4]
-            full_ref[:, ivx] = vel_vec[:, 0]
-            full_ref[:, ivy] = vel_vec[:, 1]
-            
-        return full_ref
-
-    def find_trajectory(self, x0: np.ndarray, 
-                       max_iters: int = 10, 
-                       nominal_speed: float = 2.0, 
-                       reset: bool = False) -> Trajectory:
-        
-        if reset:
-            self.last_s = 0.0
-            self.prev_us = None
-            max_iters = max(max_iters, 20) # Boost iters on cold start
-
-        ref_traj = self.get_ref(x0, nominal_speed=nominal_speed)
-
-        xs, us = self.solver.solve(x0, ref_traj, us_init=self.prev_us, max_iters=max_iters)
-
-        self.prev_us = np.vstack([us[1:], us[-1:]]) 
-        
-        return xs, us
-    
-    def find_full_trajectory(self, x0: np.ndarray, 
-                           max_iters: int = 5, 
-                           nominal_speed: float = 2.0,
-                           max_steps: int = 50000,
-                           goal_tolerance: float = 0.01,
-                           stride: int = 5) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Simulates the closed-loop execution of the planner until the goal is reached.
-        
-        This method iteratively solves the QP optimization problem, executes a 
-        segment of the result (defined by 'stride'), and replans from the new state.
-
-        :param x0: Initial state vector.
-        :param max_iters: Maximum SQP iterations per planning step.
-        :param nominal_speed: Target progression speed along the path.
-        :param max_steps: Safety limit for total simulation steps to prevent infinite loops.
-        :param goal_tolerance: Euclidean distance to the final waypoint to consider finished.
-        :param stride: Number of control steps to execute before replanning. 
-                       - stride=1: Classic Receding Horizon (replan every step).
-                       - stride=N: Execute entire horizon before replanning.
-        :return: Tuple (all_xs, all_us) containing the complete state and control history.
-
-        Example
-        -------
-
-        .. code-block:: python
-            planner = Planner(solver, path_points, stable_state)
-            xs, us = planner.find_full_trajectory(
-                x0=[0, 0, 0], 
-                nominal_speed=2.0, 
-                stride=5
-            )
-            import matplotlib.pyplot as plt
-            plt.plot(xs[:, 0], xs[:, 1])
-            plt.show()
-        """
-        x_curr = np.array(x0, dtype=float)
-        
-        full_xs = [x_curr]
-        full_us = []
-        
-        # Reset internal planner state
-        self.last_s = 0.0
-        self.prev_us = None
-        
-        ix, iy = self.idxs[0], self.idxs[1]
-        
-        step_count = 0
-        while step_count < max_steps:
-            
-            # Solve optimization for current horizon
-            xs_horizon, us_horizon = self.find_trajectory(
-                x_curr, 
-                max_iters=max_iters, 
-                nominal_speed=nominal_speed,
-                reset=False
-            )
-            
-            # Determine execution stride (cannot exceed remaining horizon)
-            actual_stride = min(stride, self.N)
-            
-            # Extract trajectory segment to 'execute'
-            next_xs = xs_horizon[1 : actual_stride + 1]
-            next_us = us_horizon[0 : actual_stride]
-            
-            # Update history and current state
-            full_xs.extend(next_xs)
-            full_us.extend(next_us)
-            
-            x_curr = next_xs[-1]
-            step_count += actual_stride
-
-            # Warm-start Correction:
-            # We jumped ahead 'stride' steps, so the previous solution (us_horizon) 
-            # is now 'stride' steps behind the new time t. We shift it left to match.
-            shift_idx = actual_stride
-            remaining_controls = us_horizon[shift_idx:]
-            
-            # Pad the end with the last known control to maintain horizon length
-            padding = np.tile(us_horizon[-1], (shift_idx, 1))
-            self.prev_us = np.vstack([remaining_controls, padding])
-
-            # Check Termination Conditions
-            dist_to_goal = np.linalg.norm(x_curr[[ix, iy]] - self.raw_path[-1])
-            progress_ratio = self.last_s / self.total_len
-            
-            if dist_to_goal < goal_tolerance and progress_ratio >= 0.95:
-                break
-
-        return np.array(full_xs), np.array(full_us)
-
-"""
-Linear Interpolation Planner (Robust Fallback)
-"""
-
-class LinearPlanner:
-    """
-    Trajectory reference planner that generates a state reference trajectory 
-    by linearly interpolating between waypoints.
-
-    Unlike the Spline planner, this does not attempt to smooth corners.
-    It generates a reference that:
-    1. Linearly connects the robot's CURRENT position to the current target waypoint.
-    2. Then follows the subsequent path segments linearly.
-    
-    This is often more stable for QP because the reference always starts 
-    exactly at the robot's position, reducing initial error terms in the solver.
-    """
-
-    def __init__(self, solver: SQPSolver,
-                 path: Union[List[Point], np.ndarray],
-                 stable_state: np.ndarray,
-                 ref_state_indices: Optional[List[int]] = None,
-                 waypoint_tol: float = 0.5): # Tolerance to switch to next waypoint
-        
-        """
-        :param solver: MPCSolver instance.
-        :param path: Waypoints (N, 2) or (N, 3).
-        :param stable_state: Equilibrium state to fill non-spatial dimensions.
-        :param ref_state_indices: Indices for [x, y, theta]. Defaults to [0, 1, 2].
-        :param waypoint_tol: Distance tolerance to consider a waypoint "reached".
-        """
-        
-        self.solver = solver
-        self.stable_state = np.array(stable_state, dtype=float)
-        
-        # Default to [0, 1, 2] if not provided
-        self.ref_idx = ref_state_indices if ref_state_indices is not None else [0, 1, 2]
-        self.waypoint_tol = waypoint_tol
-        
-        self.way_idx = 0
-        self.prev_us = None
-        
-        # Containers
+        # Populated by update_path
         self.path: Optional[np.ndarray] = None
         self.cached_seg_lens: Optional[np.ndarray] = None
         self.cached_directions: Optional[np.ndarray] = None
-        self.cached_seg_headings: Optional[np.ndarray] = None # Used for look-ahead mode
+        self.cached_seg_headings: Optional[np.ndarray] = None
         self.cached_cum_len: Optional[np.ndarray] = None
-        self.use_custom_heading: bool = False
+        self.total_len: float = 0.0
+        self._use_custom_heading: bool = False
+
+        # Warm-start control sequence
+        self.prev_us: Optional[np.ndarray] = None
 
         self.update_path(path)
 
-    def obtain_waypoint(self, x0: Optional[np.ndarray] = None):
-        """
-        Advances the internal waypoint index if the robot is within tolerance.
-        """
-        if x0 is not None:
-            # Check Euclidean distance (X, Y only)
-            pos = x0[:2]
-            target = self.path[self.way_idx, :2]
-            dist = np.linalg.norm(pos - target)
-            
-            # Advance index while within tolerance (skip close stacked waypoints)
-            while dist < self.waypoint_tol:
-                if self.way_idx >= len(self.path) - 1:
-                    break
-                self.way_idx += 1
-                target = self.path[self.way_idx, :2]
-                dist = np.linalg.norm(pos - target)
-                
-        return self.path[self.way_idx]
+    # ── Path management ────────────────────────────────────────────────────
 
-    def reset_path(self):
-        self.way_idx = 0
-        self.prev_us = None
-    
     def update_path(self, path: Union[List[Point], np.ndarray]):
+        """
+        Load a new path and pre-compute cached geometry.
+
+        Parameters
+        ----------
+        path : array-like, shape (M, 2) or (M, 3)
+            ``path[:, :2]`` are XY positions; optional third column is heading.
+        """
         points = np.atleast_2d(np.copy(path))
-        
-        # 1. Separate Spatial Data
-        xy = points[:, :2]
+        if points.shape[0] < 2:
+            raise ValueError("Path must contain at least 2 waypoints.")
+
+        xy   = points[:, :2]
         d_xy = xy[1:] - xy[:-1]
-        
-        # 2. Pre-compute Segment Lengths & Spatial Directions
-        self.cached_seg_lens = np.maximum(np.linalg.norm(d_xy, axis=1), 1e-6)
-        self.cached_directions = d_xy / self.cached_seg_lens[:, None]
-        
-        # 3. Determine Heading Strategy
+
+        seg_lens = np.maximum(np.linalg.norm(d_xy, axis=1), 1e-8)
+
+        self.cached_seg_lens  = seg_lens
+        self.cached_directions = d_xy / seg_lens[:, None]
+        self.cached_cum_len   = np.concatenate(([0.0], np.cumsum(seg_lens)))
+        self.total_len        = float(self.cached_cum_len[-1])
+
         if points.shape[1] >= 3:
-            # Case A: User Provided Headings (N, 3)
-            self.use_custom_heading = True
-            self.path = points[:, :3] # Store exactly what user gave
-            self.cached_seg_headings = None # Not needed
+            self._use_custom_heading = True
+            self.path = points[:, :3].copy()
+            self.cached_seg_headings = None
         else:
-            # Case B: Auto-compute Headings (N, 2)
-            self.use_custom_heading = False
-            
-            # Compute angle of every segment
+            self._use_custom_heading = False
             seg_headings = np.arctan2(d_xy[:, 1], d_xy[:, 0])
-            
-            # Pad last point with previous heading
             final_heading = seg_headings[-1] if seg_headings.size > 0 else 0.0
-            full_headings = np.append(seg_headings, final_heading)
-            
-            self.path = np.column_stack((xy, full_headings))
+            all_headings = np.append(seg_headings, final_heading)
+            self.path = np.column_stack((xy, all_headings))
             self.cached_seg_headings = seg_headings
 
-        # 4. Cumulative Length (for fast lookups)
-        self.cached_cum_len = np.concatenate(([0.0], np.cumsum(self.cached_seg_lens)))
+        self._reset_state()
 
-        self.reset_path()
-    
+    def _reset_state(self):
+        """Reset per-path planner state (progress bookmark, warm start)."""
+        self.prev_us = None
+
+    # ── Abstract interface ─────────────────────────────────────────────────
+
+    @abstractmethod
     def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
         """
-        Generates N reference states.
-        1. Approach Phase: Robot -> Current Waypoint (Linear X/Y, Point-at Theta)
-        2. Following Phase: Current Waypoint -> End of Path
+        Generate a dense reference for the current solver horizon.
+
+        Returns (N, n) states x₁ … xₙ — one step ahead of ``x0`` through N
+        steps ahead — ready to pass to ``Solver.solve(x0, ref)``.
+
+        Parameters
+        ----------
+        x0 : (n,) current state
+        nominal_speed : float
+            Target progression speed along the path (m/s).
+
+        Returns
+        -------
+        ref : (N, n) reference states
         """
-        dt = self.solver.dt
-        N = self.solver.N
-        step_size = nominal_speed * dt
-        
-        # Extract Robot State
-        # Assuming x0 is the full state vector, we extract [x, y, theta]
-        # map indices to 0,1,2 for local calculation
-        rx, ry, rth = x0[self.ref_idx[0]], x0[self.ref_idx[1]], x0[self.ref_idx[2]]
-        robot_pos = np.array([rx, ry])
-        
-        # Update Waypoint Index
-        self.obtain_waypoint(x0[self.ref_idx])
-        curr_waypoint = self.path[self.way_idx]
-        
-        # --- 1. Approach Vector ---
-        diff_xy = curr_waypoint[:2] - robot_pos
-        dist_to_waypoint = np.linalg.norm(diff_xy)
-        dist_to_waypoint = max(dist_to_waypoint, 1e-6) # Avoid div/0
-        
-        # Direction to snap to
-        if self.use_custom_heading:
-            target_heading = curr_waypoint[2]
-        else:
-            target_heading = np.arctan2(diff_xy[1], diff_xy[0])
 
-        # --- 2. Generate Horizon Distances ---
-        s_vals = step_size * np.arange(N)
-        
-        # Prepare Output Container (N, 3)
-        ref_path = np.zeros((N, 3))
-        
-        # --- 3. Fill Reference (Vectorized) ---
-        
-        # Mask: Which steps are still approaching the first waypoint?
-        mask_approach = s_vals <= dist_to_waypoint
-        
-        # A. Approach Phase (Before reaching waypoint)
-        if np.any(mask_approach):
-            # Linear Interp Position: Robot + Dir * Dist
-            dir_vec = diff_xy / dist_to_waypoint
-            ref_path[mask_approach, :2] = robot_pos + dir_vec * s_vals[mask_approach, None]
-            # Heading: Snap to target immediately
-            ref_path[mask_approach, 2] = target_heading
+    # ── Concrete shared methods ────────────────────────────────────────────
 
-        # B. Following Phase (After reaching waypoint)
-        if np.any(~mask_approach):
-            if self.way_idx >= len(self.path) - 1:
-                # End of path reached -> Hold last pose
-                ref_path[~mask_approach] = curr_waypoint
-            else:
-                # Calculate distance *past* the current waypoint
-                s_past = s_vals[~mask_approach] - dist_to_waypoint
-                
-                # Get relevant section of cumulative lengths
-                # Normalize so current waypoint is at 0.0
-                local_path_s = self.cached_cum_len[self.way_idx:] - self.cached_cum_len[self.way_idx]
-                
-                # Find which segment we are in using binary search
-                # -1 because searchsorted returns insertion point (right side)
-                seg_indices = np.searchsorted(local_path_s, s_past, side='right') - 1
-                
-                # Clip to prevent index out of bounds
-                # Max valid segment index = (Total Segments) - (Current Waypoint Index) - 1
-                max_local_seg = len(self.cached_seg_lens) - self.way_idx - 1
-                seg_indices = np.clip(seg_indices, 0, max_local_seg)
-                
-                # Map back to global indices
-                global_indices = self.way_idx + seg_indices
-                
-                # Distance into the specific segment
-                ds = s_past - local_path_s[seg_indices]
-                
-                # -- Set Position --
-                # Start of Segment + Direction * Distance into Segment
-                ref_path[~mask_approach, :2] = (self.path[global_indices, :2] + 
-                                                self.cached_directions[global_indices] * ds[:, None])
-                
-                # -- Set Heading --
-                if self.use_custom_heading:
-                    # Use the heading stored in the point itself
-                    # (Note: This snaps heading at waypoint boundaries)
-                    ref_path[~mask_approach, 2] = self.path[global_indices, 2]
-                else:
-                    # Use the segment direction we calculated earlier
-                    ref_path[~mask_approach, 2] = self.cached_seg_headings[global_indices]
+    def get_full_ref(self, nominal_speed: float = 2.0) -> np.ndarray:
+        """
+        Sample the complete reference the robot will follow over its journey.
 
-        # --- 4. Post-Processing ---
-        
-        # Unwrap Angles:
-        # We unwrap relative to the *robot's current heading* to ensure continuity.
-        # This prevents the solver from seeing a jump like 3.13 -> -3.13.
-        #ref_path_theta = np.concatenate(([rth], ref_path[:, 2]))
-        #ref_path[:, 2] = np.unwrap(ref_path_theta)[1:]
-        
-        # Fill Full State Matrix
-        full_ref = np.tile(self.stable_state, (N, 1))
-        full_ref[:, self.ref_idx] = ref_path
-        
+        Walks the piecewise-linear path geometry from start to end at
+        ``solver.dt`` intervals.  This is the *reference path* — the
+        idealised line the robot is trying to follow — not an optimised
+        trajectory.  Use it to visualise the planned route or to compare
+        actual vs. intended motion.
+
+        Subclasses may override for a smoother representation (SplinePlanner
+        and QuinticPlanner sample their fitted curve instead).
+
+        Parameters
+        ----------
+        nominal_speed : float
+            Determines the number of steps T:
+            ``T = ceil(total_len / (nominal_speed * dt))``.
+
+        Returns
+        -------
+        full_ref : (T, n) reference states from path start to path end
+        """
+        if self.total_len <= 0:
+            return np.empty((0, len(self.stable_state)))
+
+        dt        = self.solver.dt
+        num_steps = int(np.ceil(self.total_len / max(nominal_speed * dt, 1e-8)))
+        s_vals    = np.linspace(0.0, self.total_len, num_steps)
+
+        seg_idxs  = np.searchsorted(self.cached_cum_len, s_vals, side='right') - 1
+        seg_idxs  = np.clip(seg_idxs, 0, len(self.path) - 2)
+
+        ds        = s_vals - self.cached_cum_len[seg_idxs]
+        positions = (self.path[seg_idxs, :2]
+                     + self.cached_directions[seg_idxs] * ds[:, None])
+
+        headings = (self.path[seg_idxs, 2] if self._use_custom_heading
+                    else self.cached_seg_headings[seg_idxs])
+
+        if not self._use_custom_heading:
+            headings = np.unwrap(headings)
+        ix, iy, ith = self.ref_idx[0], self.ref_idx[1], self.ref_idx[2]
+        full_ref = np.tile(self.stable_state, (num_steps, 1))
+        full_ref[:, ix]  = positions[:, 0]
+        full_ref[:, iy]  = positions[:, 1]
+        full_ref[:, ith] = headings
         return full_ref
 
-    def find_trajectory(self, x0: np.ndarray, 
-                        max_iters: int = 10, 
-                        nominal_speed: float = 2.0, 
-                        reset: bool = False) -> Trajectory:
+    def find_trajectory(
+        self,
+        x0: np.ndarray,
+        max_iters: int = 10,
+        nominal_speed: float = 2.0,
+        reset: bool = False,
+    ) -> Trajectory:
         """
-        Solve for a state-control trajectory from x0.
-        """
+        Generate a reference and solve for the optimised predictive trajectory.
 
+        The intended production use is that a separate high-frequency feedback
+        controller tracks this trajectory; during testing the first step of
+        ``(xs, us)`` can be applied directly to advance the simulation.
+
+        Parameters
+        ----------
+        x0 : (n,) current state
+        max_iters : int
+            Maximum solver iterations.
+        nominal_speed : float
+            Target progression speed (m/s).
+        reset : bool
+            If True, resets progress state and bumps max_iters to at least 20.
+
+        Returns
+        -------
+        xs : (N+1, n) optimised state trajectory over the horizon
+        us : (N, m)   corresponding control sequence
+        """
         if reset:
+            self._reset_state()
             max_iters = max(max_iters, 20)
-            self.reset_path()
 
         ref_traj = self.get_ref(x0, nominal_speed=nominal_speed)
-        
-        xs, us = self.solver.solve(x0, ref_traj, us_init=self.prev_us, max_iters=max_iters)
-        
+        xs, us   = self.solver.solve(x0, ref_traj,
+                                     us_init=self.prev_us,
+                                     max_iters=max_iters)
         self.prev_us = np.vstack([us[1:], us[-1:]])
-        
         return xs, us
-    
-    def get_full_ref(self, nominal_speed=2.0):
-        """Returns the full path geometry."""
-        return self.path
+
+    def get_full_trajectory(
+        self,
+        x0: np.ndarray,
+        nominal_speed: float = 2.0,
+        goal_tolerance: float = 1.0,
+        max_steps: int = 10000,
+        max_iters: int = 10,
+        stride: int = 1,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compute a complete optimised trajectory from ``x0`` to the path goal.
+
+        Intended for cases where the environment is static and the full
+        trajectory can be planned **before the robot starts moving** — for
+        example to inspect the planned route, detect potential issues, or
+        pre-load a trajectory into a tracking controller.
+
+        Repeatedly calls :meth:`find_trajectory` (receding-horizon), advances
+        ``stride`` simulated steps from the returned horizon, and records the
+        full history.
+
+        ``stride=1`` (default) replans after every step — most accurate.
+        Larger strides replan less frequently — useful for offline analysis
+        or reducing compute.  ``stride`` is clamped to ``[1, N]``.
+
+        Parameters
+        ----------
+        x0 : (n,) initial state
+        nominal_speed : float
+            Target progression speed (m/s).
+        goal_tolerance : float
+            Euclidean distance (m) to the final waypoint to consider done.
+        max_steps : int
+            Hard limit on total simulated steps.
+        max_iters : int
+            Maximum solver iterations per planning cycle.
+        stride : int
+            Steps to execute per horizon before replanning.  Default 1.
+
+        Returns
+        -------
+        xs_full : (T+1, n) state history from x0 through T simulated steps
+        us_full : (T, m)   control history
+        """
+        stride      = int(np.clip(stride, 1, self.solver.N))
+        x_cur       = np.array(x0, dtype=float)
+        all_xs      = [x_cur.copy()]
+        all_us: List[np.ndarray] = []
+
+        ix, iy      = self.ref_idx[0], self.ref_idx[1]
+        goal_xy     = self.path[-1, :2]
+        steps_taken = 0
+
+        while steps_taken < max_steps:
+            xs, us = self.find_trajectory(x_cur,
+                                           nominal_speed=nominal_speed,
+                                           max_iters=max_iters)
+            actual = min(stride, max_steps - steps_taken)
+
+            for i in range(actual):
+                all_xs.append(xs[i + 1].copy())
+                all_us.append(us[i].copy())
+
+            x_cur       = xs[actual].copy()
+            steps_taken += actual
+
+            # Warm-start: shift by `actual` steps
+            self.prev_us = np.vstack([us[actual:],
+                                       np.tile(us[-1], (actual, 1))])
+
+            if np.linalg.norm(x_cur[[ix, iy]] - goal_xy) < goal_tolerance:
+                break
+
+        return np.array(all_xs), np.array(all_us)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WaypointPlanner
+# ══════════════════════════════════════════════════════════════════════════════
+
+class WaypointPlanner(Planner):
+    """
+    Reference planner using **arc-length projection** to determine path progress.
+
+    Every call to :meth:`get_ref` projects the robot onto the piecewise-linear
+    path (O(M) vectorised), then generates reference states by walking forward
+    along the arc from the projected position.
+
+    Near-goal behaviour
+    ~~~~~~~~~~~~~~~~~~~
+    When ``s_robot >= total_len - goal_blend_dist`` the reference saturates
+    to the final waypoint state, giving the solver a stationary target and
+    preventing oscillations near the goal.
+
+    Parameters
+    ----------
+    solver : Solver
+    path : array-like, shape (M, 2) or (M, 3)
+    stable_state : array-like, shape (n,)
+    ref_state_indices : list of int, optional
+    lookahead : float
+        Extra arc-length offset added to the projected position before
+        generating the horizon.  Default 0.0.
+    goal_blend_dist : float
+        Arc-length window near the end where the reference saturates to the
+        goal state.  Default 0.0.
+    projection_window : int
+        Segments to scan ahead during arc-length projection.  The planner
+        uses a windowed scan with automatic global fallback: if the best
+        match is at the far window edge a full O(M) scan recovers the correct
+        position.  A practical lower bound is
+        ``nominal_speed * dt * N / min_seg_len``.  Default 15.
+    """
+
+    def __init__(
+        self,
+        solver: Solver,
+        path: Union[List[Point], np.ndarray],
+        stable_state: np.ndarray,
+        ref_state_indices: Optional[List[int]] = None,
+        lookahead: float = 0.0,
+        goal_blend_dist: float = 0.0,
+        projection_window: int = 15,
+    ):
+        self.lookahead          = lookahead
+        self.goal_blend_dist    = goal_blend_dist
+        self._seg_idx: int      = 0
+        self._projection_window = max(1, int(projection_window))
+        self._last_s: float     = 0.0
+
+        super().__init__(solver, path, stable_state, ref_state_indices)
+
+    def _reset_state(self):
+        super()._reset_state()
+        self._last_s  = 0.0
+        self._seg_idx = 0
+
+    # ── Arc-length projection ──────────────────────────────────────────────
+
+    def _project_to_path(self, pos: np.ndarray) -> float:
+        """
+        Project a 2-D position onto the piecewise-linear path.
+
+        Windowed scan O(W) in the normal case; automatic O(M) global fallback
+        when the robot has outrun the window.  Result is monotone: the return
+        value is always >= ``_last_s``.
+        """
+        M = len(self.path) - 1
+
+        def _scan(a: int, b: int):
+            P_start     = self.path[a:b,    :2]
+            P_end       = self.path[a+1:b+1, :2]
+            seg_vecs    = P_end - P_start
+            robot_vecs  = pos - P_start
+            seg_lens_sq = np.sum(seg_vecs ** 2, axis=1)
+            t_vals      = np.clip(
+                np.sum(robot_vecs * seg_vecs, axis=1)
+                / np.maximum(seg_lens_sq, 1e-10),
+                0.0, 1.0,
+            )
+            closest  = P_start + t_vals[:, None] * seg_vecs
+            dists_sq = np.sum((closest - pos) ** 2, axis=1)
+            i        = int(np.argmin(dists_sq))
+            s = float(self.cached_cum_len[a + i]
+                      + t_vals[i] * np.sqrt(max(seg_lens_sq[i], 0.0)))
+            return a + i, s
+
+        start    = max(0, self._seg_idx - 2)
+        end      = min(M, self._seg_idx + self._projection_window)
+        best, s  = _scan(start, end)
+
+        if best == end - 1 and end < M:   # outran window → global fallback
+            best, s = _scan(0, M)
+
+        s = max(s, self._last_s)
+        self._seg_idx = max(self._seg_idx, best)
+        return s
+
+    def _interp_on_path(self, s: float) -> Tuple[np.ndarray, float]:
+        """Interpolate (XY position, heading) at arc-length ``s``."""
+        s       = float(np.clip(s, 0.0, self.total_len))
+        seg_idx = int(np.clip(
+            np.searchsorted(self.cached_cum_len, s, side='right') - 1,
+            0, len(self.path) - 2,
+        ))
+        ds      = s - self.cached_cum_len[seg_idx]
+        pos     = self.path[seg_idx, :2] + self.cached_directions[seg_idx] * ds
+        heading = float(self.path[seg_idx, 2] if self._use_custom_heading
+                        else self.cached_seg_headings[seg_idx])
+        return pos, heading
+
+    def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
+        """
+        Generate N reference states by walking ahead from the projected position.
+
+        Near-goal blending: within ``goal_blend_dist`` of the path end the
+        reference saturates to the final waypoint so the solver sees a
+        stationary target.
+        """
+        ix, iy, ith = self.ref_idx[0], self.ref_idx[1], self.ref_idx[2]
+
+        s_robot      = self._project_to_path(np.array([x0[ix], x0[iy]]))
+        self._last_s = s_robot
+
+        dt  = self.solver.dt
+        N   = self.solver.N
+        hdg_off = self.solver.dynamics.heading_convention_offset
+
+        goal_pos, goal_hdg = self._interp_on_path(self.total_len)
+        goal_state         = self.stable_state.copy()
+        goal_state[ix]     = goal_pos[0]
+        goal_state[iy]     = goal_pos[1]
+        goal_state[ith]    = goal_hdg + hdg_off
+
+        ref_states = []
+        for k in range(N):
+            s_ref = s_robot + self.lookahead + (k + 1) * nominal_speed * dt
+
+            if s_ref >= self.total_len - self.goal_blend_dist:
+                ref_states.append(goal_state)
+                continue
+
+            pos_ref, hdg_ref = self._interp_on_path(s_ref)
+            state            = self.stable_state.copy()
+            state[ix]        = pos_ref[0]
+            state[iy]        = pos_ref[1]
+            state[ith]       = hdg_ref + hdg_off
+            ref_states.append(state)
+
+        return np.array(ref_states)
+
+    # ── Helpers ────────────────────────────────────────────────────────────
+
+    def reset_path(self):
+        """Reset waypoint progress to the start of the path."""
+        self._reset_state()
+
+    @property
+    def seg_idx(self) -> int:
+        """Current best-match segment index into ``self.path``."""
+        return self._seg_idx
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Internal base for curve-based planners
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _CurvePlanner(Planner):
+    """
+    Internal base for planners that maintain a smooth parametric curve over
+    the path (SplinePlanner uses a cubic spline; QuinticPlanner uses a quintic
+    B-spline).
+
+    Provides:
+    - Shared arc-length projection with heading-alignment penalty
+    - Shared curvature-aware ``get_ref`` template
+    - Shared ``get_full_ref`` that samples the fitted curve
+
+    Subclasses must set ``self._curve`` (callable with the same interface as
+    scipy ``CubicSpline``) and ``self.raw_path`` inside their ``update_path``
+    implementation, and call ``self._reset_state()`` at the end.
+    """
+
+    def __init__(
+        self,
+        solver: Solver,
+        path: Union[List[Point], np.ndarray],
+        stable_state: np.ndarray,
+        ref_state_indices: Optional[List[int]] = None,
+        lookahead: float = 0.5,
+        projection_window: int = 15,
+        max_lat_accel: float = 2.0,
+    ):
+        self.lookahead          = lookahead
+        self._projection_window = max(1, int(projection_window))
+        self.max_lat_accel      = max_lat_accel
+
+        # Set before super().__init__ so update_path can use them
+        self._curve             = None   # set by subclass update_path
+        self.raw_path: Optional[np.ndarray] = None
+
+        super().__init__(solver, path, stable_state, ref_state_indices)
+
+    def _reset_state(self):
+        super()._reset_state()
+        self._last_s: float  = 0.0
+        self._seg_idx: int   = 0
+
+    # ── Arc-length projection with heading penalty ─────────────────────────
+
+    def _project_to_path(
+        self,
+        x_curr: float,
+        y_curr: float,
+        theta_curr: Optional[float] = None,
+    ) -> float:
+        """
+        Project the robot onto the path skeleton; return arc-length ``s``.
+
+        Windowed scan O(W) with automatic global fallback O(M).
+        Optional heading-alignment penalty discourages snapping to the wrong
+        branch on U-shaped or looping paths.
+        """
+        if self.cached_cum_len is None:
+            return 0.0
+
+        pos = np.array([x_curr, y_curr])
+        M   = len(self.raw_path) - 1
+
+        def _scan(a: int, b: int) -> Tuple[int, float]:
+            P_start     = self.raw_path[a:b]
+            P_end       = self.raw_path[a+1:b+1]
+            seg_vecs    = P_end - P_start
+            robot_vecs  = pos - P_start
+            seg_lens_sq = np.sum(seg_vecs ** 2, axis=1)
+            t_vals      = np.clip(
+                np.sum(robot_vecs * seg_vecs, axis=1)
+                / np.maximum(seg_lens_sq, 1e-10),
+                0.0, 1.0,
+            )
+            closest  = P_start + t_vals[:, None] * seg_vecs
+            dists_sq = np.sum((closest - pos) ** 2, axis=1)
+
+            if theta_curr is not None:
+                seg_dirs  = seg_vecs / np.sqrt(
+                    np.maximum(seg_lens_sq, 1e-10))[:, None]
+                robot_dir = np.array([np.cos(theta_curr), np.sin(theta_curr)])
+                dists_sq[np.dot(seg_dirs, robot_dir) < -0.5] += 1000.0
+
+            i = int(np.argmin(dists_sq))
+            s = float(self.cached_cum_len[a + i]
+                      + t_vals[i] * np.sqrt(max(seg_lens_sq[i], 0.0)))
+            return a + i, s
+
+        start    = max(0, self._seg_idx - 2)
+        end      = min(M, self._seg_idx + self._projection_window)
+        best, s  = _scan(start, end)
+
+        if best == end - 1 and end < M:
+            best, s = _scan(0, M)
+
+        s = max(s, self._last_s)
+        self._seg_idx = max(self._seg_idx, best)
+        return s
+
+    # ── Reference generation (shared by SplinePlanner & QuinticPlanner) ───
+
+    def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
+        """
+        Generate N reference states with curvature-based velocity profiling.
+
+        Returns states x₁ … xₙ — one step ahead of ``x0`` through N steps.
+        Samples ``self._curve`` at arc-length positions computed by walking
+        forward from the projected robot position.
+        """
+        ix, iy, ith = self.ref_idx[0], self.ref_idx[1], self.ref_idx[2]
+
+        current_s    = self._project_to_path(x0[ix], x0[iy],
+                                              theta_curr=x0[ith])
+        self._last_s = current_s
+
+        dt = self.solver.dt
+        N  = self.solver.N
+
+        s_future   = [current_s + self.lookahead]
+        all_states = []
+
+        for _ in range(N + 1):
+            s_curr    = s_future[-1]
+            s_clamped = float(np.clip(s_curr, 0.0, self.total_len))
+
+            der1 = self._curve(s_clamped, 1)
+            der2 = self._curve(s_clamped, 2)
+            cross     = der1[0] * der2[1] - der1[1] * der2[0]
+            norm_sq   = der1[0] ** 2 + der1[1] ** 2
+            curvature = abs(cross) / (norm_sq ** 1.5 + 1e-8)
+
+            target_v = (min(nominal_speed,
+                            np.sqrt(self.max_lat_accel / curvature))
+                        if curvature > 1e-4 else nominal_speed)
+
+            if s_curr >= self.total_len:
+                target_v = 0.0
+
+            pos      = self._curve(s_clamped)
+            tan_norm = np.linalg.norm(der1)
+            tan_vec  = (der1 / tan_norm if tan_norm >= 1e-6
+                        else np.array([np.cos(x0[ith]), np.sin(x0[ith])]))
+
+            yaw      = np.arctan2(tan_vec[1], tan_vec[0])
+            prev_yaw = all_states[-1][ith] if all_states else x0[ith]
+            yaw_diff = (yaw - prev_yaw + np.pi) % (2 * np.pi) - np.pi
+            yaw      = prev_yaw + yaw_diff
+
+            state        = self.stable_state.copy()
+            state[ix]    = pos[0]
+            state[iy]    = pos[1]
+            state[ith]   = yaw + self.solver.dynamics.heading_convention_offset
+
+            if len(self.ref_idx) >= 5:
+                ivx, ivy    = self.ref_idx[3], self.ref_idx[4]
+                state[ivx]  = tan_vec[0] * target_v
+                state[ivy]  = tan_vec[1] * target_v
+
+            all_states.append(state)
+            s_future.append(s_curr + target_v * dt)
+
+        # Discard k=0 (current position) → return x₁ … xₙ
+        return np.array(all_states[1:])
+
+    def get_full_ref(self, nominal_speed: float = 2.0) -> np.ndarray:
+        """
+        Sample the complete reference from path start to end via the fitted curve.
+
+        Overrides the base-class piecewise-linear implementation with smooth
+        curve-sampled positions, continuous tangent-derived headings, and
+        optionally filled velocity indices.
+
+        Parameters
+        ----------
+        nominal_speed : float
+            Determines T via ``T = ceil(total_len / (nominal_speed * dt))``.
+
+        Returns
+        -------
+        full_ref : (T, n) reference states
+        """
+        if self.total_len <= 0:
+            return np.empty((0, len(self.stable_state)))
+
+        dt        = self.solver.dt
+        num_steps = int(np.ceil(self.total_len
+                                / max(nominal_speed * dt, 1e-8)))
+        s_vals    = np.linspace(0.0, self.total_len, num_steps)
+
+        pos_ref  = self._curve(s_vals)
+        vel_tan  = self._curve(s_vals, 1)
+        norms    = np.linalg.norm(vel_tan, axis=1, keepdims=True)
+        norms[norms < 1e-6] = 1.0
+        vel_vec  = (vel_tan / norms) * nominal_speed
+        headings = np.unwrap(np.arctan2(vel_vec[:, 1], vel_vec[:, 0]),
+                             discont=np.pi)
+
+        ix, iy, ith = self.ref_idx[0], self.ref_idx[1], self.ref_idx[2]
+        full_ref    = np.tile(self.stable_state, (num_steps, 1))
+        full_ref[:, ix]  = pos_ref[:, 0]
+        full_ref[:, iy]  = pos_ref[:, 1]
+        full_ref[:, ith] = headings
+
+        if len(self.ref_idx) >= 5:
+            ivx, ivy = self.ref_idx[3], self.ref_idx[4]
+            full_ref[:, ivx] = vel_vec[:, 0]
+            full_ref[:, ivy] = vel_vec[:, 1]
+
+        return full_ref
+
+    @property
+    def seg_idx(self) -> int:
+        """Current best-match segment index into the path skeleton."""
+        return self._seg_idx
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SplinePlanner
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SplinePlanner(_CurvePlanner):
+    """
+    Reference planner using a natural **cubic spline** (C2 continuous).
+
+    Fits a cubic spline through the path waypoints so corners are naturally
+    rounded, then samples it to build the reference.  A curvature-based
+    speed limit ``v <= sqrt(a_lat_max / kappa)`` slows the reference on
+    tight bends.  A heading-alignment penalty keeps projection stable on
+    U-shaped paths.
+
+    Parameters
+    ----------
+    solver : Solver
+    path : array-like, shape (M, 2)
+        Only XY is used; headings are derived from the spline tangent.
+    stable_state : array-like, shape (n,)
+    ref_state_indices : list of int, optional
+        Must contain at least [i_x, i_y, i_yaw].  Optional 4th and 5th
+        entries are velocity indices [i_vx, i_vy] filled from the tangent.
+    lookahead : float
+        Extra arc length ahead of the projected position.  Default 0.5.
+    projection_window : int
+        Windowed projection window size.  Default 15.
+    max_lat_accel : float
+        Maximum lateral acceleration for speed limiting (m/s²).  Default 2.0.
+    """
+
+    def __init__(
+        self,
+        solver: Solver,
+        path: Union[List[Point], np.ndarray],
+        stable_state: np.ndarray,
+        ref_state_indices: Optional[List[int]] = None,
+        lookahead: float = 0.5,
+        projection_window: int = 15,
+        max_lat_accel: float = 2.0,
+    ):
+        super().__init__(solver, path, stable_state, ref_state_indices,
+                         lookahead=lookahead,
+                         projection_window=projection_window,
+                         max_lat_accel=max_lat_accel)
+
+    def update_path(self, path: Union[List[Point], np.ndarray]):
+        points  = np.atleast_2d(np.copy(path))
+        if points.shape[0] < 2:
+            raise ValueError("Path must contain at least 2 waypoints.")
+
+        xy      = points[:, :2]
+        deltas  = xy[1:] - xy[:-1]
+        dists   = np.maximum(np.linalg.norm(deltas, axis=1), 1e-8)
+        cum     = np.concatenate(([0.0], np.cumsum(dists)))
+
+        # Fit cubic spline; expose as both cs (public) and _curve (internal)
+        self.cs      = CubicSpline(cum, xy, bc_type='natural')
+        self._curve  = self.cs
+        self.raw_path = xy
+
+        # Piecewise-linear geometry for projection
+        self.cached_cum_len      = cum
+        self.total_len           = float(cum[-1])
+        self.cached_seg_lens     = dists
+        self.cached_directions   = deltas / dists[:, None]
+        seg_headings             = np.arctan2(deltas[:, 1], deltas[:, 0])
+        final_heading            = seg_headings[-1] if seg_headings.size > 0 else 0.0
+        self.path                = np.column_stack(
+            (xy, np.append(seg_headings, final_heading)))
+        self.cached_seg_headings = seg_headings
+        self._use_custom_heading = False
+
+        self._reset_state()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QuinticPlanner
+# ══════════════════════════════════════════════════════════════════════════════
+
+class QuinticPlanner(_CurvePlanner):
+    """
+    Reference planner using a **quintic B-spline** (degree 5, C4 continuous).
+
+    Compared to ``SplinePlanner`` (cubic, C2):
+
+    * Degree 5 polynomial per segment — C4 continuity at waypoints.
+    * Position, velocity, acceleration, jerk, and snap are all continuous
+      across waypoints, giving the smoothest possible acceleration profile.
+    * Particularly beneficial for dynamically sensitive systems where
+      abrupt changes in acceleration cause vibration or payload disturbance
+      (e.g. cargo drones, surgical robots, high-speed industrial arms).
+
+    For paths with fewer than 6 waypoints the quintic degree is silently
+    reduced so a valid spline can always be fitted:
+
+    ===== =====
+    M pts Degree
+    ===== =====
+    2     1 (linear)
+    3     2 (quadratic)
+    4     3 (cubic)
+    5     4 (quartic)
+    6+    5 (quintic)
+    ===== =====
+
+    All other behaviour (projection, curvature speed limiting, heading
+    penalty, full reference sampling) is identical to ``SplinePlanner``.
+
+    Parameters
+    ----------
+    solver : Solver
+    path : array-like, shape (M, 2)
+        Only XY is used; headings are derived from the spline tangent.
+    stable_state : array-like, shape (n,)
+    ref_state_indices : list of int, optional
+        Must contain at least [i_x, i_y, i_yaw].  Optional 4th and 5th
+        entries are velocity indices [i_vx, i_vy] filled from the tangent.
+    lookahead : float
+        Extra arc length ahead of the projected position.  Default 0.5.
+    projection_window : int
+        Windowed projection window size.  Default 15.
+    max_lat_accel : float
+        Maximum lateral acceleration for speed limiting (m/s²).  Default 2.0.
+    """
+
+    def __init__(
+        self,
+        solver: Solver,
+        path: Union[List[Point], np.ndarray],
+        stable_state: np.ndarray,
+        ref_state_indices: Optional[List[int]] = None,
+        lookahead: float = 0.5,
+        projection_window: int = 15,
+        max_lat_accel: float = 2.0,
+    ):
+        self._degree: int = 5   # actual degree set in update_path; store for info
+        super().__init__(solver, path, stable_state, ref_state_indices,
+                         lookahead=lookahead,
+                         projection_window=projection_window,
+                         max_lat_accel=max_lat_accel)
+
+    def update_path(self, path: Union[List[Point], np.ndarray]):
+        points  = np.atleast_2d(np.copy(path))
+        if points.shape[0] < 2:
+            raise ValueError("Path must contain at least 2 waypoints.")
+
+        xy      = points[:, :2]
+        M       = len(xy)
+        deltas  = xy[1:] - xy[:-1]
+        dists   = np.maximum(np.linalg.norm(deltas, axis=1), 1e-8)
+        cum     = np.concatenate(([0.0], np.cumsum(dists)))
+
+        # Quintic if M >= 6; gracefully degrade for shorter paths
+        self._degree = min(5, M - 1)
+        self.qs      = make_interp_spline(cum, xy, k=self._degree)
+        self._curve  = self.qs
+        self.raw_path = xy
+
+        # Piecewise-linear geometry for projection
+        self.cached_cum_len      = cum
+        self.total_len           = float(cum[-1])
+        self.cached_seg_lens     = dists
+        self.cached_directions   = deltas / dists[:, None]
+        seg_headings             = np.arctan2(deltas[:, 1], deltas[:, 0])
+        final_heading            = seg_headings[-1] if seg_headings.size > 0 else 0.0
+        self.path                = np.column_stack(
+            (xy, np.append(seg_headings, final_heading)))
+        self.cached_seg_headings = seg_headings
+        self._use_custom_heading = False
+
+        self._reset_state()
+
+    @property
+    def degree(self) -> int:
+        """Actual polynomial degree used (5 for 6+ waypoints, less otherwise)."""
+        return self._degree
+
+
+# ── Alias ─────────────────────────────────────────────────────────────────
+
+LinearPlanner = WaypointPlanner

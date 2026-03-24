@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import importlib.util
 import inspect
 from types import ModuleType
 from typing import Dict, List, Optional, Tuple
@@ -9,6 +8,7 @@ from itertools import chain
 
 from larp.fn import bmatvec
 
+import importlib.util
 JAX_INSTALLED = importlib.util.find_spec("jax") is not None
 
 if JAX_INSTALLED:
@@ -179,6 +179,24 @@ class Dynamics(ABC):
     def angle_indices(self) -> List[int]:
         """Indices in the flattened state vector that represent angles (need wrapping)."""
         return []
+
+    @property
+    def heading_convention_offset(self) -> float:
+        """
+        Offset from the standard path-direction angle (``arctan2(dy, dx)``,
+        measured from the ``+X`` world axis) to this model's yaw state slot.
+
+        Planners that derive a heading from a 2-D path direction should add
+        this offset before placing the value into the reference state vector.
+        This property belongs on Dynamics because the dynamics model is the
+        authoritative source of its own state-variable conventions — consistent
+        with how ROS2/tf2, Drake, and ALTRO handle frame semantics.
+
+        Default ``0.0`` (WMR, Car).
+        Override to ``-pi/2`` for ``QuadcopterDynamics`` whose ``psi=0`` means
+        nose→+Y, not nose→+X.
+        """
+        return 0.0
 
     def _setup_jax_functions(self):
         """
@@ -855,6 +873,81 @@ class WMRDynamics(Dynamics):
 
         return np.stack([df1, df2, df3], axis=1)
 
+    def dfdxx(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+        r"""
+        Analytical second-order state Hessian of the WMR dynamics.
+
+        :math:`f_{xx} = \frac{\partial^2 f}{\partial x^2}`
+
+        For the unicycle model :math:`f = [v\cos\theta,\ v\sin\theta,\ \omega]`, only
+        the :math:`\partial^2 / \partial\theta^2` terms are non-zero:
+
+        .. math::
+            f_{xx}^{(0)}[2,2] = -v\cos\theta, \quad f_{xx}^{(1)}[2,2] = -v\sin\theta
+
+        Parameters
+        ----------
+        first_order_state : (B, 3)
+        first_order_control : (B, 2)
+
+        Returns
+        -------
+        (B, 3, 3, 3)  — tensor indexed as [batch, output, x_i, x_j]
+        """
+        _, _, theta = self.split_first(first_order_state)
+        v, _        = self.split_first(first_order_control)
+        B           = first_order_state.shape[0]
+
+        H = np.zeros((B, self.first_order_state_n, self.first_order_state_n, self.first_order_state_n))
+        H[:, 0, 2, 2] = (-v * np.cos(theta)).reshape(-1)
+        H[:, 1, 2, 2] = (-v * np.sin(theta)).reshape(-1)
+        return H
+
+    def dfduu(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+        r"""
+        Analytical second-order control Hessian of the WMR dynamics.
+
+        :math:`f_{uu} = \frac{\partial^2 f}{\partial u^2}`
+
+        The unicycle dynamics are **linear** in :math:`u = [v, \omega]`, so all
+        second-order control derivatives are identically zero.
+
+        Returns
+        -------
+        (B, 3, 2, 2)  — all zeros
+        """
+        B = first_order_state.shape[0]
+        return np.zeros((B, self.first_order_state_n, self.first_order_control_n, self.first_order_control_n))
+
+    def dfdux(self, first_order_state: np.ndarray, first_order_control: np.ndarray) -> np.ndarray:
+        r"""
+        Analytical mixed control-state Hessian of the WMR dynamics.
+
+        :math:`f_{ux} = \frac{\partial^2 f}{\partial u \partial x}`
+
+        Only the cross terms between :math:`v` and :math:`\theta` are non-zero:
+
+        .. math::
+            f_{ux}^{(0)}[v, \theta] = -\sin\theta, \quad
+            f_{ux}^{(1)}[v, \theta] =  \cos\theta
+
+        Parameters
+        ----------
+        first_order_state : (B, 3)
+        first_order_control : (B, 2)
+
+        Returns
+        -------
+        (B, 3, 2, 3)  — tensor indexed as [batch, output, u_i, x_j]
+        """
+        _, _, theta = self.split_first(first_order_state)
+        B           = first_order_state.shape[0]
+
+        H = np.zeros((B, self.first_order_state_n, self.first_order_control_n, self.first_order_state_n))
+        H[:, 0, 0, 2] = (-np.sin(theta)).reshape(-1)
+        H[:, 1, 0, 2] = ( np.cos(theta)).reshape(-1)
+        return H
+
 class CarDynamics(Dynamics):
     r"""
     Dynamics for a rear-wheeled drive car model.
@@ -934,10 +1027,14 @@ class CarDynamics(Dynamics):
                          holonomic=False,
                          state_derivative_orders=[0, 0, 0, 0],   # x, y, v, theta
                          control_derivative_orders=[0, 0],       # a, omega
-                         jax_backend=True)    
+                         jax_backend=jax_backend)    
 
-        self.wd = self.constants['wheels distance']
-        self.frd = self.constants['front rear length']
+        self.wd  = self.constants['track_width']
+        self.frd = self.constants['wheelbase']
+
+    @property
+    def angle_indices(self) -> List[int]:
+        return [3]   # theta is at index 3 in [x, y, v, theta]
 
     def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np:Optional[ModuleType] = None) -> np.ndarray:
         if np is None: np = importlib.import_module("numpy")
@@ -1049,7 +1146,7 @@ class Quadcopter2DDynamics(Dynamics):
 
         return np.concatenate([dx, ddx, dy, ddy, dtheta, ddtheta], axis=1)
 
-class QuadcopterV1Dynamics(Dynamics):
+class QuadcopterDynamics(Dynamics):
     """
     Quadcopter Dynamics V1 (Updated)
 
@@ -1112,8 +1209,8 @@ class QuadcopterV1Dynamics(Dynamics):
 
         # Structure:
         #   - 3 Pos (Order 1: x, vx)
-        #   - 3 Angles (Order 0: phi, theta, psi -> manually integrated via kinematics)
-        #   - 3 Rates (Order 0: p, q, r -> manually integrated via dynamics)
+        #   - 3 Angles (Order 0: phi, theta, psi -> integrated via kinematics)
+        #   - 3 Rates (Order 0: p, q, r -> integrated via dynamics)
         super().__init__(constants=constants,
                          state_derivative_orders=[1, 1, 1] + [0, 0, 0] + [0, 0, 0],
                          control_derivative_orders=[0] * 4,
@@ -1249,208 +1346,14 @@ class QuadcopterV1Dynamics(Dynamics):
     @property
     def angle_indices(self) -> List[int]:
         return [6, 7, 8]
-    
-class QuadcopterV2Dynamics(Dynamics):
-    """
-    Quadcopter dynamics using individual rotor speeds as control inputs.
-    
-    Frame Convention:
-        x: Right (Lateral)
-        y: Forward (Longitudinal)
-        z: Up (Vertical)
-    
-    Rotational Mapping:
-        phi (Rotation about X): Pitch Angle
-        theta (Rotation about Y): Roll Angle
-        psi (Rotation about Z): Yaw Angle
-
-    Motor Order:
-        1: Back-Right (X)  or Right (+)  | CW
-        2: Back-Left (X)   or Back  (+)  | CCW
-        3: Front-Left (X)  or Left  (+)  | CW
-        4: Front-Right (X) or Front (+)  | CCW
-    """
-
-    def __init__(self, 
-                 frame: str = 'x', # 'x' or '+'
-                 inertia = [3.8e-3, 3.8e-3, 7.1e-3], 
-                 mass = 1.0, 
-                 gravity = 9.807,
-                 arm_length = 0.32, 
-                 thrust_constant = 3.13e-5, 
-                 translational_drag = [0.1, 0.1, 0.15],
-                 torque_constant = 7.5e-7, 
-                 rotational_drag = [0.1, 0.1, 0.15], 
-                 motor_inertia = 6e-5) -> None:
-        
-        constants = {k: v for k,v in locals().items() if k != 'self'}
-        super().__init__(constants=constants, state_derivative_orders=[1]*6, control_derivative_orders=[0]*4, jax_backend=True)
-        
-        self.frame = frame
-        self.m, self.g, self.l = float(mass), float(gravity), float(arm_length)
-        self.b, self.d, self.Jr = float(thrust_constant), float(torque_constant), float(motor_inertia)
-        self.I = np.array(inertia, dtype=float)
-        self.Ct, self.Cr = np.array(translational_drag, dtype=float), np.array(rotational_drag, dtype=float)
-
-        # Mixing Matrix
-        if frame == 'x':
-            # 1: Back-Right (X>0, Y<0) -> -45 deg
-            # 2: Back-Left  (X<0, Y<0) -> -135 deg
-            # 3: Front-Left (X<0, Y>0) -> +135 deg
-            # 4: Front-Right(X>0, Y>0) -> +45 deg
-            angles = np.array([-np.pi/4, -3*np.pi/4, 3*np.pi/4, np.pi/4])
-        elif frame == '+':
-            # 1: Right (X>0) -> 0 deg
-            # 2: Back  (Y<0) -> -90 deg
-            # 3: Left  (X<0) -> 180 deg
-            # 4: Front (Y>0) -> 90 deg
-            angles = np.array([0.0, -np.pi/2, np.pi, np.pi/2])
-        else:
-            raise ValueError(f"Unknown frame type: {frame}")
-
-        self.motor_pos = np.stack([self.l * np.cos(angles), self.l * np.sin(angles)], axis=1)
-        
-        # --- Axis Logic ---
-        # Pitch: Rotation about X-axis. Controlled by Y positions (Front/Back).
-        # Roll: Rotation about Y-axis. Controlled by X positions (Right/Left).
-        
-        col_thrust = np.ones(4) * self.b
-        
-        # Torque X (Pitch): Positive y (Front) -> Positive Torque (Nose Up)
-        col_pitch_torque = self.b * self.motor_pos[:, 1]
-        
-        # Torque Y (Roll): Positive x (Right) -> Negative Torque (Roll Left/Right Wing Up)
-        col_roll_torque = self.b * (-self.motor_pos[:, 0])
-        
-        col_yaw = np.array([self.d, -self.d, self.d, -self.d])
-
-        # Stack order: [Thrust, Torque_X (Pitch), Torque_Y (Roll), Torque_Z (Yaw)]
-        self.M = np.stack([col_thrust, col_pitch_torque, col_roll_torque, col_yaw], axis=0)
-        self.inv_M = np.linalg.inv(self.M)
 
     @property
-    def angle_indices(self) -> List[int]:
-        # State: [x, dx, y, dy, z, dz, phi, dphi, theta, dtheta, psi, dpsi]
-        return [6, 8, 10]
+    def heading_convention_offset(self) -> float:
+        """psi=0 means nose→+Y (Forward); arctan2 uses +X=0 → offset is -pi/2."""
+        return -np.pi / 2
 
-    def to_rotor_speed(self, x0, thrust=None, roll=None, pitch=None, yaw=None):
-        """
-        Maps desired Forces/Torques to Rotor Speeds (Control Inputs).
-        Solves: w^2 = M^{-1} * u
-        """
-        batch_size = x0.shape[0]
-        
-        def _format_input(val):
-            if val is None:
-                return np.zeros((batch_size, 1))
-            val = np.array(val)
-            if val.ndim == 0:
-                return np.full((batch_size, 1), val)
-            return val.reshape(batch_size, 1)
+_LAMBDA_QUAT = 10.0
 
-        u_thrust = _format_input(thrust)
-        u_roll = _format_input(roll)
-        u_pitch = _format_input(pitch)
-        u_yaw = _format_input(yaw)
-        
-        # Order must match M: [Thrust, Pitch (Torque X), Roll (Torque Y), Yaw]
-        u = np.concatenate([u_thrust, u_pitch, u_roll, u_yaw], axis=1)
-        
-        w_sq = u @ self.inv_M.T
-        w = np.sqrt(np.maximum(w_sq, 0.0))
-        
-        return w
-
-    def to_force(self, first_order_control: np.ndarray) -> np.ndarray:
-        """ 
-        Converts vector of rotor speeds (w) to body frame forces/torques (u).
-        Returns: [Thrust, Pitch_Torque, Roll_Torque, Yaw_Torque]
-        """
-        w_2 = first_order_control**2
-        return w_2 @ self.M.T
-
-    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np:Optional[ModuleType] = None) -> np.ndarray:
-        if np is None: np = importlib.import_module("numpy")
-
-        # --- Unpack State ---
-        # State: [x, dx, y, dy, z, dz, phi, dphi, theta, dtheta, psi, dpsi]
-        vel = first_order_state[:, 1:6:2] 
-        ang = first_order_state[:, 6:11:2] 
-        rate = first_order_state[:, 7:12:2] 
-        
-        phi, theta, psi = ang[:, 0:1], ang[:, 1:2], ang[:, 2:3]
-        
-        # Control -> Forces
-        w_2 = first_order_control**2
-        forces = w_2 @ self.M.T
-        thrust, torque = forces[:, 0:1], forces[:, 1:]
-
-        # Rotation Matrix (Body -> World) R = Rz(psi) * Ry(theta) * Rx(phi)
-        c_p, s_p = np.cos(phi), np.sin(phi)
-        c_t, s_t = np.cos(theta), np.sin(theta)
-        c_s, s_s = np.cos(psi), np.sin(psi)
-        
-        # Row 1
-        r11 = c_t * c_s
-        r12 = s_p * s_t * c_s - c_p * s_s
-        r13 = c_p * s_t * c_s + s_p * s_s
-        
-        # Row 2
-        r21 = c_t * s_s
-        r22 = s_p * s_t * s_s + c_p * c_s
-        r23 = c_p * s_t * s_s - s_p * c_s
-        
-        # Row 3
-        r31 = -s_t
-        r32 = s_p * c_t
-        r33 = c_p * c_t
-
-        # R constructed directly: Shape (Batch, 3, 3)
-        R = np.stack([
-            np.concatenate([r11, r12, r13], axis=1),
-            np.concatenate([r21, r22, r23], axis=1),
-            np.concatenate([r31, r32, r33], axis=1)
-        ], axis=1)
-
-        # Translational Dynamics
-        # vel_body = R.T @ vel_world
-        vel_body = np.transpose(R, (0, 2, 1)) @ vel[..., None]
-
-        # Drag Force (Body Frame)
-        drag_force = self.Ct.reshape(1,3,1) * vel_body
-
-        # Thrust Force (Body Frame): [0, 0, T]
-        zeros = np.zeros_like(thrust)
-        thrust_vec = np.stack([zeros, zeros, thrust], axis=1)
-
-        F_body = thrust_vec - drag_force
-
-        # Convert to World Frame acceleration: a = (R @ F_body) / m - g
-        accel_world = (R @ F_body).reshape(-1, 3) / self.m
-        accel_z = accel_world[:, 2:3] - self.g
-        
-        # Rotational Dynamics
-        omega_r = (first_order_control[:, 0:1] - first_order_control[:, 1:2] + 
-                   first_order_control[:, 2:3] - first_order_control[:, 3:4])
-        
-        dphi, dth, dpsi = rate[:, 0:1], rate[:, 1:2], rate[:, 2:3]
-        Ix, Iy, Iz = self.I
-        
-        # Euler Equations
-        drag_phi = self.Cr[0] * dphi * np.abs(dphi)
-        drag_th  = self.Cr[1] * dth  * np.abs(dth)
-        drag_psi = self.Cr[2] * dpsi * np.abs(dpsi)
-
-        # Euler Equations
-        ddphi = (torque[:,0:1] - drag_phi - self.Jr*omega_r*dth - (Iz-Iy)*dth*dpsi)/Ix
-        ddth  = (torque[:,1:2] - drag_th  + self.Jr*omega_r*dphi - (Ix-Iz)*dphi*dpsi)/Iy
-        ddpsi = (torque[:,2:3] - drag_psi - (Iy-Ix)*dphi*dth)/Iz
-        
-        return np.concatenate([vel[:, 0:1], accel_world[:, 0:1], 
-                               vel[:, 1:2], accel_world[:, 1:2], 
-                               vel[:, 2:3], accel_z,
-                               dphi, ddphi, dth, ddth, dpsi, ddpsi], axis=1)
-    
 class HighFidelityQuadcopterDynamics(Dynamics):
     r"""
     A high-fidelity 6-DOF rigid-body dynamics model for a quadcopter.
@@ -1552,7 +1455,7 @@ class HighFidelityQuadcopterDynamics(Dynamics):
         :param drag_coeffs_quadratic: Quadratic drag coefficients ``[C_x, C_y, C_z]`` [Ns^2/m^2].
         :param rotational_drag: Drag torque coefficients on body rotation ``[C_{rp}, C_{rq}, C_{rr}]``.
         :param blade_flapping_coeff: Coefficient for H-force/Blade flapping moment [Ns].
-        :param ground_effect_coeff: Maximum thrust increase percentage (e.g., 0.1 = 10%) at z=0.
+        :param ground_effect_coeff: Maximum thrust increase percentage (e.g., 0.1 = 10\%) at z=0.
         :param ground_effect_height: Height [m] at which ground effect becomes negligible.
 
         **Electrical & Physical Imperfections:**
@@ -1663,7 +1566,10 @@ class HighFidelityQuadcopterDynamics(Dynamics):
         v_load = self.v_max - (I_total * self.r_int)
         
         # 3. Dynamic RPM Limit
-        max_w_dynamic = self.max_w_nominal * (v_load / self.v_max)
+        max_w_dynamic = np.maximum(
+            self.max_w_nominal * (v_load / self.v_max),
+            self.min_w,
+        )
         
         # 4. Target Speed
         w_target = self.min_w + u_pwm * (max_w_dynamic - self.min_w)
@@ -1720,6 +1626,13 @@ class HighFidelityQuadcopterDynamics(Dynamics):
         dqx = 0.5 * ( qw*p + qy*r - qz*q)
         dqy = 0.5 * ( qw*q - qx*r + qz*p)
         dqz = 0.5 * ( qw*r + qx*q - qy*p)
+
+        # Baumgarte quaternion normalisation stabilisation.
+        q_err = qw**2 + qx**2 + qy**2 + qz**2 - 1.0
+        dqw -= _LAMBDA_QUAT * q_err * qw
+        dqx -= _LAMBDA_QUAT * q_err * qx
+        dqy -= _LAMBDA_QUAT * q_err * qy
+        dqz -= _LAMBDA_QUAT * q_err * qz
 
         return np.concatenate([
             vel[:, 0:1], accel[:, 0:1],

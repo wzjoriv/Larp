@@ -30,7 +30,7 @@ def test_eval():
         }
     ]
     
-    field = larp.PotentialField(size=(100, 100), rgjs=rgjs)
+    field = larp.RiskField(size=(100, 100), rgjs=rgjs)
     
     x = np.array([[50, 65], [70, 60], [60, 60], [63, 63], [50, 50], [65, 70]])
     
@@ -52,7 +52,7 @@ def test_area_estimation():
         }
     ]
 
-    field = larp.PotentialField(size=(100, 100), rgjs=rgjs)
+    field = larp.RiskField(size=(100, 100), rgjs=rgjs)
     area = field.estimate_route_area([(49, 50), (51, 50)], step=0.0001)
     assert ((area - 1.49364)**2).sum() < 1e-5, "Area estimation off"
 
@@ -83,7 +83,7 @@ def test_gradient():
         }
     ]
 
-    field = larp.PotentialField(size=(100, 100), rgjs=rgjs)
+    field = larp.RiskField(size=(100, 100), rgjs=rgjs)
     grad = field.gradient([(49, 50), (51, 50), (51, 51)])
 
     assert ((grad[0] - np.array([2*np.exp(-1), 0]))**2).sum() < 1e-5, "Unexpected gradient"
@@ -118,7 +118,7 @@ def test_bbox():
         }
     ]
 
-    field = larp.PotentialField(size=(100, 100), rgjs=rgjs)
+    field = larp.RiskField(size=(100, 100), rgjs=rgjs)
 
     assert field.rgjs[1].in_bbox([15, 15]),   "Error determining bbox for linestring"
     assert field.find_bbox([81, 80])[0] == 3, "Error finding bbox for ellipse"
@@ -144,7 +144,7 @@ def test_closest_point():
         }
     ]
 
-    field = larp.PotentialField(size=(100, 100), rgjs=rgjs)
+    field = larp.RiskField(size=(100, 100), rgjs=rgjs)
 
     points = [(55, 50), (55, 55), (57, 57)]
     contact_points = field.contact_points(points)

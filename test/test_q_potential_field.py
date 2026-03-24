@@ -30,8 +30,8 @@ def test_eval():
         }
     ]
     
-    field = larp.PotentialField(rgjs=rgjs, size=(100, 100))
-    qfield = larp.quad.QPotentailField(field)
+    field = larp.RiskField(rgjs=rgjs, size=(100, 100))
+    qfield = larp.quad.QRiskField(field)
     
     x = np.array([[50, 65], [70, 60], [60, 60], [63, 63], [50, 50], [65, 70]])
     
@@ -56,8 +56,8 @@ def test_area_estimation():
         }
     ]
 
-    field = larp.PotentialField(rgjs=rgjs, size=(100, 100))
-    qfield = larp.quad.QPotentailField(field)
+    field = larp.RiskField(rgjs=rgjs, size=(100, 100))
+    qfield = larp.quad.QRiskField(field)
 
     area = qfield.estimate_route_area([(49, 50), (51, 50)], step=0.0001)
     assert ((area - 1.49364)**2).sum() < 1e-5, "Area estimation off"
@@ -91,8 +91,8 @@ def test_gradient():
         }
     ]
 
-    field = larp.PotentialField(rgjs=rgjs, size=(100, 100))
-    qfield = larp.quad.QPotentailField(field)
+    field = larp.RiskField(rgjs=rgjs, size=(100, 100))
+    qfield = larp.quad.QRiskField(field)
 
     grad = qfield.gradient([(49, 50), (51, 50), (51, 51)])
 
@@ -130,8 +130,8 @@ def test_bbox():
         }
     ]
 
-    field = larp.PotentialField(rgjs=rgjs, size=(100, 100))
-    qfield = larp.QPotentailField(field)
+    field = larp.RiskField(rgjs=rgjs, size=(100, 100))
+    qfield = larp.QRiskField(field)
 
     assert field.rgjs[1].in_bbox([15, 15]),   "Error determining bbox for linestring"
     assert qfield.find_bbox([81, 80])[0] == 3, "Error finding bbox for ellipse"
@@ -150,29 +150,29 @@ def test_add_remove_field():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     
-    qfield = larp.QPotentailField(field_quadtree=quadtree)
+    qfield = larp.QRiskField(field_quadtree=quadtree)
 
     
-    assert qfield.eval([(55, 55)])[0] != 1.0, "QPotentialField eval correct"
+    assert qfield.eval([(55, 55)])[0] != 1.0, "QRiskField eval correct"
     assert quadtree.find_quad([(54.9, 55)])[0].boundary_zone != 0, "Boundary zone correct in quadtree"
 
     # Add RGJ
     point = larp.PointRGJ((55, 55), repulsion=[[10, 0], [0, 10]])
     added_idx = qfield.addRGJ(point)
 
-    assert qfield.eval([(55, 55)])[0] == 1.0, "RGJ not added to potential field"
+    assert qfield.eval([(55, 55)])[0] == 1.0, "RGJ not added to risk field"
     assert quadtree.find_quad([(54.9, 55)])[0].boundary_zone == 0, "Boundary zone not update in quadtree"
 
     # Delete RGJ
     qfield.delRGJ(added_idx)
     
-    assert qfield.eval([(55, 55)])[0] != 1.0, "RGJ not removed from potential field"
+    assert qfield.eval([(55, 55)])[0] != 1.0, "RGJ not removed from risk field"
     assert quadtree.find_quad([(54.9, 55)])[0].boundary_zone != 0, "Boundary zone not update in quadtree"
 
 test_add_remove_field()
@@ -196,13 +196,13 @@ def test_add_rgj_idx_passed():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     
-    qfield = larp.QPotentailField(field_quadtree=quadtree)
+    qfield = larp.QRiskField(field_quadtree=quadtree)
     qfield.addRGJ(larp.PointRGJ((55, 55), repulsion=[[25, 0], [0, 25]]))
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
@@ -245,13 +245,13 @@ def test_remove_rgj_idx_passed():
         'repulsion': [[25, 0], [0, 25]]
     }]
 
-    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=0.5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     
-    qfield = larp.QPotentailField(field_quadtree=quadtree)
+    qfield = larp.QRiskField(field_quadtree=quadtree)
     qfield.delRGJ([2, 3])
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
@@ -289,13 +289,13 @@ def test_add_leaf_none_children():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     
-    qfield = larp.QPotentailField(field_quadtree=quadtree)
+    qfield = larp.QRiskField(field_quadtree=quadtree)
     qfield.addRGJ(larp.PointRGJ((55, 55), repulsion=[[25, 0], [0, 25]]))
 
     for quad in quadtree.leaves:
@@ -331,13 +331,13 @@ def test_remove_leaf_none_children():
         'repulsion': [[25, 0], [0, 25]]
     }]
 
-    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=1,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     
-    qfield = larp.QPotentailField(field_quadtree=quadtree)
+    qfield = larp.QRiskField(field_quadtree=quadtree)
     qfield.delRGJ([2, 3])
 
     for quad in quadtree.leaves:

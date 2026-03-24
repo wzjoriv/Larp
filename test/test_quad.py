@@ -17,7 +17,7 @@ def test_quad_on_simple_pf():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=50, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   build_tree=True,
                                   minimum_length_limit=2,
@@ -54,7 +54,7 @@ def test_rgj_idx_passed():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
@@ -93,7 +93,7 @@ def test_leaf_none_children():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
@@ -127,7 +127,7 @@ def test_iter_quadtree():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),
@@ -161,7 +161,7 @@ def test_quad_link():
         'repulsion': [[5, 0], [0, 5]]
     }]
 
-    field = larp.PotentialField(size=40, center_point=[55, 55], rgjs=point_rgjs)
+    field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2),

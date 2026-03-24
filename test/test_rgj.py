@@ -163,10 +163,10 @@ def test_geometry_collection_rgj():
 
     values = rgj.eval([(80.0, 10.0), (11, 81), (70.0, 80.0), (40, 8)])
 
-    assert ((values[0] - 1)**2).sum() < 1e-5, "Unexpected potential field evaluation"
-    assert ((values[1] - 1)**2).sum() < 1e-5, "Unexpected potential field evaluation"
-    assert ((values[2] - 1)**2).sum() < 1e-5, "Unexpected potential field evaluation"
-    assert ((values[3] - np.exp(-4/9))**2).sum() < 1e-5, "Unexpected potential field evaluation"
+    assert ((values[0] - 1)**2).sum() < 1e-5, "Unexpected risk field evaluation"
+    assert ((values[1] - 1)**2).sum() < 1e-5, "Unexpected risk field evaluation"
+    assert ((values[2] - 1)**2).sum() < 1e-5, "Unexpected risk field evaluation"
+    assert ((values[3] - np.exp(-4/9))**2).sum() < 1e-5, "Unexpected risk field evaluation"
 
     grads = rgj.gradient([(80.0, 10.0), (11, 81), (70.0, 80.0), (40, 8)])
     grad_line = rgj.rgjs[3].gradient(np.array([(40, 8)]))[0]

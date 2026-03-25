@@ -40,13 +40,13 @@ RGeoJSONCollection = TypedDict('RGeoJSONCollection', {
     'features': List[RGeoJSONObject]
 })
 
-PointRGJDict = TypedDict('PointLOIDict', {
+PointRGJDict = TypedDict('PointRGJDict', {
     'type': str,
     'coordinates': List[float], 
     'repulsion': List[List[float]]
 })
 
-LineStringRGJDict = TypedDict('LineStringLOIDict',{
+LineStringRGJDict = TypedDict('LineStringRGJDict',{
     'type': str,
     'coordinates': List[float], 
     'repulsion': List[List[float]]

@@ -484,8 +484,10 @@ class SQPSolver(Solver):
 
             self.prob.setup(
                 P=self.P, q=q, A=A, l=l, u=u,
-                verbose=self.verbose, polish=False,
+                verbose=self.verbose, polish=False, warm_start=True
             )
+            z_warm = np.concatenate([xs[1:].flatten(), us.flatten()])
+            self.prob.warm_start(x=z_warm)
             res = self.prob.solve()
 
             if "solved" not in res.info.status:
@@ -540,7 +542,7 @@ class _ALSolverBase(Solver):
     def __init__(
         self,
         *args,
-        rho_init:   float = 1.0,
+        rho_init:   float = 10.0,
         rho_max:    float = 1e5,
         rho_scale:  float = 3.0,
         al_iters:   int   = 20,
@@ -927,7 +929,7 @@ class ALILQRSolver(_ALSolverBase):
 
     Extra constructor kwargs (beyond base ``Solver`` parameters)
     ------------------------------------------------------------
-    rho_init        : float = 1.0    Initial AL penalty weight rho
+    rho_init        : float = 10.0    Initial AL penalty weight rho
     rho_max         : float = 1e5    Maximum AL penalty weight
     rho_scale       : float = 3.0    Growth factor for rho per AL outer iteration
     al_iters        : int   = 20     Maximum outer AL iterations

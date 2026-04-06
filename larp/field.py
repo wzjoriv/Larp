@@ -7,6 +7,7 @@ import warnings
 import numpy as np
 import larp.fn as lpf
 from larp.types import Scaler, RGJDict, FieldSize, Point, RGeoJSONCollection, RGeoJSONObject, RepulsionVectorsAndRef
+from larp.const import ON_EDGE_EPS
 
 """
 Author: Josue N Rivera
@@ -210,7 +211,7 @@ class EllipseRGJ(RGJGeometry):
     def __init__(self, coordinates: np.ndarray, shape: np.ndarray, repulsion:Optional[np.ndarray] = None, **kwargs) -> None:
 
         super().__init__(coordinates=coordinates, repulsion=repulsion, **kwargs)
-        self.shape = shape
+        self.shape = np.array(shape)
         self.inv_shape = np.linalg.inv(self.shape)
 
         eval, evec  = np.linalg.eig(self.shape)
@@ -482,7 +483,6 @@ class GeometryCollectionRGJ(MultiRGJGeometry):
 
 class PolygonRGJ(RGJGeometry):
     RGJType = "Polygon"
-    ON_EDGE_EPS = 1e-9
 
     def __init__(
         self,
@@ -660,7 +660,7 @@ class PolygonRGJ(RGJGeometry):
         inside = np.zeros(n, dtype=bool)
 
         # On-edge detection across all segments
-        on_edge = self._points_on_segments_vectorized(pts, eps=self.ON_EDGE_EPS)
+        on_edge = self._points_on_segments_vectorized(pts, eps=ON_EDGE_EPS)
         inside[on_edge] = True
 
         # For points that are not on-edge and inside bbox, do ray cast
@@ -759,7 +759,6 @@ class PolygonRGJ(RGJGeometry):
     
 class MultiPolygonRGJ(MultiRGJGeometry):
     RGJType = "MultiPolygon"
-    ON_EDGE_EPS = 1e-9
 
     def __init__(
         self,

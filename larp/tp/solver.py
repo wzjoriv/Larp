@@ -40,9 +40,11 @@ import numpy as np
 import osqp
 from scipy import sparse
 
-from larp import JAX_INSTALLED, QRiskField, RiskField
+from larp import QRiskField, RiskField
 from larp.dynamics import Dynamics
 from larp.fn import angle_diff
+
+from larp.const import JAX_INSTALLED
 
 if JAX_INSTALLED:
     import jax.numpy as jnp
@@ -152,8 +154,8 @@ class Solver(ABC):
         Delegates to JAX-JIT when the dynamics backend supports it.
         """
         x0 = np.asarray(x0).reshape(-1)
-        if self.dynamics.jax_backend and JAX_INSTALLED:
-            return np.array(self._rollout_jax(x0, us))
+        if JAX_INSTALLED and self.dynamics.jax_backend:
+            return np.array(self._rollout_jax(jnp.array(x0), jnp.array(us)))
         return self._rollout_python(x0, us)
 
     def _rollout_python(self, x0: np.ndarray, us: np.ndarray) -> np.ndarray:
@@ -482,11 +484,11 @@ class SQPSolver(Solver):
                         xref[ai] = xs[k + 1, ai] - delta
                 q[idx : idx + self.n] = -2.0 * (Qk @ xref)
 
+            z_warm = np.concatenate([xs[1:].flatten(), us.flatten()])
             self.prob.setup(
                 P=self.P, q=q, A=A, l=l, u=u,
-                verbose=self.verbose, polish=False, warm_start=True
+                verbose=self.verbose, polish=False, warm_starting=True,
             )
-            z_warm = np.concatenate([xs[1:].flatten(), us.flatten()])
             self.prob.warm_start(x=z_warm)
             res = self.prob.solve()
 
@@ -505,8 +507,9 @@ class SQPSolver(Solver):
 
             xs, us = xs_new, us_new
 
-        for ai in self.angle_idxs:
-            xs[:, ai] = (xs[:, ai] + np.pi) % (2 * np.pi) - np.pi
+        if self.angle_idxs:
+            aidx = np.array(self.angle_idxs, dtype=int)
+            xs[:, aidx] = (xs[:, aidx] + np.pi) % (2 * np.pi) - np.pi
 
         return xs, us
 
@@ -543,11 +546,12 @@ class _ALSolverBase(Solver):
         self,
         *args,
         rho_init:   float = 10.0,
-        rho_max:    float = 1e5,
-        rho_scale:  float = 3.0,
+        rho_max:    float = 1e6,
+        rho_scale:  float = 5.0,
         al_iters:   int   = 20,
         ilqr_iters: int   = 100,
         reg:        float = 1e-6,
+        estimate_hessian: bool = True,
         use_ddp:    bool  = False,
         **kwargs,
     ):
@@ -559,6 +563,7 @@ class _ALSolverBase(Solver):
         self.al_iters  = al_iters
         self.ilqr_iters = ilqr_iters
         self.reg        = reg
+        self.estimate_hessian = estimate_hessian
         self.use_ddp    = use_ddp
 
         self.alphas = 0.5 ** np.arange(10)
@@ -601,8 +606,9 @@ class _ALSolverBase(Solver):
 
     def _stage_cost(self, x, u, x_ref, lam, rho, lin_con):
         diff = x - x_ref
-        for ai in self.angle_idxs:
-            diff[ai] = angle_diff(x[ai], x_ref[ai])
+        if self.angle_idxs:
+            aidx = np.array(self.angle_idxs, dtype=int)
+            diff[aidx] = angle_diff(x[aidx], x_ref[aidx])
 
         l    = 0.5 * (diff @ self.Q @ diff + u @ self.R @ u)
         l_x  = self.Q @ diff
@@ -623,8 +629,9 @@ class _ALSolverBase(Solver):
 
     def _terminal_cost(self, x, x_ref, lam, rho, lin_con):
         diff = x - x_ref
-        for ai in self.angle_idxs:
-            diff[ai] = angle_diff(x[ai], x_ref[ai])
+        if self.angle_idxs:
+            aidx = np.array(self.angle_idxs, dtype=int)
+            diff[aidx] = angle_diff(x[aidx], x_ref[aidx])
 
         l    = 0.5 * (diff @ self.Qf @ diff)
         l_x  = self.Qf @ diff
@@ -668,55 +675,98 @@ class _ALSolverBase(Solver):
 
     # ── DDP second-order correction ───────────────────────────────────────
 
-    def _ddp_correction(self, V_x, xs_t, us_t):
+    def ddp_correction(self, V_x, xs_t, us_t):
+        if JAX_INSTALLED and self.dynamics.jax_backend:
+            dQ_xx, dQ_uu, dQ_ux = self._ddp_correction_jax(jnp.asarray(V_x), jnp.asarray(xs_t), jnp.asarray(us_t))
+            return np.array(dQ_xx), np.array(dQ_uu), np.array(dQ_ux)
+        
+        return self._ddp_correction_python(V_x, xs_t, us_t)
+    
+    def _ddp_correction_python(self, V_x, xs_t, us_t):
+        f_xx, f_uu, f_ux = self.dynamics.discretize_hessian(xs_t, us_t, dt=self.dt, estimate=self.estimate_hessian)
+        f_xx = f_xx[0]; f_uu = f_uu[0]; f_ux = f_ux[0]
+
+        dQ_xx = np.einsum("i,ijk->jk", V_x, f_xx)
+        dQ_uu = np.einsum("i,ijk->jk", V_x, f_uu)
+        dQ_ux = np.einsum("i,ijk->jk", V_x, f_ux)
+
+        return dQ_xx, dQ_uu, dQ_ux
+    
+    @partial(jit, static_argnums=(0,))
+    def _ddp_correction_jax(self, V_x, xs_t, us_t):
         dQ_xx = np.zeros((self.n, self.n))
         dQ_uu = np.zeros((self.m, self.m))
         dQ_ux = np.zeros((self.m, self.n))
 
-        try:
-            f_xx  = self.dynamics.dfdxx(xs_t, us_t)[0] * self.dt
-            dQ_xx = np.einsum("i,ijk->jk", V_x, f_xx)
-        except (NotImplementedError, AttributeError):
-            pass
-        try:
-            f_uu  = self.dynamics.dfduu(xs_t, us_t)[0] * self.dt
-            dQ_uu = np.einsum("i,ijk->jk", V_x, f_uu)
-        except (NotImplementedError, AttributeError):
-            pass
-        try:
-            f_ux  = self.dynamics.dfdux(xs_t, us_t)[0] * self.dt
-            dQ_ux = np.einsum("i,ijk->jk", V_x, f_ux)
-        except (NotImplementedError, AttributeError):
-            pass
+        if self.estimate_hessian:
+            f_xx, f_uu, f_ux = self.dynamics._discretize_hessian_euler_jit(xs_t, us_t, dt=self.dt)
+        else:
+            f_xx, f_uu, f_ux = self.dynamics._discretize_hessian_zoh_jit(xs_t, us_t, dt=self.dt)
+
+        f_xx = f_xx[0]; f_uu = f_uu[0]; f_ux = f_ux[0]
+
+        dQ_xx = jnp.einsum("i,ijk->jk", V_x, f_xx)
+        dQ_uu = jnp.einsum("i,ijk->jk", V_x, f_uu)
+        dQ_ux = jnp.einsum("i,ijk->jk", V_x, f_ux)
 
         return dQ_xx, dQ_uu, dQ_ux
 
-    # ── Inner iLQR / DDP solve ─────────────────────────────────────────────
-
-    def _run_ilqr(self, x0, xs, us, ref, lam_list, rho, lin_cons, u_lb, u_ub):
+    def _run_ilqr(
+        self,
+        x0: np.ndarray,
+        xs: np.ndarray,
+        us: np.ndarray,
+        ref: np.ndarray,
+        lam_list: List[np.ndarray],
+        rho: float,
+        lin_cons: List[Tuple],
+        u_lb: np.ndarray,
+        u_ub: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray, List[Tuple], List[np.ndarray]]:
         """
-        Run up to ``ilqr_iters`` backward + forward passes on the augmented cost
-        with the given fixed constraint linearisation ``lin_cons``.
+        Run up to ``ilqr_iters`` backward + forward passes on the augmented cost.
 
-        Dynamics Jacobians (Ad, Bd) are recomputed every ``linearize_every``
-        inner iterations via ``_il_dyn_cache``, reducing expensive discretize
-        calls while still adapting to trajectory updates.
+        Both the dynamics Jacobians and field constraint linearisations are
+        refreshed inside the inner loop so the optimiser adapts to trajectory
+        changes without waiting for the outer AL loop:
+
+        * Dynamics (Ad, Bd) — rebuilt every ``linearize_every`` inner iterations.
+        * Field constraints  — rebuilt every ``field_every`` inner iterations
+          (skipped on inner iteration 0; lin_cons arrives fresh from the caller).
+
+        Returns
+        -------
+        xs, us       : updated trajectory and controls
+        lin_cons     : freshest field-constraint linearisation (for the dual update)
+        lam_list     : multipliers resized to match the final lin_cons
         """
+        angle_idxs  = self.angle_idxs          # local ref — avoid repeated attr lookup
+        has_angles  = len(angle_idxs) > 0
+        aidx        = np.array(angle_idxs, dtype=int) if has_angles else None
         max_ref_idx = len(ref) - 1
 
         for iteration in range(self.ilqr_iters):
 
-            # ── Dynamics Jacobian cache (linearize_every) 
-            if (self._il_dyn_cache["Ad"] is None
-                    or iteration % self.linearize_every == 0):
-                Ad, Bd, _ = self.dynamics.discretize(xs[:-1], us, dt=self.dt, estimate=False)
+            # ── Dynamics Jacobian (linearize_every) ──────────────────────
+            if self._il_dyn_cache["Ad"] is None or iteration % self.linearize_every == 0:
+                Ad, Bd, _ = self.dynamics.discretize(
+                    xs[:-1], us, dt=self.dt, estimate=False
+                )
                 self._il_dyn_cache["Ad"] = Ad
                 self._il_dyn_cache["Bd"] = Bd
             else:
                 Ad = self._il_dyn_cache["Ad"]
                 Bd = self._il_dyn_cache["Bd"]
 
-            # ── Backward pass ────────────────────────────────────────────
+            # ── Field constraints (field_every, skip iteration 0) ─────────
+            if iteration > 0 and iteration % self.field_every == 0:
+                lin_cons = self._linearize_field_along_traj(xs)
+                for t in range(self.N + 1):
+                    n_c = lin_cons[t][0].shape[0] if lin_cons[t][0] is not None else 0
+                    if len(lam_list[t]) != n_c:
+                        lam_list[t] = np.zeros(n_c)
+
+            # ── Backward pass ─────────────────────────────────────────────
             x_ref_N      = ref[min(self.N, max_ref_idx)]
             _, V_x, V_xx = self._terminal_cost(
                 xs[self.N], x_ref_N, lam_list[self.N], rho, lin_cons[self.N]
@@ -727,8 +777,7 @@ class _ALSolverBase(Solver):
             back_failed = False
 
             for t in reversed(range(self.N)):
-                A_t     = Ad[t]
-                B_t     = Bd[t]
+                A_t = Ad[t]; B_t = Bd[t]
                 x_ref_t = ref[min(t, max_ref_idx)]
 
                 _, l_x, l_u, l_xx, l_uu, l_ux = self._stage_cost(
@@ -742,23 +791,20 @@ class _ALSolverBase(Solver):
                 Q_ux = l_ux + B_t.T @ V_xx @ A_t
 
                 if self.use_ddp:
-                    dQ_xx, dQ_uu, dQ_ux = self._ddp_correction(
+                    dQ_xx, dQ_uu, dQ_ux = self.ddp_correction(
                         V_x, xs[t : t + 1], us[t : t + 1]
                     )
-                    Q_xx += dQ_xx
-                    Q_uu += dQ_uu
-                    Q_ux += dQ_ux
+                    Q_xx += dQ_xx; Q_uu += dQ_uu; Q_ux += dQ_ux
 
                 try:
                     k, K = self._box_ddp_gains(Q_uu, Q_u, Q_ux, us[t], u_lb, u_ub)
                 except np.linalg.LinAlgError:
                     if self.verbose:
-                        print(f"[{self.__class__.__name__}] Singular Q_uu at step {t}.")
+                        print(f"[{self.__class__.__name__}] Singular Q_uu at t={t}.")
                     back_failed = True
                     break
 
-                k_list[t] = k
-                K_list[t] = K
+                k_list[t] = k; K_list[t] = K
 
                 V_x  = Q_x  + K.T @ Q_uu @ k + K.T @ Q_u  + Q_ux.T @ k
                 V_xx = Q_xx + K.T @ Q_uu @ K + K.T @ Q_ux + Q_ux.T @ K
@@ -779,21 +825,21 @@ class _ALSolverBase(Solver):
 
                 for t in range(self.N):
                     dx = xs_new[t] - xs[t]
-                    for ai in self.angle_idxs:
-                        dx[ai] = angle_diff(xs_new[t, ai], xs[t, ai])
+                    if has_angles:
+                        dx[aidx] = angle_diff(xs_new[t, aidx], xs[t, aidx])
 
                     u_raw     = us[t] + alpha * k_list[t] + K_list[t] @ dx
                     us_new[t] = np.clip(u_raw, u_lb, u_ub)
 
                     u_in = us_new[t : t + 1]
-                    k1 = self.dynamics.f(curr_x, u_in)[0]
-                    k2 = self.dynamics.f(curr_x + 0.5 * self.dt * k1, u_in)[0]
-                    k3 = self.dynamics.f(curr_x + 0.5 * self.dt * k2, u_in)[0]
-                    k4 = self.dynamics.f(curr_x + self.dt * k3, u_in)[0]
-                    curr_x = curr_x + (self.dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+                    k1   = self.dynamics.f(curr_x, u_in)[0]
+                    k2   = self.dynamics.f(curr_x + 0.5 * self.dt * k1, u_in)[0]
+                    k3   = self.dynamics.f(curr_x + 0.5 * self.dt * k2, u_in)[0]
+                    k4   = self.dynamics.f(curr_x + self.dt       * k3, u_in)[0]
+                    curr_x = curr_x + (self.dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
 
-                    for ai in self.angle_idxs:
-                        curr_x[0, ai] = (curr_x[0, ai] + np.pi) % (2 * np.pi) - np.pi
+                    if has_angles:
+                        curr_x[0, aidx] = (curr_x[0, aidx] + np.pi) % (2*np.pi) - np.pi
 
                     xs_new[t + 1] = curr_x[0]
 
@@ -810,7 +856,7 @@ class _ALSolverBase(Solver):
             if dJ < self.tol and iteration > 2:
                 break
 
-        return xs, us
+        return xs, us, lin_cons, lam_list
 
     # ── Violation check ────────────────────────────────────────────────────
 
@@ -827,13 +873,13 @@ class _ALSolverBase(Solver):
 
     def solve(
         self,
-        x0:       np.ndarray,
-        ref:      np.ndarray,
-        us_init:  Optional[np.ndarray] = None,
-        xmin:     Optional[np.ndarray] = None,
-        xmax:     Optional[np.ndarray] = None,
-        umin:     Optional[np.ndarray] = None,
-        umax:     Optional[np.ndarray] = None,
+        x0:        np.ndarray,
+        ref:       np.ndarray,
+        us_init:   Optional[np.ndarray] = None,
+        xmin:      Optional[np.ndarray] = None,
+        xmax:      Optional[np.ndarray] = None,
+        umin:      Optional[np.ndarray] = None,
+        umax:      Optional[np.ndarray] = None,
         max_iters: Optional[int] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -877,22 +923,14 @@ class _ALSolverBase(Solver):
         n_al = max_iters if max_iters is not None else self.al_iters
 
         for al_iter in range(n_al):
-
-            # Re-linearise field constraints every field_every AL iterations.
-            # Always runs on al_iter == 0 because lin_cons was already computed above.
-            if al_iter > 0 and al_iter % self.field_every == 0:
-                lin_cons = self._linearize_field_along_traj(xs)
-                # Resize multiplier arrays if constraint count changed
-                for t in range(self.N + 1):
-                    n_c = lin_cons[t][0].shape[0] if lin_cons[t][0] is not None else 0
-                    if len(lam_list[t]) != n_c:
-                        lam_list[t] = np.zeros(n_c)
-
-            xs, us = self._run_ilqr(
+            # _run_ilqr refreshes field linearisation internally every
+            # field_every inner iterations and returns the freshest lin_cons
+            # and lam_list so the dual update here always uses current data.
+            xs, us, lin_cons, lam_list = self._run_ilqr(
                 x0, xs, us, ref, lam_list, rho, lin_cons, u_lb, u_ub
             )
 
-            # Dual update
+            # Dual update with freshest constraints from end of inner loop
             for t in range(self.N + 1):
                 A_t, b_t = lin_cons[t]
                 if A_t is not None and len(lam_list[t]) > 0:
@@ -913,8 +951,10 @@ class _ALSolverBase(Solver):
                     print(f"  Converged at AL iter {al_iter + 1}.")
                 break
 
-        for ai in self.angle_idxs:
-            xs[:, ai] = (xs[:, ai] + np.pi) % (2 * np.pi) - np.pi
+        # Vectorised angle wrap for all angle indices at once
+        if self.angle_idxs:
+            aidx = np.array(self.angle_idxs, dtype=int)
+            xs[:, aidx] = (xs[:, aidx] + np.pi) % (2 * np.pi) - np.pi
 
         return xs, us
 
@@ -929,14 +969,16 @@ class ALILQRSolver(_ALSolverBase):
 
     Extra constructor kwargs (beyond base ``Solver`` parameters)
     ------------------------------------------------------------
-    rho_init        : float = 10.0    Initial AL penalty weight rho
-    rho_max         : float = 1e5    Maximum AL penalty weight
-    rho_scale       : float = 3.0    Growth factor for rho per AL outer iteration
+    rho_init        : float = 10.0   Initial AL penalty weight rho
+    rho_max         : float = 1e6    Maximum AL penalty weight
+    rho_scale       : float = 5.0    Growth factor for rho per AL outer iteration
     al_iters        : int   = 20     Maximum outer AL iterations
     ilqr_iters      : int   = 100    Maximum inner iLQR iterations per AL step
     reg             : float = 1e-6   Tikhonov regularisation on Q_uu
-    linearize_every : int   = 1      Re-linearise dynamics every N inner iterations
-    field_every     : int   = 3      Re-linearise obstacles every N outer AL iterations
+    linearize_every : int   = 1      Re-linearise dynamics every N *inner* iterations
+    field_every     : int   = 3      Re-linearise obstacles every N *inner* iterations
+                                     (skipped on inner iteration 0; lin_cons is fresh
+                                     from the outer AL loop at that point)
     """
 
     def __init__(self, *args, **kwargs):

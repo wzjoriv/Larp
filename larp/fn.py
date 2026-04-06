@@ -5,14 +5,30 @@ from larp.types import Point
 from pyproj import CRS, Transformer
 from functools import lru_cache
 
+from larp.const import JAX_INSTALLED
+
 Tfrom_crs = lru_cache(Transformer.from_crs)
 
 """
 Author: Josue N Rivera
 """
 
-def bmatvec(matrix:np.ndarray, vector:np.ndarray) -> Any:
+#TODO: jit and save operations
+
+def bmatvec(matrix: np.ndarray, vector: np.ndarray) -> np.ndarray:
+    """Batched matrix-vector multiplication."""
+    
     return np.einsum('bnm,bm->bn', matrix, vector)
+
+def bvecdottens(vector: Any, tensor: Any) -> Any:
+    """
+    Batched vector-tensor dot product. 
+    Commonly used for computing V_x @ f_xx in DDP.
+    Vector: (B, N)
+    Tensor: (B, N, M, K)  -> Output: (B, M, K)
+    """
+    
+    return np.einsum('bi,bijk->bjk', vector, tensor)
 
 def route_distance(route:Union[np.ndarray, List[Point]], return_joints = False) -> Union[float|np.float64, Tuple[float, np.ndarray]]:
     """

@@ -1,20 +1,24 @@
 from abc import ABC, abstractmethod
+import importlib
 import inspect
 from types import ModuleType
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import expm
 from itertools import chain
+import warnings
 
 from larp.fn import bmatvec
-
-import importlib.util
-JAX_INSTALLED = importlib.util.find_spec("jax") is not None
+from larp.const import JAX_INSTALLED, MJX_INSTALLED
 
 if JAX_INSTALLED:
     import jax.numpy as jnp
-    from jax import jacfwd, jit, vmap
+    from jax import jacfwd, jit, vmap, lax
     from jax.scipy.linalg import expm as jexpm
+
+if MJX_INSTALLED:
+    import mujoco
+    from mujoco import mjx
 
 """
 Author: Josue N Rivera
@@ -117,9 +121,10 @@ class Dynamics(ABC):
         :type wrapable_primitive_state: list[int], optional
         :param holonomic: Flag indicating if the system is holonomic.
         :type holonomic: bool, optional
-        :param jax_backend: If ``True`` and JAX is installed, enables JIT compilation for linearization 
+        :param jax_backend: If ``True`` and JAX is installed, enables JIT compilation for step, rollout, linearization, 
             and discretization methods. This requires the subclass to implement ``f`` 
             in a way that accepts the ``np`` module argument for backend injection.
+            Independently, if jacobians and hessians are not specified JAX will be used to compute them if JAX is installed.
         :type jax_backend: bool
         """
 
@@ -171,6 +176,14 @@ class Dynamics(ABC):
         self._linearize_jit = None
         self._discretize_zoh_jit = None
         self._discretize_euler_jit = None
+        self._discretize_hessian_zoh_jit   = None
+        self._discretize_hessian_euler_jit = None
+
+        self._step_euler_jit = None
+        self._step_rk4_jit = None
+
+        self._rollout_euler_jit = None
+        self._rollout_rk4_jit = None
 
         self._setup_jax_functions()
 
@@ -258,7 +271,7 @@ class Dynamics(ABC):
             state_dim = self.first_order_state_n
             control_dim = self.first_order_control_n
 
-            # --- IMPLEMENTATION A: Exact ZOH (Matrix Exponential) ---
+            # --- JIT A: Exact ZOH ---
             def _discretize_zoh(x0, u0, dt):
                 A, B, f0 = _linearize_pure(x0, u0)
                 
@@ -279,7 +292,7 @@ class Dynamics(ABC):
 
                 return Ad, Bd, fd
             
-            # --- IMPLEMENTATION B: Forward Euler Approximation ---
+            # --- JIT B: Forward Euler Approximation ---
             def _discretize_euler(x0, u0, dt):
                 A, B, f0 = _linearize_pure(x0, u0)
                 
@@ -298,6 +311,66 @@ class Dynamics(ABC):
 
             self._discretize_zoh_jit = jit(_discretize_zoh)
             self._discretize_euler_jit = jit(_discretize_euler)
+
+            # --- JIT C: Exact ZOH Discretized Hessians ---
+            def _step_zoh_single(x, u, dt):
+                A, B, f0 = _linearize_pure(x[None], u[None])
+                A, B, f0 = A[0], B[0], f0[0]
+                K = f0 - A @ x - B @ u
+                
+                top_row = jnp.concatenate([A, B, K[:, None]], axis=1)
+                zeros_bottom = jnp.zeros((control_dim + 1, state_dim + control_dim + 1))
+                M = jnp.concatenate([top_row, zeros_bottom], axis=0)
+                
+                Expm = jexpm(M * dt)
+                Ad = Expm[:state_dim, :state_dim]
+                Bd = Expm[:state_dim, state_dim : state_dim + control_dim]
+                fd = Expm[:state_dim, -1]
+                return Ad @ x + Bd @ u + fd
+                
+            _zoh_Fxx = vmap(jacfwd(jacfwd(_step_zoh_single, argnums=0), argnums=0), in_axes=(0, 0, None))
+            _zoh_Fuu = vmap(jacfwd(jacfwd(_step_zoh_single, argnums=1), argnums=1), in_axes=(0, 0, None))
+            _zoh_Fux = vmap(jacfwd(jacfwd(_step_zoh_single, argnums=1), argnums=0), in_axes=(0, 0, None))
+
+
+            def _discretize_hessian_zoh(x, u, dt):
+                return _zoh_Fxx(x, u, dt), _zoh_Fuu(x, u, dt), _zoh_Fux(x, u, dt)
+
+            # --- JIT D: Forward Euler Discretized Hessians ---
+            def _discretize_hessian_euler(x, u, dt):
+                return self._dfdxx_jit(x, u) * dt, self._dfduu_jit(x, u) * dt, self._dfdux_jit(x, u) * dt
+
+            self._discretize_hessian_zoh_jit   = jit(_discretize_hessian_zoh)
+            self._discretize_hessian_euler_jit = jit(_discretize_hessian_euler)
+
+            # --- JIT F: Forward Euler & RK4 Step (Batched) ---
+            def _step_euler_pure(x, u, dt):
+                return x + self.f(x, u, np=jnp) * dt
+
+            def _step_rk4_pure(x, u, dt):
+                k1 = self.f(x, u, np=jnp)
+                k2 = self.f(x + 0.5 * dt * k1, u, np=jnp)
+                k3 = self.f(x + 0.5 * dt * k2, u, np=jnp)
+                k4 = self.f(x + dt * k3, u, np=jnp)
+                return x + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+            self._step_euler_jit = jit(vmap(_step_euler_pure, in_axes=(0, 0, None)))
+            self._step_rk4_jit   = jit(vmap(_step_rk4_pure, in_axes=(0, 0, None)))
+
+            # --- JIT G: Rollout (Batched Trajectories) ---
+            def _make_rollout(step_fn):
+                def rollout_fn(x0_batch, us_time_major, dt):
+                    def scan_op(x_prev, u_curr):
+                        x_next = step_fn(x_prev, u_curr, dt)
+                        return x_next, x_next
+
+                    _, xs_traj = lax.scan(scan_op, x0_batch, us_time_major)
+                    return xs_traj
+                return rollout_fn
+
+            self._rollout_euler_jit = jit(_make_rollout(_step_euler_pure))
+            self._rollout_rk4_jit   = jit(_make_rollout(_step_rk4_pure))
+
     
     def split_first(self, first: np.ndarray) -> List[np.ndarray]:
         """
@@ -562,7 +635,7 @@ class Dynamics(ABC):
             # Predict next state
             x_next = Ad @ x_curr.T + Bd @ u_curr.T + fd
         """
-        if self.jax_backend:
+        if self.jax_backend: #TODO: check if functions are not None
             if estimate:
                 Ad, Bd, fd = self._discretize_euler_jit(jnp.asarray(x0), jnp.asarray(u0), dt)
             else:
@@ -596,6 +669,172 @@ class Dynamics(ABC):
             fd = Expm[:, :state_dim, -1]
 
         return Ad, Bd, fd
+    
+    def discretize_hessian(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate: bool = True) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        r"""
+        Discretise the second-order dynamics Hessians over a time step *dt*.
+ 
+        Returns the discrete 3D tensors ``(F_xx, F_uu, F_ux)``.
+ 
+        Methods
+        -------
+        **ZOH-exact** (``estimate=False``, requires ``jax_backend=True``):
+            Differentiates the full ZOH step map :math:`x_{k+1}(x_k, u_k)`
+            twice via JAX auto-diff, yielding the exact discrete Hessian of
+            the one-step transition.  This is the correct quantity for
+            second-order DDP and avoids the :math:`O(dt)` truncation error of
+            the Euler approximation.
+ 
+        **Euler approximation** (``estimate=True`` or no JAX):
+            :math:`F_{xx} \approx f_{xx} \cdot dt`.  Fast, but introduces
+            first-order truncation error.
+ 
+        Parameters
+        ----------
+        x0 : (B, n)  Reference state batch.
+        u0 : (B, m)  Reference control batch.
+        dt : float   Time step [s].
+        estimate : bool
+            If ``True`` (default), use fast Euler scaling.
+            If ``False``, use exact ZOH differentiation (JAX required).
+ 
+        Returns
+        -------
+        F_xx : (B, n, n, n)   Discrete state-state Hessian.
+        F_uu : (B, n, m, m)   Discrete control-control Hessian.
+        F_ux : (B, n, m, n)   Discrete control-state cross-Hessian.
+ 
+        Raises
+        ------
+        NotImplementedError
+            If ``estimate=False`` and neither ``jax_backend`` nor an analytical
+            override of ``dfdxx / dfduu / dfdux`` is available.
+        """
+        if self.jax_backend:
+            if estimate:
+                F_xx, F_uu, F_ux = self._discretize_hessian_euler_jit(jnp.asarray(x0), jnp.asarray(u0), dt)
+            else:
+                F_xx, F_uu, F_ux = self._discretize_hessian_zoh_jit(jnp.asarray(x0), jnp.asarray(u0), dt)
+
+            return np.asarray(F_xx), np.asarray(F_uu), np.asarray(F_ux)
+ 
+        if not estimate:
+            warnings.warn(
+                "discretize_hessian: ZOH-exact Hessians require jax_backend=True. "
+                "Falling back to Euler approximation.",
+                RuntimeWarning, stacklevel=2,
+            )
+        F_xx = self.dfdxx(x0, u0) * dt
+        F_uu = self.dfduu(x0, u0) * dt
+        F_ux = self.dfdux(x0, u0) * dt
+        return F_xx, F_uu, F_ux
+
+    def step(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate=True) -> np.ndarray:
+        r"""
+        Advances the system dynamics forward by one time step :math:`dt`.
+
+        Supports batched operations and can use either a fast Forward Euler 
+        approximation or a more accurate 4th-order Runge-Kutta (RK4) integration.
+        If JAX is enabled, this operation is JIT-compiled and vectorized over the batch.
+
+        :param x0: Current state batch :math:`x_k`. Shape: ``(batch_size, state_dim)``.
+        :type x0: np.ndarray
+        :param u0: Current control batch :math:`u_k`. Shape: ``(batch_size, control_dim)``.
+        :type u0: np.ndarray
+        :param dt: Time step duration in seconds. Default is 0.1.
+        :type dt: float
+        :param estimate: If ``True``, uses 1st-order Forward Euler integration. 
+            If ``False``, uses 4th-order Runge-Kutta (RK4) integration.
+        :type estimate: bool
+        :return: The next state batch :math:`x_{k+1}`. Shape: ``(batch_size, state_dim)``.
+        :rtype: np.ndarray
+
+        Example
+        -------
+
+        .. code-block:: python
+
+            # Step forward a batch of 10 states using exact RK4 integration
+            x_curr = np.zeros((10, 4))  # [Batch, State_Dim]
+            u_curr = np.ones((10, 2))   # [Batch, Control_Dim]
+            
+            x_next = dyn.step(x_curr, u_curr, dt=0.05, estimate=False)
+            # x_next shape: (10, 4)
+        """
+
+        if self.jax_backend:
+            if estimate:
+                x0 = self._step_euler_jit(jnp.asarray(x0), jnp.asarray(u0), dt)
+            else:
+                x0 = self._step_rk4_jit(jnp.asarray(x0), jnp.asarray(u0), dt)
+
+            return np.array(x0)
+        
+        if estimate:
+            x = x0 + self.f(x0, u0) * dt
+        else:
+            k1 = self.f(x0, u0)
+            k2 = self.f(x0 + 0.5 * dt * k1, u0)
+            k3 = self.f(x0 + 0.5 * dt * k2, u0)
+            k4 = self.f(x0 + dt * k3, u0)
+            x  = x0 + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+        
+        return x
+    
+    def rollout(self, x0: np.ndarray, us: np.ndarray, dt: float = 0.1, estimate:bool = True) -> np.ndarray:
+        r"""
+        Simulates a forward rollout of the system dynamics over a sequence of controls.
+
+        This method expects a **time-major** control sequence (time is Axis 0). 
+        It returns the resulting state trajectory starting from the first integration 
+        step (i.e., it excludes the initial state ``x0`` from the returned array).
+
+        :param x0: Initial state batch. Shape: ``(batch_size, state_dim)``.
+        :type x0: np.ndarray
+        :param us: Sequence of control batches over time. 
+            Shape: ``(N_steps, batch_size, control_dim)``.
+        :type us: np.ndarray
+        :param dt: Time step duration in seconds. Default is 0.1.
+        :type dt: float
+        :param estimate: If ``True``, uses 1st-order Forward Euler integration. 
+            If ``False``, uses 4th-order Runge-Kutta (RK4) integration.
+        :type estimate: bool
+        :return: The state trajectory, excluding the initial state. 
+            Shape: ``(N_steps, batch_size, state_dim)``.
+        :rtype: np.ndarray
+
+        Example
+        -------
+
+        .. code-block:: python
+
+            # Rollout 20 time steps for a batch of 5 agents
+            x0 = np.zeros((5, 4))        # [Batch, State_Dim]
+            us = np.ones((20, 5, 2))     # [Time, Batch, Control_Dim]
+            
+            # Predict future states using fast Euler estimation
+            xs = dyn.rollout(x0, us, dt=0.05, estimate=True)
+            
+            # xs shape: (20, 5, 4)
+            # xs[0] is the state at t=0.05s
+            # xs[-1] is the state at t=1.0s
+        """
+
+        if self.jax_backend:
+            if estimate:
+                xs = self._rollout_euler_jit(jnp.asarray(x0), jnp.asarray(us), dt)
+            else:
+                xs = self._rollout_rk4_jit(jnp.asarray(x0), jnp.asarray(us), dt)
+
+            return np.array(xs)
+
+        N = us.shape[0]
+        xs = np.zeros((N+1, *x0.shape))
+        xs[0] = x0
+
+        for k in range(N):
+            xs[k+1] = self.step(xs[k], us[k], dt=dt, estimate=estimate)
+        return xs[1:]
 
     @property
     def first_state_names(self) -> List[str]:
@@ -800,6 +1039,9 @@ class WMRDynamics(Dynamics):
 
         first_order_control : np.ndarray
             Control vector of shape (batch_size, 2): [v, ω]
+
+        np: Module
+            Numpy backend. Numpy or Jax.numpy
 
         Returns
         -------
@@ -1455,7 +1697,7 @@ class HighFidelityQuadcopterDynamics(Dynamics):
         :param drag_coeffs_quadratic: Quadratic drag coefficients ``[C_x, C_y, C_z]`` [Ns^2/m^2].
         :param rotational_drag: Drag torque coefficients on body rotation ``[C_{rp}, C_{rq}, C_{rr}]``.
         :param blade_flapping_coeff: Coefficient for H-force/Blade flapping moment [Ns].
-        :param ground_effect_coeff: Maximum thrust increase percentage (e.g., 0.1 = 10\%) at z=0.
+        :param ground_effect_coeff: Maximum thrust increase percentage (e.g., 0.1 = 10%) at z=0.
         :param ground_effect_height: Height [m] at which ground effect becomes negligible.
 
         **Electrical & Physical Imperfections:**
@@ -1843,3 +2085,552 @@ class HighFidelityQuadcopterDynamics(Dynamics):
         y = cp * st * cy + sp * ct * sy
         z = cp * ct * sy - sp * st * cy
         return np.array([w, x, y, z])
+
+class SmallFixedWingDynamics(Dynamics):
+    r"""
+    6-DOF small fixed-wing (UAV) dynamics with standard aerodynamic model.
+
+    **State vector (12-dim)**:
+        [x, vx, y, vy, z, vz, phi, theta, psi, p, q, r]
+
+        - x, y    : horizontal position (World frame, right-forward convention)
+        - z       : altitude (positive up)
+        - vx,vy,vz: linear velocity (World frame)
+        - phi     : roll  (rotation about body X)
+        - theta   : pitch (rotation about body Y)
+        - psi     : yaw   (heading, rotation about body Z)
+        - p, q, r : angular rates (body frame)
+
+    **Control vector (4-dim)**:
+        [delta_t, delta_a, delta_e, delta_r]
+
+        - delta_t : throttle ∈ [0, 1]
+        - delta_a : aileron  deflection [rad]
+        - delta_e : elevator deflection [rad]
+        - delta_r : rudder   deflection [rad]
+
+    **Frame convention**: same as QuadcopterDynamics — X right, Y forward, Z up.
+    ``psi=0`` → nose points +Y; ``heading_convention_offset = -π/2``.
+
+    Aerodynamic model
+    -----------------
+    Forces and moments follow the standard linearised stability-axis formulation
+    from Beard & McLain (2012), *Small Unmanned Aircraft: Theory and Practice*,
+    Princeton University Press, Chapters 2-4.
+
+    Lift:   ``C_L = C_L0 + C_Lα·α + C_Lq·(c̄/(2V))·q + C_Lδe·δe``
+    Drag:   ``C_D = C_D0 + C_Dα·α``  (parabolic polar)
+    Moment: ``C_m = C_m0 + C_mα·α + C_mq·(c̄/(2V))·q + C_mδe·δe``
+    Roll:   ``C_l = C_lp·(b/(2V))·p + C_lδa·δa + C_lδr·δr``
+    Yaw:    ``C_n = C_nr·(b/(2V))·r + C_nδa·δa + C_nδr·δr``
+
+    Thrust is modelled as ``T = k_t · delta_t · V_a²`` (propeller quadratic).
+
+    Default parameters approximate a 1.5-kg, 1.0-m wingspan electric trainer
+    (similar to the Aerosonde UAV used in Beard & McLain).
+
+    Reference
+    ---------
+    Beard, R. W., & McLain, T. W. (2012).
+    *Small Unmanned Aircraft: Theory and Practice*.
+    Princeton University Press. ISBN 978-0-691-14921-9.
+    """
+
+    def __init__(
+        self,
+        mass:         float = 1.56,      # kg
+        gravity:      float = 9.807,     # m/s²
+        wingspan:     float = 1.0,       # b  [m]
+        chord:        float = 0.18,      # c̄  [m]
+        wing_area:    float = 0.18,      # S  [m²]
+        inertia:      list  = [0.082, 0.113, 0.132],  # [Ix, Iy, Iz]  kg·m²
+        inertia_xz:   float = 0.0123,    # Ixz  kg·m²
+        # Aerodynamic coefficients
+        CL0:   float =  0.28,   CDp:   float = 0.03,   # profile drag
+        CLa:   float =  3.45,   CDa:   float = 0.30,   # AoA slope
+        CLq:   float =  0.0,    Cm0:   float = -0.02,
+        CLde:  float =  0.36,   Cma:   float = -0.38,
+        CD0:   float =  0.03,   Cmq:   float = -3.6,
+        Cmde:  float = -0.5,
+        # Roll / yaw
+        Clp:   float = -0.50,   Cnp:   float =  0.022,
+        Clda:  float =  0.14,   Cnr:   float = -0.35,
+        Cldr:  float =  0.026,  Cnda:  float =  0.006,
+        Cndr:  float = -0.032,
+        # Thrust model:  T = k_t · delta_t · V_a²
+        k_thrust: float = 1.50,
+        # Stall sigmoid blending half-width (rad)
+        M_sigmoid: float = 50.0,
+        alpha0:    float = 0.4712,       # stall transition centre (rad)
+    ) -> None:
+
+        constants = {k: v for k, v in locals().items() if k != "self"}
+        super().__init__(
+            constants=constants,
+            state_derivative_orders=[1, 1, 1] + [0, 0, 0] + [0, 0, 0],
+            control_derivative_orders=[0] * 4,
+            wrapable_primitive_state=[3, 4, 5],
+            jax_backend=True,
+        )
+
+        self.m     = float(mass)
+        self.g     = float(gravity)
+        self.b     = float(wingspan)
+        self.c     = float(chord)
+        self.S     = float(wing_area)
+        self.Ix, self.Iy, self.Iz = [float(v) for v in inertia]
+        self.Ixz   = float(inertia_xz)
+
+        # Pre-compute inertia inverse (for body rates)
+        G  = self.Ix * self.Iz - self.Ixz ** 2
+        self._G   = G
+        self._g1  =  self.Ixz * (self.Ix - self.Iy + self.Iz) / G
+        self._g2  =  (self.Iz * (self.Iz - self.Iy) + self.Ixz ** 2) / G
+        self._g3  =  self.Iz / G
+        self._g4  =  self.Ixz / G
+        self._g5  =  (self.Iz - self.Ix) / self.Iy
+        self._g6  =  self.Ixz / self.Iy
+        self._g7  =  ((self.Ix - self.Iy) * self.Ix + self.Ixz ** 2) / G
+        self._g8  =  self.Ix / G
+
+        # Aero coefficients
+        self.CL0   = CL0;   self.CLa  = CLa;  self.CLq  = CLq;  self.CLde = CLde
+        self.CD0   = CD0;   self.CDp  = CDp;  self.CDa  = CDa
+        self.Cm0   = Cm0;   self.Cma  = Cma;  self.Cmq  = Cmq;  self.Cmde = Cmde
+        self.Clp   = Clp;   self.Clda = Clda; self.Cldr = Cldr
+        self.Cnp   = Cnp;   self.Cnr  = Cnr;  self.Cnda = Cnda; self.Cndr = Cndr
+        self.k_t   = float(k_thrust)
+        self.M_s   = float(M_sigmoid)
+        self.a0    = float(alpha0)
+
+        # Lateral coefficients (Cy_beta approximation)
+        self.CYb   = -0.26
+        self.CYp   = 0.0
+        self.CYr   = 0.0
+        self.CYda  = 0.0
+        self.CYdr  = 0.14
+
+    # ── Aero helpers ──────────────────────────────────────────────────────────
+
+    def _sigmoid(self, alpha, np):
+        """Sigmoid blend factor for post-stall CL (Beard & McLain Eq. 4.10)."""
+        ea = np.exp(self.M_s * (alpha - self.a0))
+        eb = np.exp(-self.M_s * (alpha + self.a0))
+        return (1 + ea + eb) / ((1 + ea) * (1 + eb))
+
+    def _rotation_matrix(self, phi, theta, psi, np):
+        """ZYX rotation matrix R_bw (body→world columns)."""
+        cp, sp = np.cos(phi),   np.sin(phi)
+        ct, st = np.cos(theta), np.sin(theta)
+        cs, ss = np.cos(psi),   np.sin(psi)
+        # Each entry shape: (B, 1)
+        R = [[ct*cs,                 ct*ss,                -st    ],
+             [sp*st*cs - cp*ss,  sp*st*ss + cp*cs,  sp*ct  ],
+             [cp*st*cs + sp*ss,  cp*st*ss - sp*cs,  cp*ct  ]]
+        return R  # list of lists of (B,1) arrays
+
+    def f(self, first_order_state: np.ndarray,
+          first_order_control: np.ndarray,
+          np=None) -> np.ndarray:
+        r"""
+        Compute the continuous-time state derivative :math:`\dot{x} = f(x, u)`.
+
+        Larp body-frame convention
+        --------------------------
+        Larp uses X=right, Y=forward, Z=up (ENU), which differs from the
+        standard Beard & McLain (B&M) NED convention.  The mapping is:
+
+        ===============  ===============  ========================
+        Larp state       Physical meaning  B&M equivalent
+        ===============  ===============  ========================
+        phi   (index 6)  Pitch angle       theta_BM (about Y_right)
+        theta (index 7)  Roll  angle       phi_BM   (about X_fwd)
+        psi   (index 8)  Yaw   angle       psi_BM   (about Z_up, same sign)
+        p     (index 9)  Pitch rate        q_BM
+        q     (index 10) Roll  rate        p_BM
+        r     (index 11) Yaw   rate        -r_BM  (Z_up vs Z_down)
+        ===============  ===============  ========================
+
+        Sign corrections applied versus a naïve B&M transcription:
+
+        * **Lift (Fz_b)**: positive = upward in Z-up frame.
+          ``Fz_b = +sin(alpha)*CD + cos(alpha)*CL`` (both terms positive).
+        * **Side-force yaw term**: ``-CYr`` not ``+CYr`` (r_LARP = -r_BM).
+        * **Yaw moment (Mz_b)**: overall sign flip relative to B&M N
+          (moment about Z_up vs Z_down); also ``-Cnp`` and ``-Cnda/-Cndr``.
+        """
+        if np is None: np = importlib.import_module("numpy")
+
+        # ── 1. Unpack state ───────────────────────────────────────────────
+        # State: [x, vx,  y, vy,  z, vz,  phi, theta, psi,  p, q, r]
+        # Idx:    0   1   2   3   4   5    6     7      8    9  10 11
+        vx, vy, vz   = first_order_state[:, 1:2], first_order_state[:, 3:4], first_order_state[:, 5:6]
+        phi, theta, psi = first_order_state[:, 6:7], first_order_state[:, 7:8], first_order_state[:, 8:9]
+        p, q, r_ = first_order_state[:, 9:10], first_order_state[:, 10:11], first_order_state[:, 11:12]
+        # phi   = pitch angle (rotation about Larp X = right axis)
+        # theta = roll  angle (rotation about Larp Y = forward axis)
+        # p     = pitch rate,  q = roll rate,  r_ = yaw rate (about Z_up)
+
+        # ── 2. Unpack control ─────────────────────────────────────────────
+        delta_t = np.clip(first_order_control[:, 0:1], 0.0, 1.0)  # throttle ∈ [0,1]
+        delta_a = first_order_control[:, 1:2]   # aileron  [rad]
+        delta_e = first_order_control[:, 2:3]   # elevator [rad]
+        delta_r = first_order_control[:, 3:4]   # rudder   [rad]
+
+        # ── 3. Trig shortcuts ─────────────────────────────────────────────
+        cp, sp = np.cos(phi),   np.sin(phi)    # phi   = pitch
+        ct, st = np.cos(theta), np.sin(theta)  # theta = roll
+        cs, ss = np.cos(psi),   np.sin(psi)    # psi   = yaw
+
+        # ── 4. World → body velocity  (R_wb = R_bw^T, ZYX: Rz·Ry·Rx) ───
+        # body-x = right (lateral), body-y = forward, body-z = up
+        u_b = ( cs*ct)*vx + ( ss*ct)*vy + (-st    )*vz   # lateral   (body X)
+        v_b = (cs*sp*st - ss*cp)*vx + (ss*sp*st + cs*cp)*vy + (sp*ct)*vz  # forward   (body Y)
+        w_b = (cs*cp*st + ss*sp)*vx + (ss*cp*st - cs*sp)*vy + (cp*ct)*vz  # upward    (body Z)
+
+        # ── 5. Airspeed & aerodynamic angles ─────────────────────────────
+        Va2 = np.maximum(vx**2 + vy**2 + vz**2, 0.01)  # floor before sqrt
+        Va  = np.sqrt(Va2)
+
+        # Angle of attack: angle in the forward-up (body Y-Z) plane.
+        # Guard: if forward speed v_b → 0 (e.g. stall), alpha saturates to ±90°.
+        alpha = np.arctan2(w_b, np.maximum(v_b, 1e-4))
+
+        # Sideslip angle: lateral deviation.
+        beta = np.arcsin(np.clip(u_b / Va, -1.0, 1.0))
+
+        # ── 6. Aerodynamic force coefficients ────────────────────────────
+        rho   = 1.225                        # air density [kg/m³]
+        q_dyn = 0.5 * rho * Va2 * self.S    # dynamic pressure × wing area [N]
+        b_2V  = self.b / (2.0 * Va)         # b/(2V)
+        c_2V  = self.c / (2.0 * Va)         # c̄/(2V)
+
+        # Lift coefficient (with post-stall sigmoid blend)
+        sig    = self._sigmoid(alpha, np)
+        CL_lin = self.CL0 + self.CLa * alpha
+        CL_stall = 2.0 * np.sign(alpha) * np.sin(alpha)**2 * np.cos(alpha)
+        CL = (1.0 - sig) * CL_lin + sig * CL_stall
+        # p = Larp pitch rate = B&M pitch rate q → CLq uses p here
+        CL = CL + self.CLq * c_2V * p + self.CLde * delta_e
+
+        # Drag coefficient (parabolic polar)
+        CD = (self.CDp
+              + (self.CL0 + self.CLa * alpha)**2 / (np.pi * 0.85 * (self.b**2 / self.S))
+              + self.CDa * np.abs(alpha))
+
+        # Side-force coefficient.
+        # CYp: B&M uses p_BM (roll rate) = Larp q.
+        # CYr: B&M uses r_BM (yaw rate)  = -Larp r_  → sign flip on CYr term.
+        CY = (self.CYb * beta
+              + self.CYp * b_2V * q
+              - self.CYr * b_2V * r_       # sign flip: r_LARP = -r_BM
+              + self.CYdr * delta_r)
+
+        # ── 7. Aerodynamic moments (Larp body frame) ──────────────────────
+        # Mx_b (about Larp X=right) = B&M pitching moment M (about Y_NED=right).
+        # Uses Larp pitch rate p (= B&M q).
+        Mx_b = q_dyn * self.c * (self.Cm0
+                                  + self.Cma  * alpha
+                                  + self.Cmq  * c_2V * p   # p = Larp pitch rate
+                                  + self.Cmde * delta_e)
+
+        # My_b (about Larp Y=forward) = B&M rolling moment L (about X_NED=forward).
+        # Uses Larp roll rate q (= B&M p).
+        My_b = q_dyn * self.b * (self.Clp  * b_2V * q   # q = Larp roll rate
+                                  + self.Clda * delta_a
+                                  + self.Cldr * delta_r)
+
+        # Mz_b (about Larp Z=up) = −B&M yawing moment N (about Z_NED=down).
+        # Overall sign flip because Z_LARP = −Z_NED.
+        # Cnp uses p_BM = q_LARP; Cnr uses r_BM = -r_LARP (Cnr term sign cancels
+        # with the overall flip → stays positive). Cnda/Cndr also flip.
+        Mz_b = q_dyn * self.b * (-self.Cnp  * b_2V * q   # −Cnp (sign flip)
+                                   + self.Cnr  * b_2V * r_  # +Cnr (double flip)
+                                   - self.Cnda * delta_a     # sign flip
+                                   - self.Cndr * delta_r)    # sign flip
+
+        # ── 8. Body forces ────────────────────────────────────────────────
+        cos_a, sin_a = np.cos(alpha), np.sin(alpha)
+
+        # Lateral (body X, right): side force only
+        Fx_b = CY * q_dyn
+
+        # Longitudinal (body Y, forward): thrust − drag·cos α + lift·sin α
+        Fy_b = -cos_a * CD * q_dyn + sin_a * CL * q_dyn + self.k_t * delta_t * Va2
+
+        # Vertical (body Z, up): lift·cos α + drag·sin α  ← both POSITIVE in Z-up frame
+        # BUG FIX: was (−sin_a·CD − cos_a·CL) which pointed lift downward; corrected to:
+        Fz_b = sin_a * CD * q_dyn + cos_a * CL * q_dyn
+
+        # ── 9. World accelerations  (F_body → world via R_bw) ─────────────
+        ax_ = ((cs*ct)*Fx_b + (cs*sp*st - ss*cp)*Fy_b + (cs*cp*st + ss*sp)*Fz_b) / self.m
+        ay_ = ((ss*ct)*Fx_b + (ss*sp*st + cs*cp)*Fy_b + (ss*cp*st - cs*sp)*Fz_b) / self.m
+        az_ = ((-st  )*Fx_b + (sp*ct          )*Fy_b + (cp*ct            )*Fz_b) / self.m - self.g
+
+        # ── 10. Rotational dynamics (simplified — no inertia cross-coupling) ──
+        dp = Mx_b / self.Ix   # d(pitch rate)/dt
+        dq = My_b / self.Iy   # d(roll  rate)/dt
+        dr = Mz_b / self.Iz   # d(yaw   rate)/dt
+
+        # ── 11. Euler angle kinematics (ZYX: Rz·Ry·Rx) ──────────────────
+        # Clip roll to avoid tan / sec singularity at ±90° bank.
+        theta_c = np.clip(theta, -1.5, 1.5)
+        tt   = np.tan(theta_c)
+        sect = 1.0 / np.cos(theta_c)
+
+        dphi   = p + (q * sp + r_ * cp) * tt    # d(pitch)/dt
+        dtheta = q * cp - r_ * sp                # d(roll)/dt
+        dpsi   = (q * sp + r_ * cp) * sect       # d(yaw)/dt
+
+        return np.concatenate([
+            vx, ax_,
+            vy, ay_,
+            vz, az_,
+            dphi, dtheta, dpsi,
+            dp, dq, dr,
+        ], axis=1)
+
+    @property
+    def angle_indices(self):
+        return [6, 7, 8]
+
+    @property
+    def heading_convention_offset(self) -> float:
+        """psi=0 → nose +Y (same convention as QuadcopterDynamics)."""
+        return -np.pi / 2
+
+import importlib
+from types import ModuleType
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+
+from larp.const import JAX_INSTALLED, MJX_INSTALLED
+from larp.dynamics import Dynamics
+
+if JAX_INSTALLED:
+    import jax
+    import jax.numpy as jnp
+    from jax import jit, vmap, lax
+    
+if MJX_INSTALLED:
+    import mujoco
+    from mujoco import mjx
+
+
+class MJXDynamics(Dynamics):
+    r"""
+    A unified rigid-body dynamics engine powered by MuJoCo XLA (mjx).
+
+    This class parses arbitrary URDF, MJCF, or OpenUSD models into a fully 
+    differentiable, batched dynamics environment. It natively computes continuous 
+    Jacobians, discrete Hessians, and rollouts using JAX compilation.
+
+    **State Representation:**
+    The flattened first-order state is treated as a concatenation of generalized 
+    positions and velocities: :math:`x = [q_{pos}, q_{vel}]`. 
+    This means the state dimension is :math:`n_q + n_v`.
+
+    **Control Representation:**
+    The raw control input :math:`u` can be mapped to generalized forces :math:`\tau` 
+    (or actuator controls) via the :meth:`control_to_nv` method. This allows 
+    solvers to optimize over logical inputs (like PWM or thrust) while MuJoCo 
+    handles the underlying rigid body mechanics.
+
+    Attributes
+    ----------
+    mj_model : mujoco.MjModel
+        The standard CPU-based MuJoCo model.
+    mjx_model : mjx.Model
+        The JAX-compiled MuJoCo model used for all computations.
+    nq : int
+        Number of generalized coordinates (position dimension).
+    nv : int
+        Number of degrees of freedom (velocity dimension).
+    nu : int
+        Number of actuators/controls natively defined in the MJCF model.
+
+    Example
+    -------
+    .. code-block:: python
+
+        # Load a complex eVTOL or Octocopter model
+        dyn = MJXDynamics(model_path="assets/evtol.xml")
+        
+        x0 = np.zeros((10, dyn.nq + dyn.nv))
+        u0 = np.zeros((10, dyn.nu))
+        
+        # Rollout 50 steps using exact MuJoCo physics (estimate is ignored)
+        xs = dyn.rollout(x0, us_sequence, dt=0.01)
+    """
+
+    def __init__(self, model_path: str) -> None:
+        if not MJX_INSTALLED:
+            raise RuntimeError(
+                "MJX is not installed or available. "
+                "Please install JAX and MuJoCo to enable hardware-accelerated MJXDynamics."
+            )
+
+        # 1. Load Models
+        self.mj_model = mujoco.MjModel.from_xml_path(model_path)
+        self.mjx_model = mjx.put_model(self.mj_model)
+
+        # 2. Dimensions
+        self.nq = self.mjx_model.nq
+        self.nv = self.mjx_model.nv
+        self.nu = self.mjx_model.nu
+
+        # 3. Bypass Kinematic Shifting
+        # By setting the derivative order to 0 for all elements, the base class 
+        # treats the entire [qpos, qvel] vector as independent primitives.
+        state_orders = [0] * (self.nq + self.nv)
+        control_orders = [0] * self.nu
+
+        super().__init__(
+            constants={"model_path": model_path},
+            state_derivative_orders=state_orders,
+            control_derivative_orders=control_orders,
+            holonomic=False,
+            jax_backend=True # Always enforce True for MJXDynamics
+        )
+
+    def control_to_nv(self, u: np.ndarray, np: Optional[ModuleType] = None) -> np.ndarray:
+        r"""
+        Maps the raw control input :math:`u` to generalized forces or native actuators.
+        
+        Defaults to the identity mapping. Override this method if your model is 
+        underactuated or requires a complex transmission mapping (e.g., mapping 
+        8 rotor speeds of an octocopter to 6 rigid-body forces).
+
+        :param u: The control input batch. Shape: ``(batch_size, control_dim)``.
+        :param np: Numerical backend (e.g., ``jnp``) passed during tracing.
+        :return: Generalized forces or actuator inputs.
+        """
+        if np is None: np = jnp
+        return u
+
+    def nv_to_control(self, tau: np.ndarray, np: Optional[ModuleType] = None) -> np.ndarray:
+        r"""
+        Inverse mapping from generalized forces back to control input :math:`u`.
+        """
+        raise NotImplementedError("nv_to_control must be implemented by the user.")
+
+    @property
+    def angle_indices(self) -> List[int]:
+        return []
+
+    def _setup_jax_functions(self):
+        """
+        Overrides the base class JAX setup to inject highly optimized, pre-compiled 
+        `mjx` functions before the base class builds the Jacobians.
+        """
+        
+        # --- 1. Define Pure Unbatched Functions ---
+        def _f_single(x, u):
+            qpos = x[:self.nq]
+            qvel = x[self.nq:]
+            
+            # Map controls (add dummy batch dim, map, then strip)
+            tau = self.control_to_nv(u[None, :], np=jnp)[0]
+            
+            data = mjx.make_data(self.mjx_model)
+            data = data.replace(qpos=qpos, qvel=qvel)
+            
+            # Route the mapped control vector dynamically based on its shape
+            if tau.shape[-1] == self.nu:
+                data = data.replace(ctrl=tau)
+            elif tau.shape[-1] == self.nv:
+                data = data.replace(qfrc_applied=tau)
+                
+            data = mjx.forward(self.mjx_model, data)
+            qacc = data.qacc
+            
+            # Compute dqpos (Handle Quaternions if Free Joint is present)
+            if self.nq == self.nv:
+                dqpos = qvel
+            elif self.nq == self.nv + 1:
+                dq_lin = qvel[:3]
+                w = qvel[3:6]
+                qw, qx, qy, qz = qpos[3:7]
+                
+                # Quaternion derivative: 0.5 * q \otimes [0, w]
+                dqw = 0.5 * (-qx*w[0] - qy*w[1] - qz*w[2])
+                dqx = 0.5 * ( qw*w[0] + qy*w[2] - qz*w[1])
+                dqy = 0.5 * ( qw*w[1] - qx*w[2] + qz*w[0])
+                dqz = 0.5 * ( qw*w[2] + qx*w[1] - qy*w[0])
+                
+                dq_quat = jnp.array([dqw, dqx, dqy, dqz])
+                dqpos = jnp.concatenate([dq_lin, dq_quat, qvel[6:]])
+            else:
+                pad = jnp.zeros(self.nq - self.nv)
+                dqpos = jnp.concatenate([qvel, pad])
+                
+            return jnp.concatenate([dqpos, qacc])
+
+        def _mjx_step_single(x, u, dt):
+            model = self.mjx_model.replace(opt=self.mjx_model.opt.replace(timestep=dt))
+            qpos = x[:self.nq]
+            qvel = x[self.nq:]
+            
+            tau = self.control_to_nv(u[None, :], np=jnp)[0]
+            
+            data = mjx.make_data(model)
+            data = data.replace(qpos=qpos, qvel=qvel)
+            
+            if tau.shape[-1] == self.nu:
+                data = data.replace(ctrl=tau)
+            elif tau.shape[-1] == self.nv:
+                data = data.replace(qfrc_applied=tau)
+                
+            data = mjx.step(model, data)
+            return jnp.concatenate([data.qpos, data.qvel])
+
+        def _mjx_rollout_single(x0_single, us_time_single, dt):
+            def scan_op(x_prev, u_curr):
+                x_next = _mjx_step_single(x_prev, u_curr, dt)
+                return x_next, x_next
+            _, xs_traj = lax.scan(scan_op, x0_single, us_time_single)
+            return xs_traj
+
+        # --- 2. Compile, Vmap, and Store ---
+        self._f_jit = jit(vmap(_f_single, in_axes=(0, 0)))
+        self._mjx_step_jit = jit(vmap(_mjx_step_single, in_axes=(0, 0, None)))
+        self._mjx_rollout_jit = jit(vmap(_mjx_rollout_single, in_axes=(0, 1, None)))
+
+        # --- 3. Let Base Class Build Jacobians ---
+        # The base class will now use our optimized self.f to construct dfdx, dfdu, etc.
+        super()._setup_jax_functions()
+
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np: Optional[ModuleType] = None) -> np.ndarray:
+        r"""
+        Computes the continuous-time derivative :math:`[\dot{q}_{pos}, \dot{q}_{vel}]`.
+
+        This leverages ``mjx.forward`` to compute accelerations directly.
+        If the model contains free joints (quaternions), it automatically calculates 
+        the correct quaternion derivatives.
+        """
+        if np is None: np = jnp
+        # Route directly to the compiled, batched function
+        return self._f_jit(jnp.asarray(first_order_state), jnp.asarray(first_order_control))
+
+    def step(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate: bool = False) -> np.ndarray:
+        r"""
+        Advances the MuJoCo system dynamics forward by one time step :math:`dt`.
+
+        :param x0: Current state batch :math:`x_k`.
+        :param u0: Current control batch :math:`u_k`.
+        :param dt: Time step duration in seconds.
+        :param estimate: Retained for signature compatibility, but ignored. 
+            `mjx.step` is strictly used for high-fidelity physics resolution.
+        """
+        x_next = self._mjx_step_jit(jnp.asarray(x0), jnp.asarray(u0), dt)
+        return np.asarray(x_next)
+
+    def rollout(self, x0: np.ndarray, us: np.ndarray, dt: float = 0.1, estimate: bool = False) -> np.ndarray:
+        r"""
+        Simulates a batched forward rollout of the MuJoCo dynamics over a sequence of controls.
+        
+        :param estimate: Retained for signature compatibility, but ignored.
+        """
+        xs = self._mjx_rollout_jit(jnp.asarray(x0), jnp.asarray(us), dt)
+        return np.asarray(xs)

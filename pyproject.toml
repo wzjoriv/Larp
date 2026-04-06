@@ -44,8 +44,8 @@ Issues = "https://github.com/wzjoriv/Larp/issues"
 [tool.setuptools.packages.find]
 include = ["larp*"]
 
-[tool.ruff.lint]
-select = ["NPY201"]
-
 [tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --disable-plugin-autoload"
 testpaths = ["test"]
+pythonpath = ["larp"]

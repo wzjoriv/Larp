@@ -31,7 +31,7 @@ Public API summary
 ``get_full_trajectory(x0, ..., stride=1)``
     Plan the complete trajectory from ``x0`` to the goal **before the robot
     starts moving**, assuming a static environment.  Useful for pre-computing
-    a route, inspecting solver behaviour end-to-end, or pre-loading a
+    a route, inspecting solver behaviour end-to-end, or pre-loading a complete
     trajectory into a tracking controller.  ``stride`` controls how many
     simulated steps are taken between replanning calls.
 
@@ -289,7 +289,7 @@ class Planner(ABC):
         xs, us   = self.solver.solve(x0, ref_traj,
                                      us_init=self.prev_us,
                                      max_iters=max_iters)
-        self.prev_us = np.vstack([us[1:], us[-1:]])
+        self.prev_us = us
         return xs, us
 
     def get_full_trajectory(
@@ -359,8 +359,7 @@ class Planner(ABC):
             steps_taken += actual
 
             # Warm-start: shift by `actual` steps
-            self.prev_us = np.vstack([us[actual:],
-                                       np.tile(us[-1], (actual, 1))])
+            self.prev_us = np.vstack([us[actual:], np.tile(us[-1], (actual, 1))])
 
             if np.linalg.norm(x_cur[[ix, iy]] - goal_xy) < goal_tolerance:
                 break

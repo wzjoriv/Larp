@@ -114,7 +114,7 @@ def test_whl_discretize():
 
 def test_quadcopter_dynamics():
 
-    dynamics = larp.dynamics.QuadcopterV2Dynamics()
+    dynamics = larp.dynamics.QuadcopterDynamics()
 
     def f(t:np.ndarray, x:np.ndarray):
         t = np.reshape(t, (-1, 1))

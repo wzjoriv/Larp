@@ -2124,7 +2124,19 @@ class SmallFixedWingDynamics(Dynamics):
     Roll:   ``C_l = C_lp·(b/(2V))·p + C_lδa·δa + C_lδr·δr``
     Yaw:    ``C_n = C_nr·(b/(2V))·r + C_nδa·δa + C_nδr·δr``
 
-    Thrust is modelled as ``T = k_t · delta_t · V_a²`` (propeller quadratic).
+    Thrust is modelled as ``T = k_t · delta_t`` (actuator-linear model).
+
+    .. note::
+        The previous model ``T = k_t · delta_t · Va²`` was **physically wrong**.
+        It created a positive-velocity feedback loop (∂T/∂Va > 0) that
+        destabilised the linearised Jacobian, causing the SQP/OSQP solver to
+        receive a non-convex KKT matrix (OSQP error 4) on the first call.
+        The correct propeller model has thrust *decreasing* with airspeed.
+
+        **Migration**: if you were using the old model with a small ``k_thrust``
+        (e.g. ``0.013``) tuned so that ``k_t · delta_t · Va² ≈ trim_thrust``,
+        rescale: ``k_thrust_new = k_thrust_old × Va_cruise²``.
+        Example: ``k_thrust=0.013`` at Va=15 m/s → ``k_thrust_new ≈ 3.0``.
 
     Default parameters approximate a 1.5-kg, 1.0-m wingspan electric trainer
     (similar to the Aerosonde UAV used in Beard & McLain).
@@ -2152,16 +2164,36 @@ class SmallFixedWingDynamics(Dynamics):
         CLde:  float =  0.36,   Cma:   float = -0.38,
         CD0:   float =  0.03,   Cmq:   float = -3.6,
         Cmde:  float = -0.5,
-        # Roll / yaw
-        Clp:   float = -0.50,   Cnp:   float =  0.022,
-        Clda:  float =  0.14,   Cnr:   float = -0.35,
-        Cldr:  float =  0.026,  Cnda:  float =  0.006,
-        Cndr:  float = -0.032,
-        # Thrust model:  T = k_t · delta_t · V_a²
-        k_thrust: float = 1.50,
-        # Stall sigmoid blending half-width (rad)
-        M_sigmoid: float = 50.0,
-        alpha0:    float = 0.4712,       # stall transition centre (rad)
+        # Roll damping / coupling  (B&M Table 2.2 / Appendix E notation)
+        Clp:   float = -0.50,   # roll  damping    (roll   rate → roll  moment)
+        Clda:  float =  0.14,   # aileron effectiveness
+        Cldr:  float =  0.026,  # rudder→roll coupling
+        Clb:   float = -0.13,   # dihedral effect  (sideslip β → roll moment)
+        Clr:   float =  0.145,  # roll-due-to-yaw  (yaw rate r → roll moment)
+        # Yaw damping / coupling
+        Cnp:   float =  0.022,  # yaw-due-to-roll  (roll rate p → yaw moment)
+        Cnr:   float = -0.35,   # yaw damping      (yaw  rate r → yaw moment)
+        Cnda:  float =  0.006,  # adverse yaw (aileron→yaw)
+        Cndr:  float = -0.032,  # rudder effectiveness
+        Cnb:   float =  0.073,  # weathercock stability (β → yaw moment)
+        # Side-force coefficients  (B&M Eq. 4.9)
+        CYb:   float = -0.26,   # side force due to sideslip
+        CYp:   float =  0.0,    # side force due to roll rate
+        CYr:   float =  0.0,    # side force due to yaw rate
+        CYda:  float =  0.0,    # side force due to aileron
+        CYdr:  float =  0.14,   # side force due to rudder
+        # ── Propulsion (B&M Eq. 4.11) ────────────────────────────────────────
+        # T = 0.5 · ρ · S_prop · C_prop · [(k_motor · δt)² − Va²]
+        # Stable because ∂T/∂Va = −ρ · S_prop · C_prop · Va ≤ 0
+        #   (thrust naturally decreases with airspeed — correct propeller physics)
+        # Defaults tuned for a 1.56 kg, 1.0 m wingspan electric trainer at Va=15 m/s:
+        #   trim at ~35% throttle, T/W ≈ 1.35 at full throttle.
+        S_prop:   float = 0.0120,  # propeller disc area [m²]  (≈12.4 cm diameter)
+        C_prop:   float = 1.0,     # prop efficiency coefficient (dimensionless)
+        k_motor:  float = 55.0,    # motor speed constant [m/s]: T→0 when Va = k_motor·δt
+        # ── Stall model ───────────────────────────────────────────────────────
+        M_sigmoid: float = 50.0,   # sigmoid blending half-width [rad]
+        alpha0:    float = 0.4712, # stall transition centre [rad]
     ) -> None:
 
         constants = {k: v for k, v in locals().items() if k != "self"}
@@ -2181,42 +2213,58 @@ class SmallFixedWingDynamics(Dynamics):
         self.Ix, self.Iy, self.Iz = [float(v) for v in inertia]
         self.Ixz   = float(inertia_xz)
 
-        # Pre-compute inertia inverse (for body rates)
-        G  = self.Ix * self.Iz - self.Ixz ** 2
-        self._G   = G
-        self._g1  =  self.Ixz * (self.Ix - self.Iy + self.Iz) / G
-        self._g2  =  (self.Iz * (self.Iz - self.Iy) + self.Ixz ** 2) / G
-        self._g3  =  self.Iz / G
-        self._g4  =  self.Ixz / G
-        self._g5  =  (self.Iz - self.Ix) / self.Iy
-        self._g6  =  self.Ixz / self.Iy
-        self._g7  =  ((self.Ix - self.Iy) * self.Ix + self.Ixz ** 2) / G
-        self._g8  =  self.Ix / G
+        # ── Γ terms (B&M Eqs 4.4–4.7, pp. 36–37) ─────────────────────────────
+        # B&M uses: Jx = roll  (fwd-axis) inertia,
+        #           Jy = pitch (rt-axis)  inertia,
+        #           Jz = yaw   (vert)     inertia,
+        #           Jxz = fwd–vert product of inertia.
+        # In Larp frame (X right, Y forward, Z up):
+        #   Jx_BM  = Iy_LARP  (roll  = rotation about Y_fwd)
+        #   Jy_BM  = Ix_LARP  (pitch = rotation about X_right)
+        #   Jz_BM  = Iz_LARP  (yaw   = rotation about Z_up)
+        #   Jxz_BM = Ixz_LARP (fwd–up coupling; small for symmetric airframes)
+        Jx  = self.Iy   # B&M roll  inertia → Larp Iy
+        Jy  = self.Ix   # B&M pitch inertia → Larp Ix
+        Jz  = self.Iz   # B&M yaw   inertia → Larp Iz
+        Jxz = self.Ixz
+
+        G  = Jx * Jz - Jxz**2          # Γ denominator  (B&M p.36)
+        self._G  = G
+        self._g1 =  Jxz * (Jx - Jy + Jz) / G   # Γ₁
+        self._g2 =  (Jz * (Jz - Jy) + Jxz**2) / G  # Γ₂
+        self._g3 =  Jz / G                       # Γ₃
+        self._g4 =  Jxz / G                      # Γ₄
+        self._g5 =  (Jz - Jx) / Jy              # Γ₅
+        self._g6 =  Jxz / Jy                    # Γ₆
+        self._g7 =  (Jx * (Jx - Jy) + Jxz**2) / G  # Γ₇
+        self._g8 =  Jx / G                       # Γ₈
 
         # Aero coefficients
         self.CL0   = CL0;   self.CLa  = CLa;  self.CLq  = CLq;  self.CLde = CLde
         self.CD0   = CD0;   self.CDp  = CDp;  self.CDa  = CDa
         self.Cm0   = Cm0;   self.Cma  = Cma;  self.Cmq  = Cmq;  self.Cmde = Cmde
         self.Clp   = Clp;   self.Clda = Clda; self.Cldr = Cldr
+        self.Clb   = Clb;   self.Clr  = Clr
         self.Cnp   = Cnp;   self.Cnr  = Cnr;  self.Cnda = Cnda; self.Cndr = Cndr
-        self.k_t   = float(k_thrust)
+        self.Cnb   = Cnb
+        self.CYb   = CYb;   self.CYp  = CYp;  self.CYr  = CYr
+        self.CYda  = CYda;  self.CYdr = CYdr
+
+        # Propulsion (B&M)
+        self.S_prop  = float(S_prop)
+        self.C_prop  = float(C_prop)
+        self.k_motor = float(k_motor)
+
         self.M_s   = float(M_sigmoid)
         self.a0    = float(alpha0)
-
-        # Lateral coefficients (Cy_beta approximation)
-        self.CYb   = -0.26
-        self.CYp   = 0.0
-        self.CYr   = 0.0
-        self.CYda  = 0.0
-        self.CYdr  = 0.14
 
     # ── Aero helpers ──────────────────────────────────────────────────────────
 
     def _sigmoid(self, alpha, np):
         """Sigmoid blend factor for post-stall CL (Beard & McLain Eq. 4.10)."""
-        ea = np.exp(self.M_s * (alpha - self.a0))
-        eb = np.exp(-self.M_s * (alpha + self.a0))
-        return (1 + ea + eb) / ((1 + ea) * (1 + eb))
+        ea = np.exp(-self.M_s * (alpha - self.a0))   # large for pre-stall (α < α₀)
+        eb = np.exp( self.M_s * (alpha + self.a0))   # large for all α > 0
+        return (1.0 + ea + eb) / ((1.0 + ea) * (1.0 + eb))
 
     def _rotation_matrix(self, phi, theta, psi, np):
         """ZYX rotation matrix R_bw (body→world columns)."""
@@ -2233,154 +2281,169 @@ class SmallFixedWingDynamics(Dynamics):
           first_order_control: np.ndarray,
           np=None) -> np.ndarray:
         r"""
-        Compute the continuous-time state derivative :math:`\dot{x} = f(x, u)`.
+        Continuous-time state derivative :math:`\dot{x} = f(x, u)`.
 
-        Larp body-frame convention
-        --------------------------
-        Larp uses X=right, Y=forward, Z=up (ENU), which differs from the
-        standard Beard & McLain (B&M) NED convention.  The mapping is:
+        Follows Beard & McLain (2012) *Small Unmanned Aircraft*, Chapters 3–4,
+        with sign corrections for the Larp body-frame convention
+        (X right, Y forward, Z up) versus B&M NED (X forward, Y right, Z down).
 
-        ===============  ===============  ========================
-        Larp state       Physical meaning  B&M equivalent
-        ===============  ===============  ========================
-        phi   (index 6)  Pitch angle       theta_BM (about Y_right)
-        theta (index 7)  Roll  angle       phi_BM   (about X_fwd)
-        psi   (index 8)  Yaw   angle       psi_BM   (about Z_up, same sign)
-        p     (index 9)  Pitch rate        q_BM
-        q     (index 10) Roll  rate        p_BM
-        r     (index 11) Yaw   rate        -r_BM  (Z_up vs Z_down)
-        ===============  ===============  ========================
+        Larp ↔ B&M variable mapping
+        ----------------------------
+        ============  =============================  ==============
+        Larp symbol   Physical meaning               B&M symbol
+        ============  =============================  ==============
+        phi  (idx 6)  Pitch angle  (about X_right)   θ  (theta)
+        theta(idx 7)  Roll  angle  (about Y_fwd)     ϕ  (phi)
+        psi  (idx 8)  Yaw   angle  (about Z_up)      ψ  (same sign)
+        p    (idx 9)  Pitch rate   (about X_right)   q  (pitch rate)
+        q    (idx 10) Roll  rate   (about Y_fwd)     p  (roll  rate)
+        r    (idx 11) Yaw   rate   (about Z_up)      −r (sign flip)
+        ============  =============================  ==============
 
-        Sign corrections applied versus a naïve B&M transcription:
-
-        * **Lift (Fz_b)**: positive = upward in Z-up frame.
-          ``Fz_b = +sin(alpha)*CD + cos(alpha)*CL`` (both terms positive).
-        * **Side-force yaw term**: ``-CYr`` not ``+CYr`` (r_LARP = -r_BM).
-        * **Yaw moment (Mz_b)**: overall sign flip relative to B&M N
-          (moment about Z_up vs Z_down); also ``-Cnp`` and ``-Cnda/-Cndr``.
+        Thrust follows B&M Eq. 4.11:
+        ``T = 0.5·ρ·Sp·Cp·[(k_motor·δt)² − Va²]``, clamped ≥ 0
+        (∂T/∂Va ≤ 0 → stable; thrust naturally decreases with airspeed).
         """
         if np is None: np = importlib.import_module("numpy")
 
-        # ── 1. Unpack state ───────────────────────────────────────────────
-        # State: [x, vx,  y, vy,  z, vz,  phi, theta, psi,  p, q, r]
-        # Idx:    0   1   2   3   4   5    6     7      8    9  10 11
-        vx, vy, vz   = first_order_state[:, 1:2], first_order_state[:, 3:4], first_order_state[:, 5:6]
+        # ── 1. Unpack state ───────────────────────────────────────────────────
+        # [x, vx,  y, vy,  z, vz,  phi, theta, psi,  p,  q,  r]
+        #  0   1   2   3   4   5    6     7      8    9   10  11
+        vx, vy, vz      = first_order_state[:, 1:2], first_order_state[:, 3:4], first_order_state[:, 5:6]
         phi, theta, psi = first_order_state[:, 6:7], first_order_state[:, 7:8], first_order_state[:, 8:9]
-        p, q, r_ = first_order_state[:, 9:10], first_order_state[:, 10:11], first_order_state[:, 11:12]
-        # phi   = pitch angle (rotation about Larp X = right axis)
-        # theta = roll  angle (rotation about Larp Y = forward axis)
-        # p     = pitch rate,  q = roll rate,  r_ = yaw rate (about Z_up)
+        p, q, r_        = first_order_state[:, 9:10], first_order_state[:, 10:11], first_order_state[:, 11:12]
 
-        # ── 2. Unpack control ─────────────────────────────────────────────
-        delta_t = np.clip(first_order_control[:, 0:1], 0.0, 1.0)  # throttle ∈ [0,1]
-        delta_a = first_order_control[:, 1:2]   # aileron  [rad]
-        delta_e = first_order_control[:, 2:3]   # elevator [rad]
-        delta_r = first_order_control[:, 3:4]   # rudder   [rad]
+        # ── 2. Unpack control ─────────────────────────────────────────────────
+        delta_t = np.clip(first_order_control[:, 0:1], 0.0, 1.0)
+        delta_a = first_order_control[:, 1:2]
+        delta_e = first_order_control[:, 2:3]
+        delta_r = first_order_control[:, 3:4]
 
-        # ── 3. Trig shortcuts ─────────────────────────────────────────────
-        cp, sp = np.cos(phi),   np.sin(phi)    # phi   = pitch
-        ct, st = np.cos(theta), np.sin(theta)  # theta = roll
-        cs, ss = np.cos(psi),   np.sin(psi)    # psi   = yaw
+        # ── 3. Trig shortcuts ─────────────────────────────────────────────────
+        cp, sp = np.cos(phi),   np.sin(phi)
+        ct, st = np.cos(theta), np.sin(theta)
+        cs, ss = np.cos(psi),   np.sin(psi)
 
-        # ── 4. World → body velocity  (R_wb = R_bw^T, ZYX: Rz·Ry·Rx) ───
-        # body-x = right (lateral), body-y = forward, body-z = up
-        u_b = ( cs*ct)*vx + ( ss*ct)*vy + (-st    )*vz   # lateral   (body X)
-        v_b = (cs*sp*st - ss*cp)*vx + (ss*sp*st + cs*cp)*vy + (sp*ct)*vz  # forward   (body Y)
-        w_b = (cs*cp*st + ss*sp)*vx + (ss*cp*st - cs*sp)*vy + (cp*ct)*vz  # upward    (body Z)
+        # ── 4. World → body velocity  (R_wb = R_bw^T, ZYX Euler) ─────────────
+        u_b = ( cs*ct)*vx + ( ss*ct)*vy + (-st    )*vz                         # lateral  (body X)
+        v_b = (cs*sp*st - ss*cp)*vx + (ss*sp*st + cs*cp)*vy + (sp*ct)*vz       # forward  (body Y)
+        w_b = (cs*cp*st + ss*sp)*vx + (ss*cp*st - cs*sp)*vy + (cp*ct)*vz       # upward   (body Z)
 
-        # ── 5. Airspeed & aerodynamic angles ─────────────────────────────
-        Va2 = np.maximum(vx**2 + vy**2 + vz**2, 0.01)  # floor before sqrt
+        # ── 5. Airspeed & aerodynamic angles (B&M §2.3) ──────────────────────
+        Va2 = np.maximum(vx**2 + vy**2 + vz**2, 0.01)
         Va  = np.sqrt(Va2)
+        alpha = np.arctan2(-w_b, np.maximum(v_b, 1e-4))   # saturates at stall
+        beta  = np.arcsin(np.clip(u_b / Va, -1.0, 1.0))
 
-        # Angle of attack: angle in the forward-up (body Y-Z) plane.
-        # Guard: if forward speed v_b → 0 (e.g. stall), alpha saturates to ±90°.
-        alpha = np.arctan2(w_b, np.maximum(v_b, 1e-4))
+        # ── 6. Dynamic pressure scalars ───────────────────────────────────────
+        rho   = 1.225
+        q_dyn = 0.5 * rho * Va2 * self.S
+        b_2V  = self.b / (2.0 * Va)
+        c_2V  = self.c / (2.0 * Va)
 
-        # Sideslip angle: lateral deviation.
-        beta = np.arcsin(np.clip(u_b / Va, -1.0, 1.0))
+        # ── 7. Force coefficients (B&M Eqs 4.7–4.9) ──────────────────────────
 
-        # ── 6. Aerodynamic force coefficients ────────────────────────────
-        rho   = 1.225                        # air density [kg/m³]
-        q_dyn = 0.5 * rho * Va2 * self.S    # dynamic pressure × wing area [N]
-        b_2V  = self.b / (2.0 * Va)         # b/(2V)
-        c_2V  = self.c / (2.0 * Va)         # c̄/(2V)
-
-        # Lift coefficient (with post-stall sigmoid blend)
-        sig    = self._sigmoid(alpha, np)
-        CL_lin = self.CL0 + self.CLa * alpha
+        # Lift  CL  (post-stall sigmoid blend, B&M Eq. 4.10)
+        sig      = self._sigmoid(alpha, np)
+        CL_lin   = self.CL0 + self.CLa * alpha
         CL_stall = 2.0 * np.sign(alpha) * np.sin(alpha)**2 * np.cos(alpha)
-        CL = (1.0 - sig) * CL_lin + sig * CL_stall
-        # p = Larp pitch rate = B&M pitch rate q → CLq uses p here
-        CL = CL + self.CLq * c_2V * p + self.CLde * delta_e
+        CL = ((1.0 - sig) * CL_lin + sig * CL_stall
+              + self.CLq * c_2V * p    # CLq uses q_BM = p_LARP
+              + self.CLde * delta_e)
 
-        # Drag coefficient (parabolic polar)
+        # Drag  CD  (parabolic polar, B&M Eq. 4.8)
         CD = (self.CDp
               + (self.CL0 + self.CLa * alpha)**2 / (np.pi * 0.85 * (self.b**2 / self.S))
               + self.CDa * np.abs(alpha))
 
-        # Side-force coefficient.
-        # CYp: B&M uses p_BM (roll rate) = Larp q.
-        # CYr: B&M uses r_BM (yaw rate)  = -Larp r_  → sign flip on CYr term.
-        CY = (self.CYb * beta
-              + self.CYp * b_2V * q
-              - self.CYr * b_2V * r_       # sign flip: r_LARP = -r_BM
+        # Side force  CY  (B&M Eq. 4.9)
+        # CYp: p_BM = q_LARP;  CYr: r_BM = −r_LARP → sign flip
+        CY = (self.CYb  * beta
+              + self.CYp  * b_2V * q
+              - self.CYr  * b_2V * r_
+              + self.CYda * delta_a
               + self.CYdr * delta_r)
 
-        # ── 7. Aerodynamic moments (Larp body frame) ──────────────────────
-        # Mx_b (about Larp X=right) = B&M pitching moment M (about Y_NED=right).
-        # Uses Larp pitch rate p (= B&M q).
+        # ── 8. Moment coefficients (B&M Eqs 4.3–4.6) ─────────────────────────
+        # Sign convention for Larp moments vs B&M:
+        #   Mx_b = m_BM  (pitch, about Y_right = X_LARP)     → no flip
+        #   My_b = l_BM  (roll,  about X_fwd   = Y_LARP)     → no flip
+        #   Mz_b = −n_BM (yaw,   Z_up  ≠ Z_down)             → overall sign flip
+
+        # Pitching moment  Mx_b = m_BM  (B&M Eq. 4.5)
+        # Cmq uses q_BM = p_LARP
         Mx_b = q_dyn * self.c * (self.Cm0
                                   + self.Cma  * alpha
-                                  + self.Cmq  * c_2V * p   # p = Larp pitch rate
+                                  + self.Cmq  * c_2V * p
                                   + self.Cmde * delta_e)
 
-        # My_b (about Larp Y=forward) = B&M rolling moment L (about X_NED=forward).
-        # Uses Larp roll rate q (= B&M p).
-        My_b = q_dyn * self.b * (self.Clp  * b_2V * q   # q = Larp roll rate
+        # Rolling moment  My_b = l_BM  (B&M Eq. 4.4)
+        # Clp uses p_BM = q_LARP;  Clr uses r_BM = −r_LARP (→ sign flip on Clr term)
+        # Clb = B&M Clβ (dihedral effect: β → roll)
+        My_b = q_dyn * self.b * (self.Clb  * beta
+                                  + self.Clp  * b_2V * q
+                                  - self.Clr  * b_2V * r_   # r_LARP = −r_BM
                                   + self.Clda * delta_a
                                   + self.Cldr * delta_r)
 
-        # Mz_b (about Larp Z=up) = −B&M yawing moment N (about Z_NED=down).
-        # Overall sign flip because Z_LARP = −Z_NED.
-        # Cnp uses p_BM = q_LARP; Cnr uses r_BM = -r_LARP (Cnr term sign cancels
-        # with the overall flip → stays positive). Cnda/Cndr also flip.
-        Mz_b = q_dyn * self.b * (-self.Cnp  * b_2V * q   # −Cnp (sign flip)
-                                   + self.Cnr  * b_2V * r_  # +Cnr (double flip)
-                                   - self.Cnda * delta_a     # sign flip
-                                   - self.Cndr * delta_r)    # sign flip
+        # Yawing moment  Mz_b = −n_BM  (B&M Eq. 4.6, negated)
+        # Cnb = B&M Cnβ (weathercock: β → yaw);  Cnp uses p_BM = q_LARP
+        # After negation: −Cnb·β, −Cnp·q, +Cnr·r_ (double flip), −Cnda, −Cndr
+        Mz_b = q_dyn * self.b * (-self.Cnb  * beta
+                                   - self.Cnp  * b_2V * q
+                                   + self.Cnr  * b_2V * r_
+                                   - self.Cnda * delta_a
+                                   - self.Cndr * delta_r)
 
-        # ── 8. Body forces ────────────────────────────────────────────────
+        # ── 9. Propulsive thrust (B&M Eq. 4.11) ──────────────────────────────
+        # T = 0.5·ρ·Sp·Cp·[(k_motor·δt)² − Va²]  (clamped; no thrust reversal)
+        T_prop = np.maximum(
+            0.5 * rho * self.S_prop * self.C_prop * ((self.k_motor * delta_t)**2 - Va2),
+            0.0,
+        )
+
+        # ── 10. Body forces ───────────────────────────────────────────────────
         cos_a, sin_a = np.cos(alpha), np.sin(alpha)
+        Fx_b = CY * q_dyn                                          # lateral  (body X)
+        Fy_b = T_prop - cos_a * CD * q_dyn + sin_a * CL * q_dyn   # forward  (body Y)
+        Fz_b =          sin_a * CD * q_dyn + cos_a * CL * q_dyn   # upward   (body Z, Z-up → both +)
 
-        # Lateral (body X, right): side force only
-        Fx_b = CY * q_dyn
-
-        # Longitudinal (body Y, forward): thrust − drag·cos α + lift·sin α
-        Fy_b = -cos_a * CD * q_dyn + sin_a * CL * q_dyn + self.k_t * delta_t * Va2
-
-        # Vertical (body Z, up): lift·cos α + drag·sin α  ← both POSITIVE in Z-up frame
-        # BUG FIX: was (−sin_a·CD − cos_a·CL) which pointed lift downward; corrected to:
-        Fz_b = sin_a * CD * q_dyn + cos_a * CL * q_dyn
-
-        # ── 9. World accelerations  (F_body → world via R_bw) ─────────────
+        # ── 11. World accelerations  (R_bw : body → world) ───────────────────
         ax_ = ((cs*ct)*Fx_b + (cs*sp*st - ss*cp)*Fy_b + (cs*cp*st + ss*sp)*Fz_b) / self.m
         ay_ = ((ss*ct)*Fx_b + (ss*sp*st + cs*cp)*Fy_b + (ss*cp*st - cs*sp)*Fz_b) / self.m
         az_ = ((-st  )*Fx_b + (sp*ct          )*Fy_b + (cp*ct            )*Fz_b) / self.m - self.g
 
-        # ── 10. Rotational dynamics (simplified — no inertia cross-coupling) ──
-        dp = Mx_b / self.Ix   # d(pitch rate)/dt
-        dq = My_b / self.Iy   # d(roll  rate)/dt
-        dr = Mz_b / self.Iz   # d(yaw   rate)/dt
+        # ── 12. Rotational dynamics — B&M Γ equations (Eqs 4.4–4.7) ──────────
+        #
+        # B&M uses (p_b=roll, q_b=pitch, r_b=yaw).
+        # Larp substitution: p_b=q, q_b=p, r_b=−r_;  l_b=My_b, m_b=Mx_b, n_b=−Mz_b.
+        # Jy_BM = Ix_LARP (pitch inertia about right axis).
+        #
+        # B&M Eq. 4.4  ṗ_b → dq/dt  (roll rate in Larp)
+        dq = ( self._g1 * q * p            # Γ₁·p_b·q_b = Γ₁·q·p  (B&M p_b→q, q_b→p)
+             + self._g2 * p * r_          # −Γ₂·q_b·r_b = +Γ₂·p·r_
+             + self._g3 * My_b            #  Γ₃·l_b
+             - self._g4 * Mz_b)           #  Γ₄·n_b = −Γ₄·Mz_b
 
-        # ── 11. Euler angle kinematics (ZYX: Rz·Ry·Rx) ──────────────────
-        # Clip roll to avoid tan / sec singularity at ±90° bank.
+        # B&M Eq. 4.5  q̇_b → dp/dt  (pitch rate in Larp)
+        dp = (-self._g5 * q * r_          # Γ₅·p_b·r_b = −Γ₅·q·r_
+             - self._g6 * (q**2 - r_**2)  # −Γ₆·(p_b²−r_b²) = −Γ₆·(q²−r_²)
+             + Mx_b / self.Ix)            # m_b/Jy_BM = Mx_b/Ix_LARP
+
+        # B&M Eq. 4.7  ṙ_b → dr/dt  (yaw rate in Larp, with negation ṙ_b=−dr/dt)
+        dr = (-self._g7 * q * p           # −Γ₇·p_b·q_b
+             - self._g1 * p * r_          # −(−Γ₁·q_b·r_b) = −Γ₁·p·r_
+             - self._g4 * My_b            # −Γ₄·l_b
+             + self._g8 * Mz_b)           # −Γ₈·n_b = +Γ₈·Mz_b
+
+        # ── 13. Euler angle kinematics (ZYX: Rz·Ry·Rx) ───────────────────────
         theta_c = np.clip(theta, -1.5, 1.5)
         tt   = np.tan(theta_c)
         sect = 1.0 / np.cos(theta_c)
 
-        dphi   = p + (q * sp + r_ * cp) * tt    # d(pitch)/dt
-        dtheta = q * cp - r_ * sp                # d(roll)/dt
-        dpsi   = (q * sp + r_ * cp) * sect       # d(yaw)/dt
+        dphi   = p + (q * sp + r_ * cp) * tt
+        dtheta = q * cp - r_ * sp
+        dpsi   = (q * sp + r_ * cp) * sect
 
         return np.concatenate([
             vx, ax_,
@@ -2399,23 +2462,272 @@ class SmallFixedWingDynamics(Dynamics):
         """psi=0 → nose +Y (same convention as QuadcopterDynamics)."""
         return -np.pi / 2
 
-import importlib
-from types import ModuleType
-from typing import Dict, List, Optional, Tuple
 
-import numpy as np
+class eVTOL41Dynamics(Dynamics):
+    r"""
+    6-DOF hybrid eVTOL dynamics: 4 vertical lift rotors + 1 pusher propeller + fixed-wing surfaces.
 
-from larp.const import JAX_INSTALLED, MJX_INSTALLED
-from larp.dynamics import Dynamics
+    Designed for urban air mobility and cargo delivery — transitions naturally between hover
+    (rotors dominant) and cruise (wing + pusher dominant) without explicit mode switching.
 
-if JAX_INSTALLED:
-    import jax
-    import jax.numpy as jnp
-    from jax import jit, vmap, lax
-    
-if MJX_INSTALLED:
-    import mujoco
-    from mujoco import mjx
+    **State vector (12-dim)**: [x, vx, y, vy, z, vz, phi, theta, psi, p, q, r]
+        Same layout as QuadcopterDynamics and SmallFixedWingDynamics.
+
+    **Control vector (8-dim)**: [w1, w2, w3, w4, delta_t, delta_a, delta_e, delta_r]
+        - w1..w4  : lift rotor speeds [rad/s]
+        - delta_t : pusher throttle ∈ [0, 1]
+        - delta_a : aileron deflection [rad]
+        - delta_e : elevator deflection [rad]
+        - delta_r : rudder deflection [rad]
+
+    **Motor layout** (Larp frame: X right, Y forward, Z up):
+        1: Front-Right (+lx, +ly)  CW
+        2: Rear-Right  (+lx, -ly)  CCW
+        3: Rear-Left   (-lx, -ly)  CW
+        4: Front-Left  (-lx, +ly)  CCW
+
+    **Aerodynamic model**: Simplified stability-axis lift/drag (B&M §4) for cruise.
+    The pusher uses the B&M Eq. 4.11 thrust model for physically stable linearisation.
+
+    Reference: Beard & McLain (2012), *Small Unmanned Aircraft*.
+    """
+
+    def __init__(
+        self,
+        mass:           float = 22.0,    # kg  (compact urban cargo drone)
+        gravity:        float = 9.807,
+        wingspan:       float = 3.2,     # b [m]  high-AR wing for cruise efficiency
+        chord:          float = 0.28,    # c̄ [m]
+        wing_area:      float = 0.90,    # S [m²]
+        inertia:        list  = [0.85, 1.20, 1.80],   # [Ix, Iy, Iz] kg·m²
+        # Rotor geometry
+        rotor_boom_x:   float = 1.10,    # bx: lateral boom offset from centreline [m]
+        rotor_front_y:  float = 0.55,    # fy: front-motor fore-aft offset [m]
+        rotor_rear_y:   float = 0.45,    # ry: rear-motor fore-aft offset [m]
+        thrust_constant: float = 2.5e-4, # kf  [N/(rad/s)²]
+        torque_constant: float = 4.5e-6, # km  [Nm/(rad/s)²]
+        motor_inertia:  float = 8e-4,    # Ir  [kg·m²]
+        translational_drag: list = [0.6, 0.6, 1.0],  # kt
+        rotational_drag:    list = [0.3, 0.3, 0.4],  # kr
+        # Aerodynamic coefficients (simplified B&M)
+        CL0:  float =  0.20,   CLa:  float =  4.2,   CLde: float =  0.4,
+        CD0:  float =  0.025,  CDa:  float =  0.22,  CDp:  float =  0.028,
+        Cm0:  float = -0.01,   Cma:  float = -0.45,  Cmde: float = -0.55,  Cmq: float = -3.8,
+        Clp:  float = -0.48,   Clda: float =  0.16,  Clb:  float = -0.12,
+        Cnr:  float = -0.32,   Cndr: float = -0.028, Cnb:  float =  0.065,
+        CYb:  float = -0.24,   CYdr: float =  0.12,
+        # Pusher propulsion (B&M Eq. 4.11 form)
+        S_prop:  float = 0.018,
+        C_prop:  float = 1.0,
+        k_motor: float = 48.0,
+    ) -> None:
+
+        constants = {k: v for k, v in locals().items() if k != 'self'}
+        super().__init__(
+            constants=constants,
+            state_derivative_orders=[1, 1, 1] + [0, 0, 0] + [0, 0, 0],
+            control_derivative_orders=[0] * 8,
+            wrapable_primitive_state=[3, 4, 5],
+            jax_backend=True,
+        )
+
+        self.m  = float(mass);   self.g  = float(gravity)
+        self.b  = float(wingspan); self.c = float(chord); self.S = float(wing_area)
+        self.Ix, self.Iy, self.Iz = [float(v) for v in inertia]
+        self.bx = float(rotor_boom_x)
+        self.fy = float(rotor_front_y)
+        self.ry = float(rotor_rear_y)
+        # Convenience aliases kept for hover_speed() and general use
+        self.lx = self.bx; self.ly = (self.fy + self.ry) / 2.0
+        self.kf = float(thrust_constant); self.km = float(torque_constant); self.Ir = float(motor_inertia)
+        self.kt = np.array(translational_drag); self.kr = np.array(rotational_drag)
+
+        # Aero
+        self.CL0=CL0; self.CLa=CLa; self.CLde=CLde
+        self.CD0=CD0; self.CDa=CDa; self.CDp=CDp
+        self.Cm0=Cm0; self.Cma=Cma; self.Cmde=Cmde; self.Cmq=Cmq
+        self.Clp=Clp; self.Clda=Clda; self.Clb=Clb
+        self.Cnr=Cnr; self.Cndr=Cndr; self.Cnb=Cnb
+        self.CYb=CYb; self.CYdr=CYdr
+        self.S_prop=float(S_prop); self.C_prop=float(C_prop); self.k_motor=float(k_motor)
+
+        # Γ terms (B&M Eqs 4.4-4.7) — same frame mapping as SmallFixedWingDynamics
+        Jx  = self.Iy; Jy  = self.Ix; Jz  = self.Iz; Jxz = 0.0
+        G   = Jx * Jz
+        self._g3 = Jz / G;   self._g4 = 0.0
+        self._g5 = (Jz - Jx) / Jy
+        self._g8 = Jx / G
+        self._Jy = Jy
+
+        # Twin-boom rotor layout:
+        #   1: Front-Right (+bx,+fy) CW    2: Rear-Right (+bx,−ry) CCW
+        #   3: Rear-Left   (−bx,−ry) CW    4: Front-Left (−bx,+fy) CCW
+        self.motor_pos = np.array([
+            [+self.bx, +self.fy],
+            [+self.bx, -self.ry],
+            [-self.bx, -self.ry],
+            [-self.bx, +self.fy],
+        ])
+        self.yaw_signs = np.array([1.0, -1.0, 1.0, -1.0])
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def hover_speed(self) -> float:
+        """Average rotor speed [rad/s] for hover thrust. See hover_speeds() for trim."""
+        return float(np.sqrt((self.m * self.g) / (4.0 * self.kf)))
+
+    def hover_speeds(self) -> tuple:
+        """
+        Front and rear rotor speeds [rad/s] for trimmed hover.
+
+        With fy ≠ ry the front and rear motors must spin at different speeds to
+        zero the pitch moment:
+            2·kf·w_front²·fy = 2·kf·w_rear²·ry  →  w_front/w_rear = √(ry/fy)
+            2·kf·(w_front² + w_rear²) = mg
+
+        Returns (w_front, w_rear).  Motor order: [w_front, w_rear, w_rear, w_front].
+        """
+        mg = self.m * self.g; fy = self.fy; ry = self.ry
+        w_front = float(np.sqrt(mg * ry / (2.0 * self.kf * (fy + ry))))
+        w_rear  = float(np.sqrt(mg * fy / (2.0 * self.kf * (fy + ry))))
+        return w_front, w_rear
+
+    @property
+    def angle_indices(self) -> List[int]:
+        return [6, 7, 8]
+
+    @property
+    def heading_convention_offset(self) -> float:
+        return -np.pi / 2
+
+    # ── dynamics ──────────────────────────────────────────────────────────────
+
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray,
+          np: Optional[ModuleType] = None) -> np.ndarray:
+        if np is None: np = importlib.import_module("numpy")
+
+        # ── 1. Unpack ─────────────────────────────────────────────────────────
+        vel   = first_order_state[:, 1:6:2]       # [vx, vy, vz]  world frame
+        phi   = first_order_state[:, 6:7]
+        theta = first_order_state[:, 7:8]
+        psi   = first_order_state[:, 8:9]
+        p, q, r_ = (first_order_state[:, 9:10],
+                    first_order_state[:, 10:11],
+                    first_order_state[:, 11:12])
+        vx, vy, vz = vel[:, 0:1], vel[:, 1:2], vel[:, 2:3]
+
+        w   = first_order_control[:, 0:4]          # lift rotor speeds
+        delta_t = np.clip(first_order_control[:, 4:5], 0.0, 1.0)
+        delta_a = first_order_control[:, 5:6]
+        delta_e = first_order_control[:, 6:7]
+        delta_r = first_order_control[:, 7:8]
+
+        # ── 2. Trig ───────────────────────────────────────────────────────────
+        cp, sp = np.cos(phi), np.sin(phi)
+        ct, st = np.cos(theta), np.sin(theta)
+        cs, ss = np.cos(psi), np.sin(psi)
+
+        # ── 3. Rotation matrix columns (body→world) ───────────────────────────
+        # R[:,0]=X_w, R[:,1]=Y_w, R[:,2]=Z_w  (each (B,1))
+        Rx = np.concatenate([cs*ct, ss*ct, -st], axis=1)
+        Ry = np.concatenate([cs*sp*st - ss*cp, ss*sp*st + cs*cp, sp*ct], axis=1)
+        Rz = np.concatenate([cs*cp*st + ss*sp, ss*cp*st - cs*sp, cp*ct], axis=1)
+
+        # ── 4. World→body velocity ────────────────────────────────────────────
+        v_world = np.concatenate([vx, vy, vz], axis=1)   # (B,3)
+        u_b = (Rx * v_world).sum(axis=1, keepdims=True)   # lateral  (body X)
+        v_b = (Ry * v_world).sum(axis=1, keepdims=True)   # forward  (body Y)
+        w_b = (Rz * v_world).sum(axis=1, keepdims=True)   # upward   (body Z)
+
+        # ── 5. Aerodynamics (B&M, Z-up frame) ────────────────────────────────
+        Va2   = np.maximum(vx**2 + vy**2 + vz**2, 0.01); Va = np.sqrt(Va2)
+        alpha = np.arctan2(-w_b, np.maximum(v_b, 1e-4))   # Z-up sign correction
+        beta  = np.arcsin(np.clip(u_b / Va, -1.0, 1.0))
+
+        rho   = 1.225
+        q_dyn = 0.5 * rho * Va2 * self.S
+        b_2V  = self.b / (2.0 * Va); c_2V = self.c / (2.0 * Va)
+
+        # Aerodynamic blend: suppress wing aero at low airspeed.
+        # At Va < Va_blend (~8 m/s) wings produce negligible force; alpha is also
+        # ill-defined during near-vertical flight.  Fade in quadratically so the
+        # cruise aero is unaffected above Va_blend.
+        _vab  = getattr(self, '_Va_blend', 8.0)
+        aero_blend = np.clip(Va2 / (_vab ** 2), 0.0, 1.0)
+
+        CL = self.CL0 + self.CLa * alpha + self.CLde * delta_e
+        CD = self.CDp + (self.CL0 + self.CLa * alpha)**2 / (np.pi * 0.85 * (self.b**2 / self.S)) + self.CDa * np.abs(alpha)
+        CY = self.CYb * beta + self.CYdr * delta_r
+
+        # Body forces from aerodynamics (blended to zero at low Va)
+        cos_a, sin_a = np.cos(alpha), np.sin(alpha)
+        Fx_aero = aero_blend * CY * q_dyn
+        Fy_aero = aero_blend * (-cos_a * CD * q_dyn + sin_a * CL * q_dyn)
+        Fz_aero = aero_blend * ( sin_a * CD * q_dyn + cos_a * CL * q_dyn)
+
+        # Aerodynamic moments (blended to zero at low Va)
+        Mx_aero = aero_blend * q_dyn * self.c * (self.Cm0 + self.Cma * alpha + self.Cmq * c_2V * p + self.Cmde * delta_e)
+        My_aero = aero_blend * q_dyn * self.b * (self.Clb * beta + self.Clp * b_2V * q + self.Clda * delta_a)
+        Mz_aero = aero_blend * q_dyn * self.b * (-self.Cnb * beta + self.Cnr * b_2V * r_ + self.Cndr * delta_r)
+
+        # ── 6. Lift rotors ────────────────────────────────────────────────────
+        w2 = w ** 2
+        F_lift_body = self.kf * np.sum(w2, axis=1, keepdims=True)        # body Z
+
+        # Pitch moment: sum(kf * ry_i * wi^2)  (ry = ly)
+        ry = np.array([[self.motor_pos[i, 1] for i in range(4)]])
+        # Roll moment: sum(kf * (-rx_i) * wi^2)
+        rx = np.array([[self.motor_pos[i, 0] for i in range(4)]])
+        Mx_rot = self.kf * np.sum(ry * w2, axis=1, keepdims=True)
+        My_rot = self.kf * np.sum(-rx * w2, axis=1, keepdims=True)
+        Mz_rot = self.km * np.sum(self.yaw_signs * w2, axis=1, keepdims=True)
+        omega_r = np.sum(self.yaw_signs * w, axis=1, keepdims=True)
+
+        # ── 7. Pusher thrust (B&M Eq. 4.11, body Y direction) ────────────────
+        T_push = np.maximum(0.5 * rho * self.S_prop * self.C_prop *
+                            ((self.k_motor * delta_t)**2 - Va2), 0.0)
+
+        # ── 8. Total body forces ──────────────────────────────────────────────
+        Fx_b_total = Fx_aero
+        Fy_b_total = Fy_aero + T_push
+        Fz_b_total = Fz_aero + F_lift_body
+
+        # ── 9. World accelerations ────────────────────────────────────────────
+        drag_w = self.kt * vel
+        ax_ = ((Rx[:, 0:1]*Fx_b_total + Ry[:, 0:1]*Fy_b_total + Rz[:, 0:1]*Fz_b_total)
+               / self.m - drag_w[:, 0:1])
+        ay_ = ((Rx[:, 1:2]*Fx_b_total + Ry[:, 1:2]*Fy_b_total + Rz[:, 1:2]*Fz_b_total)
+               / self.m - drag_w[:, 1:2])
+        az_ = ((Rx[:, 2:3]*Fx_b_total + Ry[:, 2:3]*Fy_b_total + Rz[:, 2:3]*Fz_b_total)
+               / self.m - drag_w[:, 2:3] - self.g)
+
+        # ── 10. Rotational dynamics ───────────────────────────────────────────
+        tau_x = Mx_rot + Mx_aero   # pitch  (Larp Ix = B&M Jy)
+        tau_y = My_rot + My_aero   # roll   (Larp Iy = B&M Jx)
+        tau_z = Mz_rot + Mz_aero   # yaw
+
+        drag_rot = self.kr * np.concatenate([p, q, r_], axis=1)
+        gyro_p   = self.Ir * q  * omega_r
+        gyro_q   = -self.Ir * p * omega_r
+
+        # Standard Euler equations: I*dΩ/dt = τ − Ω×(IΩ)
+        # Ω×(IΩ) = [(Iz−Iy)qr, (Ix−Iz)pr, (Iy−Ix)pq] → subtract from τ
+        cp_p = (self.Iy - self.Iz) * q  * r_   # (Iy−Iz)·q·r for dp equation
+        cp_q = (self.Iz - self.Ix) * p  * r_   # (Iz−Ix)·p·r for dq equation
+        cp_r = (self.Ix - self.Iy) * p  * q    # (Ix−Iy)·p·q for dr equation
+
+        dp = (tau_x + cp_p - gyro_p - drag_rot[:, 0:1]) / self.Ix   # pitch rate
+        dq = (tau_y + cp_q - gyro_q - drag_rot[:, 1:2]) / self.Iy   # roll rate
+        dr = (tau_z + cp_r           - drag_rot[:, 2:3]) / self.Iz   # yaw rate
+
+        # ── 11. Euler kinematics ──────────────────────────────────────────────
+        theta_c = np.clip(theta, -1.5, 1.5)
+        tt   = np.tan(theta_c); sect = 1.0 / np.cos(theta_c)
+        dphi   = p + (q * sp + r_ * cp) * tt
+        dtheta = q * cp - r_ * sp
+        dpsi   = (q * sp + r_ * cp) * sect
+
+        return np.concatenate([vx, ax_, vy, ay_, vz, az_, dphi, dtheta, dpsi, dp, dq, dr], axis=1)
 
 
 class MJXDynamics(Dynamics):
@@ -2480,9 +2792,6 @@ class MJXDynamics(Dynamics):
         self.nv = self.mjx_model.nv
         self.nu = self.mjx_model.nu
 
-        # 3. Bypass Kinematic Shifting
-        # By setting the derivative order to 0 for all elements, the base class 
-        # treats the entire [qpos, qvel] vector as independent primitives.
         state_orders = [0] * (self.nq + self.nv)
         control_orders = [0] * self.nu
 
@@ -2609,8 +2918,7 @@ class MJXDynamics(Dynamics):
         If the model contains free joints (quaternions), it automatically calculates 
         the correct quaternion derivatives.
         """
-        if np is None: np = jnp
-        # Route directly to the compiled, batched function
+        # np argument accepted for base-class JAX wrapper compatibility; jnp is always used internally.
         return self._f_jit(jnp.asarray(first_order_state), jnp.asarray(first_order_control))
 
     def step(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate: bool = False) -> np.ndarray:
@@ -2634,3 +2942,4 @@ class MJXDynamics(Dynamics):
         """
         xs = self._mjx_rollout_jit(jnp.asarray(x0), jnp.asarray(us), dt)
         return np.asarray(xs)
+

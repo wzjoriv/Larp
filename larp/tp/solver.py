@@ -129,12 +129,21 @@ class Solver(ABC):
     # ── Utilities ──────────────────────────────────────────────────────────
 
     def _parse_bounds(self, bounds, dim: int) -> Tuple[np.ndarray, np.ndarray]:
-        lb = np.asarray(bounds[0], dtype=float)
-        ub = np.asarray(bounds[1], dtype=float)
+        if bounds is None:
+            return np.full(dim, -np.inf), np.full(dim, np.inf)
+            
+        # Use 'is' to avoid triggering NumPy's element-wise equality evaluation
+        if isinstance(bounds, (tuple, list)) and bounds[0] is None and bounds[1] is None:
+            return np.full(dim, -np.inf), np.full(dim, np.inf)
+            
+        lb = np.asarray(bounds[0], dtype=float) if bounds[0] is not None else np.full(dim, -np.inf)
+        ub = np.asarray(bounds[1], dtype=float) if bounds[1] is not None else np.full(dim, np.inf)
+        
         if lb.ndim == 0:
             lb = np.full(dim, float(lb))
         if ub.ndim == 0:
             ub = np.full(dim, float(ub))
+            
         return lb, ub
 
     def _init_controls(self, us_init: Optional[np.ndarray]) -> np.ndarray:
@@ -454,6 +463,9 @@ class SQPSolver(Solver):
         x0 = np.asarray(x0).reshape(-1)
         us = self._init_controls(us_init)
         xs = self.rollout(x0, us)
+
+        assert not np.any(np.isnan(xs)), f"Initial rollout has a nan value in xs. values = {xs}"
+        assert not np.any(np.isnan(us)), f"Initial controls has a nan value in us. values = {us}"
 
         self._update_bounds_cache(xmin, xmax, umin, umax)
 

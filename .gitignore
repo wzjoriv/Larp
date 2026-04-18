@@ -7,6 +7,16 @@ cache
 docs
 examples
 
+tp_benchmark_route_data
+tp_benchmark_*
+benchmark.toml
+larp.toml
+console*.txt
+.*
+files
+*.mp4
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

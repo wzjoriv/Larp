@@ -19,7 +19,7 @@ Although originally developed for Unmanned Aerial Vehicles (UAVs) engaged in urb
 ### 🚀 Key Features
 
 - **Repulsive Risk Fields**  
-  Model obstacles and constraints using artificial repulsive fields that guide navigation using non-binary influence.
+  Model obstacles and spatial constraints using artificial repulsive fields that guide navigation using non-binary influence.
 
 - **Multi-Scale Global Path Planning**  
  Hierarchical spatial partitioning enables fast lookups and efficient field evaluations for rapid, obstacle-aware global path planning.
@@ -45,13 +45,13 @@ pip install larp
 - Python 3.8+
 - `numpy>=2.0.0`
 - `scipy`
+- `matplotlib` -- For environment visualization.
+- `osmnx` -- For integration with OpenStreetMap urban data.
+- `jax` -- For automatic differentiation of digital twin dynamics.
 
 #### Optional Dependencies:
 - `osqp` -- For SQP solver in trajectory optimization.
-- `osmnx` -- For integration with OpenStreetMap urban data.
-- `jax` -- For automatic differentiation of digital twin dynamics.
 - `mujoco-mjx` -- For loading complex digital twin models from files.
-- `matplotlib` -- For environment visualization.
 
 ---
 

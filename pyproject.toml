@@ -16,8 +16,7 @@ dependencies = [
     'scipy',
     'matplotlib',
     'osmnx',
-    'osqp',
-    'jax[cpu]',
+    'jax',
 ]
 
 classifiers = [
@@ -26,6 +25,10 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+full = [
+    "mujoco-mjx[warp]",
+    "osqp"
+]
 cuda = [ # NOTE: Future feature 
     "jax[cuda12]",
     "osqp[cuda]",

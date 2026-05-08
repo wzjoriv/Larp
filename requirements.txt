@@ -4,5 +4,6 @@ osmnx # [Optional] For integration with city data
 osqp>=1 # For most optimal version, follow: https://osqp.org/docs/get_started/python.html
 jax[cpu]
 matplotlib>=3 # [Optional] [for illustrations]
+typer
 
 #TODO: add option for cupy[cuda12x]/jax[cuda]/osqp[cuda] later

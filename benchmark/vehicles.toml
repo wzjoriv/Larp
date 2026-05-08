@@ -1,0 +1,43 @@
+[[vehicle]]
+name     = "Quadcopter"
+dynamics = "QuadcopterDynamics"
+enabled  = true
+
+[vehicle.physics]
+frame              = "x"
+mass               = 5.2
+gravity            = 9.807
+inertia            = [0.04, 0.04, 0.08]
+arm_length         = 0.35
+thrust_constant    = 6.0e-5
+motor_inertia      = 2.0e-4
+torque_constant    = 1.0e-6
+translational_drag = [0.5, 0.5, 0.8]
+rotational_drag    = [0.2, 0.2, 0.2]
+
+[vehicle.state_layout]
+# State vector: [x, vx, y, vy, z, vz, roll, pitch, yaw, p, q, r]
+x_idx       = 0
+y_idx       = 2
+z_idx       = 4
+heading_idx = 8
+ref_indices = [0, 2, 8]
+field_idx   = [0, 2]
+
+x0_base   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+ref_state_base = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+[vehicle.bounds]
+# State bounds. z (index 4) is altitude-relative: [altitude - z_lo_margin, altitude + z_hi_margin].
+# All other entries are absolute. Use inf / -inf for unconstrained axes.
+x_lo      = [-inf, -40.0, -inf, -40.0, -inf, -3.0, -0.6, -0.6, -inf, -1.0, -1.0, -1.0]
+x_hi      = [ inf,  40.0,  inf,  40.0,  inf,  4.0,  0.6,  0.6,  inf,  1.0,  1.0,  1.0]
+x_lo_flex = [-inf, -40.0, -inf, -40.0, -inf, -50.0, -2.0, -2.0, -inf, -5.0, -5.0, -5.0]
+x_hi_flex = [ inf,  40.0,  inf,  40.0,  inf,  50.0,  2.0,  2.0,  inf,  5.0,  5.0,  5.0]
+z_state_idx = 4
+u_lo        = [100.0, 100.0, 100.0, 100.0]
+
+[vehicle.cost]
+Q_diag   = [2000, 700, 2000, 700, 5000, 500, 1000, 1000, 1000, 5000, 5000, 1000]
+Qf_scale = 2.0
+R_scale  = 0.0

@@ -9,6 +9,8 @@ MATPLOTLIB_INSTALLED = importlib.util.find_spec("matplotlib") is not None
 
 ON_EDGE_EPS = 1e-9
 
+QUAT_BAUMGARTE_FACTOR = 10.0
+
 __all__ = [
     "OSQP_INSTALLED",
     "OSM_INSTALLED",

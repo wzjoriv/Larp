@@ -8,6 +8,7 @@ from scipy.linalg import expm
 from itertools import chain
 import warnings
 
+from larp import const
 from larp.fn import bmatvec
 from larp.const import JAX_INSTALLED, MJX_INSTALLED
 
@@ -1594,8 +1595,6 @@ class QuadcopterDynamics(Dynamics):
         """psi=0 means nose→+Y (Forward); arctan2 uses +X=0 → offset is -pi/2."""
         return -np.pi / 2
 
-_LAMBDA_QUAT = 10.0
-
 class HighFidelityQuadcopterDynamics(Dynamics):
     r"""
     A high-fidelity 6-DOF rigid-body dynamics model for a quadcopter.
@@ -1871,10 +1870,10 @@ class HighFidelityQuadcopterDynamics(Dynamics):
 
         # Baumgarte quaternion normalisation stabilisation.
         q_err = qw**2 + qx**2 + qy**2 + qz**2 - 1.0
-        dqw -= _LAMBDA_QUAT * q_err * qw
-        dqx -= _LAMBDA_QUAT * q_err * qx
-        dqy -= _LAMBDA_QUAT * q_err * qy
-        dqz -= _LAMBDA_QUAT * q_err * qz
+        dqw -= const.QUAT_BAUMGARTE_FACTOR * q_err * qw
+        dqx -= const.QUAT_BAUMGARTE_FACTOR * q_err * qx
+        dqy -= const.QUAT_BAUMGARTE_FACTOR * q_err * qy
+        dqz -= const.QUAT_BAUMGARTE_FACTOR * q_err * qz
 
         return np.concatenate([
             vel[:, 0:1], accel[:, 0:1],
@@ -2072,7 +2071,6 @@ class HighFidelityQuadcopterDynamics(Dynamics):
         I = self.get_current(state)
         return self.v_max - (I * self.r_int)
 
-    # --- Static Helpers ---
     @staticmethod
     def euler_to_quat(phi, theta, psi):
         """Converts Euler Angles to Unit Quaternion [w, x, y, z]"""
@@ -2462,34 +2460,50 @@ class SmallFixedWingDynamics(Dynamics):
         """psi=0 → nose +Y (same convention as QuadcopterDynamics)."""
         return -np.pi / 2
 
-
 class eVTOL41Dynamics(Dynamics):
     r"""
-    6-DOF hybrid eVTOL dynamics: 4 vertical lift rotors + 1 pusher propeller + fixed-wing surfaces.
+    6-DOF hybrid eVTOL: 4 lift rotors + 1 pusher propeller + fixed-wing surfaces.
 
-    Designed for urban air mobility and cargo delivery — transitions naturally between hover
-    (rotors dominant) and cruise (wing + pusher dominant) without explicit mode switching.
+    Designed for urban air mobility and cargo delivery. Transitions naturally between
+    hover (lift-rotors dominant) and cruise (wing + pusher dominant) without explicit
+    mode switching.
 
-    **State vector (12-dim)**: [x, vx, y, vy, z, vz, phi, theta, psi, p, q, r]
-        Same layout as QuadcopterDynamics and SmallFixedWingDynamics.
+    State vector (12-dim): ``[x, vx, y, vy, z, vz, phi, theta, psi, p, q, r]``
 
-    **Control vector (8-dim)**: [w1, w2, w3, w4, delta_t, delta_a, delta_e, delta_r]
-        - w1..w4  : lift rotor speeds [rad/s]
-        - delta_t : pusher throttle ∈ [0, 1]
-        - delta_a : aileron deflection [rad]
-        - delta_e : elevator deflection [rad]
-        - delta_r : rudder deflection [rad]
+    Same layout as ``QuadcopterDynamics`` and ``SmallFixedWingDynamics``.
 
-    **Motor layout** (Larp frame: X right, Y forward, Z up):
-        1: Front-Right (+lx, +ly)  CW
-        2: Rear-Right  (+lx, -ly)  CCW
-        3: Rear-Left   (-lx, -ly)  CW
-        4: Front-Left  (-lx, +ly)  CCW
+    Control vector (8-dim): ``[w1, w2, w3, w4, delta_t, delta_a, delta_e, delta_r]``
 
-    **Aerodynamic model**: Simplified stability-axis lift/drag (B&M §4) for cruise.
-    The pusher uses the B&M Eq. 4.11 thrust model for physically stable linearisation.
+    ============  =============================================
+    ``w1..w4``    Lift rotor angular speeds [rad/s]
+    ``delta_t``   Pusher throttle ∈ [0, 1]
+    ``delta_a``   Aileron deflection [rad]
+    ``delta_e``   Elevator deflection [rad]
+    ``delta_r``   Rudder deflection [rad]
+    ============  =============================================
 
-    Reference: Beard & McLain (2012), *Small Unmanned Aircraft*.
+    Lift-rotor layout (Larp frame: X right, Y forward, Z up)::
+
+        Motor 1: Front-Right  (+bx, +fy)  CW
+        Motor 2: Rear-Right   (+bx, −ry)  CCW
+        Motor 3: Rear-Left    (−bx, −ry)  CW
+        Motor 4: Front-Left   (−bx, +fy)  CCW
+
+    **Pusher thrust model** (B&M Eq. 4.11)::
+
+        T_p = 0.5 * rho * S_prop * C_prop * ((k_motor * delta_t)^2 − Va^2)
+
+    where ``k_motor * delta_t`` is the effective motor velocity parameter [m/s].
+    See :meth:`pusher_speed` for the forward mapping from throttle to this parameter.
+
+    **Aerodynamic model**: Simplified stability-axis lift/drag (B&M §4).  Wing forces
+    are blended to zero below ``_Va_blend`` (default 8 m/s) so the model is well-posed
+    during hover and near-vertical flight.
+
+    References
+    ----------
+    Beard, R. W., & McLain, T. W. (2012). *Small Unmanned Aircraft: Theory and
+    Practice*. Princeton University Press.
     """
 
     def __init__(
@@ -2573,37 +2587,117 @@ class eVTOL41Dynamics(Dynamics):
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def hover_speed(self) -> float:
-        """Average rotor speed [rad/s] for hover thrust. See hover_speeds() for trim."""
+        """
+        Average lift-rotor speed for level hover (equal-speed assumption).
+
+        Returns
+        -------
+        float
+            Rotor angular speed [rad/s] such that all four rotors together
+            produce thrust equal to vehicle weight.  When ``fy != ry`` the
+            front and rear motors must spin at different speeds for a trimmed
+            hover; use :meth:`hover_speeds` in that case.
+        """
         return float(np.sqrt((self.m * self.g) / (4.0 * self.kf)))
 
-    def hover_speeds(self) -> tuple:
+    def hover_speeds(self) -> Tuple[float, float]:
         """
-        Front and rear rotor speeds [rad/s] for trimmed hover.
+        Trimmed front and rear lift-rotor speeds for pitch-moment-free hover.
 
-        With fy ≠ ry the front and rear motors must spin at different speeds to
-        zero the pitch moment:
+        When ``fy != ry`` the front and rear motor pairs must spin at different
+        speeds to zero the net pitch moment.  The balance condition is::
+
             2·kf·w_front²·fy = 2·kf·w_rear²·ry  →  w_front/w_rear = √(ry/fy)
-            2·kf·(w_front² + w_rear²) = mg
+            2·kf·(w_front² + w_rear²) = m·g
 
-        Returns (w_front, w_rear).  Motor order: [w_front, w_rear, w_rear, w_front].
+        Motor command order: ``[w_front, w_rear, w_rear, w_front]`` (motors 1, 2, 3, 4).
+
+        Returns
+        -------
+        w_front : float
+            Angular speed [rad/s] for motors 1 and 4 (front pair).
+        w_rear : float
+            Angular speed [rad/s] for motors 2 and 3 (rear pair).
         """
         mg = self.m * self.g; fy = self.fy; ry = self.ry
         w_front = float(np.sqrt(mg * ry / (2.0 * self.kf * (fy + ry))))
         w_rear  = float(np.sqrt(mg * fy / (2.0 * self.kf * (fy + ry))))
         return w_front, w_rear
 
+    def pusher_speed(self, delta_t: float, Va: float = 0.0) -> Tuple[float, float]:
+        """
+        Map pusher throttle to the B&M motor velocity parameter and net thrust.
+
+        The pusher propulsion model follows B&M Eq. 4.11::
+
+            T_p = 0.5 · rho · S_prop · C_prop · (V_motor² − Va²)
+
+        where the **motor velocity parameter** ``V_motor = k_motor · delta_t`` [m/s]
+        acts as an effective induced-velocity ceiling at a given throttle setting.
+        This is *not* a physical shaft angular speed; it is the velocity equivalent
+        used to match static-thrust data.  To obtain an approximate shaft speed,
+        divide by the propeller tip radius.
+
+        Parameters
+        ----------
+        delta_t : float
+            Pusher throttle command, clipped to [0, 1].
+        Va : float, optional
+            Airspeed magnitude [m/s].  Affects thrust but not ``V_motor``.
+
+        Returns
+        -------
+        V_motor : float
+            Effective motor velocity parameter ``k_motor · delta_t`` [m/s].
+        T_push : float
+            Net pusher thrust [N] at the given airspeed.  Zero in the
+            windmill regime (``Va >= V_motor``).
+
+        Examples
+        --------
+        >>> dyn = eVTOL41Dynamics()
+        >>> V_motor, T = dyn.pusher_speed(delta_t=1.0, Va=0.0)
+        >>> print(f"V_motor={V_motor:.1f} m/s, T={T:.1f} N")
+        V_motor=48.0 m/s, T=25.4 N
+        """
+        delta_t = float(np.clip(delta_t, 0.0, 1.0))
+        V_motor = self.k_motor * delta_t
+        rho = 1.225
+        T_push = float(max(0.0, 0.5 * rho * self.S_prop * self.C_prop * (V_motor**2 - Va**2)))
+        return V_motor, T_push
+
     @property
     def angle_indices(self) -> List[int]:
+        """Indices of angle states (phi, theta, psi) in the flattened first-order state."""
         return [6, 7, 8]
 
     @property
     def heading_convention_offset(self) -> float:
+        """Offset so that psi=0 aligns with the +Y (forward) world axis."""
         return -np.pi / 2
 
     # ── dynamics ──────────────────────────────────────────────────────────────
 
     def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray,
           np: Optional[ModuleType] = None) -> np.ndarray:
+        """
+        Continuous-time dynamics: state derivative ``x_dot = f(x, u)``.
+
+        Parameters
+        ----------
+        first_order_state : ndarray of shape (B, 12)
+            Batched state ``[x, vx, y, vy, z, vz, phi, theta, psi, p, q, r]``.
+        first_order_control : ndarray of shape (B, 8)
+            Batched control ``[w1, w2, w3, w4, delta_t, delta_a, delta_e, delta_r]``.
+        np : module, optional
+            Numerical backend.  Pass ``jnp`` when tracing under JAX; defaults
+            to NumPy.
+
+        Returns
+        -------
+        ndarray of shape (B, 12)
+            Time derivative of the state in the same order as the input.
+        """
         if np is None: np = importlib.import_module("numpy")
 
         # ── 1. Unpack ─────────────────────────────────────────────────────────
@@ -2729,217 +2823,340 @@ class eVTOL41Dynamics(Dynamics):
 
         return np.concatenate([vx, ax_, vy, ay_, vz, az_, dphi, dtheta, dpsi, dp, dq, dr], axis=1)
 
-
 class MJXDynamics(Dynamics):
     r"""
-    A unified rigid-body dynamics engine powered by MuJoCo XLA (mjx).
+    Rigid-body dynamics engine backed by MuJoCo XLA (mjx).
 
-    This class parses arbitrary URDF, MJCF, or OpenUSD models into a fully 
-    differentiable, batched dynamics environment. It natively computes continuous 
-    Jacobians, discrete Hessians, and rollouts using JAX compilation.
+    Loads arbitrary MJCF/XML models and exposes a fully differentiable, batched
+    dynamics environment.  Jacobians and Hessians are computed via JAX
+    auto-differentiation; rollouts use the high-fidelity ``mjx.step`` integrator.
 
-    **State Representation:**
-    The flattened first-order state is treated as a concatenation of generalized 
-    positions and velocities: :math:`x = [q_{pos}, q_{vel}]`. 
-    This means the state dimension is :math:`n_q + n_v`.
+    State layout: ``x = [q_pos (nq,), q_vel (nv,)]``.  Total dimension is
+    ``nq + nv``.  For models without free joints ``nq == nv``; a single free
+    joint adds one extra quaternion component (``nq == nv + 1``).
 
-    **Control Representation:**
-    The raw control input :math:`u` can be mapped to generalized forces :math:`\tau` 
-    (or actuator controls) via the :meth:`control_to_nv` method. This allows 
-    solvers to optimize over logical inputs (like PWM or thrust) while MuJoCo 
-    handles the underlying rigid body mechanics.
+    Control layout: the raw control vector ``u`` is passed through
+    :meth:`control_to_nv` before being routed to MuJoCo.  Override that method
+    to implement underactuated or custom transmission mappings.
+
+    .. note::
+       Subclass and override :meth:`control_to_nv` (and optionally
+       :meth:`nv_to_control`) to adapt this class to a specific vehicle.
+       After overriding, call ``_setup_jax_functions()`` again so the JIT
+       closures pick up the new mapping.
 
     Attributes
     ----------
     mj_model : mujoco.MjModel
-        The standard CPU-based MuJoCo model.
+        CPU-side MuJoCo model (authoritative for XML metadata).
     mjx_model : mjx.Model
-        The JAX-compiled MuJoCo model used for all computations.
+        JAX-compiled model used for all numerical computations.
     nq : int
-        Number of generalized coordinates (position dimension).
+        Number of generalized position coordinates.
     nv : int
-        Number of degrees of freedom (velocity dimension).
+        Number of generalized velocity coordinates (degrees of freedom).
     nu : int
-        Number of actuators/controls natively defined in the MJCF model.
+        Number of actuators defined in the MJCF.
 
-    Example
-    -------
-    .. code-block:: python
+    Examples
+    --------
+    >>> dyn = MJXDynamics("assets/quadrotor.xml")
+    >>> x0 = np.zeros((16, dyn.nq + dyn.nv))   # batch of 16
+    >>> us = np.zeros((16, 50, dyn.nu))          # 50-step control sequence
+    >>> xs = dyn.rollout(x0, us, dt=0.01)        # shape (16, 50, nq+nv)
 
-        # Load a complex eVTOL or Octocopter model
-        dyn = MJXDynamics(model_path="assets/evtol.xml")
-        
-        x0 = np.zeros((10, dyn.nq + dyn.nv))
-        u0 = np.zeros((10, dyn.nu))
-        
-        # Rollout 50 steps using exact MuJoCo physics (estimate is ignored)
-        xs = dyn.rollout(x0, us_sequence, dt=0.01)
+    See Also
+    --------
+    eVTOL41Dynamics : Analytic hybrid eVTOL model.
+    QuadcopterDynamics : Lightweight quadrotor model.
     """
 
     def __init__(self, model_path: str) -> None:
+        """
+        Load an MJCF model from disk and initialise the dynamics engine.
+
+        Parameters
+        ----------
+        model_path : str
+            Path to a MuJoCo XML (MJCF) file.
+
+        Raises
+        ------
+        RuntimeError
+            If JAX or MuJoCo is not installed.
+        """
         if not MJX_INSTALLED:
             raise RuntimeError(
-                "MJX is not installed or available. "
-                "Please install JAX and MuJoCo to enable hardware-accelerated MJXDynamics."
+                "MJX is not installed. "
+                "Install JAX and MuJoCo to enable MJXDynamics."
             )
 
-        # 1. Load Models
         self.mj_model = mujoco.MjModel.from_xml_path(model_path)
         self.mjx_model = mjx.put_model(self.mj_model)
 
-        # 2. Dimensions
         self.nq = self.mjx_model.nq
         self.nv = self.mjx_model.nv
         self.nu = self.mjx_model.nu
 
-        state_orders = [0] * (self.nq + self.nv)
-        control_orders = [0] * self.nu
-
         super().__init__(
             constants={"model_path": model_path},
-            state_derivative_orders=state_orders,
-            control_derivative_orders=control_orders,
+            state_derivative_orders=[0] * (self.nq + self.nv),
+            control_derivative_orders=[0] * self.nu,
             holonomic=False,
-            jax_backend=True # Always enforce True for MJXDynamics
+            jax_backend=True,
         )
 
-    def control_to_nv(self, u: np.ndarray, np: Optional[ModuleType] = None) -> np.ndarray:
-        r"""
-        Maps the raw control input :math:`u` to generalized forces or native actuators.
-        
-        Defaults to the identity mapping. Override this method if your model is 
-        underactuated or requires a complex transmission mapping (e.g., mapping 
-        8 rotor speeds of an octocopter to 6 rigid-body forces).
-
-        :param u: The control input batch. Shape: ``(batch_size, control_dim)``.
-        :param np: Numerical backend (e.g., ``jnp``) passed during tracing.
-        :return: Generalized forces or actuator inputs.
+    @classmethod
+    def from_xml_string(cls, xml: str) -> "MJXDynamics":
         """
-        if np is None: np = jnp
+        Create an ``MJXDynamics`` instance directly from an MJCF XML string.
+
+        Parameters
+        ----------
+        xml : str
+            Complete MuJoCo XML model string.
+
+        Returns
+        -------
+        MJXDynamics
+            Initialised dynamics instance.
+
+        Examples
+        --------
+        >>> xml = open("assets/quadrotor.xml").read()
+        >>> dyn = MJXDynamics.from_xml_string(xml)
+        """
+        if not MJX_INSTALLED:
+            raise RuntimeError(
+                "MJX is not installed. "
+                "Install JAX and MuJoCo to enable MJXDynamics."
+            )
+        obj = object.__new__(cls)
+        obj.mj_model = mujoco.MjModel.from_xml_string(xml)
+        obj.mjx_model = mjx.put_model(obj.mj_model)
+        obj.nq = obj.mjx_model.nq
+        obj.nv = obj.mjx_model.nv
+        obj.nu = obj.mjx_model.nu
+        Dynamics.__init__(
+            obj,
+            constants={"model_path": "<xml_string>"},
+            state_derivative_orders=[0] * (obj.nq + obj.nv),
+            control_derivative_orders=[0] * obj.nu,
+            holonomic=False,
+            jax_backend=True,
+        )
+        return obj
+
+    def control_to_nv(self, u: np.ndarray, np: Optional[ModuleType] = None) -> np.ndarray:
+        """
+        Map raw control input to MuJoCo actuator commands or generalised forces.
+
+        The default is the identity mapping.  Override this in a subclass to
+        implement non-trivial transmissions, e.g. converting rotor speeds to
+        body-frame forces/torques for an underactuated vehicle.
+
+        .. note::
+           After overriding this method, call ``_setup_jax_functions()`` to
+           recompile the JIT closures with the updated mapping.
+
+        Parameters
+        ----------
+        u : ndarray of shape (B, nu)
+            Batched raw control input.
+        np : module, optional
+            Numerical backend.  Pass ``jnp`` when tracing under JAX.
+
+        Returns
+        -------
+        ndarray of shape (B, nu) or (B, nv)
+            Actuator commands (shape ``(B, nu)``) or generalised forces
+            (shape ``(B, nv)``).  The routing to ``ctrl`` vs ``qfrc_applied``
+            is determined automatically by the output shape.
+        """
+        if np is None:
+            np = jnp
         return u
 
     def nv_to_control(self, tau: np.ndarray, np: Optional[ModuleType] = None) -> np.ndarray:
-        r"""
-        Inverse mapping from generalized forces back to control input :math:`u`.
         """
-        raise NotImplementedError("nv_to_control must be implemented by the user.")
+        Inverse mapping from generalised forces back to raw control input.
+
+        Parameters
+        ----------
+        tau : ndarray of shape (B, nv)
+            Generalised forces or actuator commands.
+        np : module, optional
+            Numerical backend.
+
+        Returns
+        -------
+        ndarray of shape (B, nu)
+            Raw control vector.
+
+        Raises
+        ------
+        NotImplementedError
+            Always — must be implemented by the user in a subclass.
+        """
+        raise NotImplementedError(
+            "nv_to_control must be implemented by the subclass "
+            "to match the control_to_nv mapping."
+        )
 
     @property
     def angle_indices(self) -> List[int]:
+        """Empty — MuJoCo manages its own quaternion normalisation."""
         return []
+
+    @property
+    def heading_convention_offset(self) -> float:
+        """Default 0.0; override in a subclass if the model uses a different yaw convention."""
+        return 0.0
 
     def _setup_jax_functions(self):
         """
-        Overrides the base class JAX setup to inject highly optimized, pre-compiled 
-        `mjx` functions before the base class builds the Jacobians.
+        Build and JIT-compile the core MJX functions.
+
+        Overrides the base-class method to install optimised ``mjx``-backed
+        implementations of ``_f_jit``, ``_mjx_step_jit``, and
+        ``_mjx_rollout_jit`` *before* the base class constructs its
+        auto-differentiation Jacobians on top of ``self.f``.
+
+        Free-joint handling
+        -------------------
+        When ``nq == nv + 1`` the model contains exactly one root free joint
+        whose quaternion occupies ``qpos[3:7]``.  The position derivative for
+        that quaternion is computed analytically as::
+
+            dq = 0.5 * q ⊗ [0, ω]
+
+        Models with multiple free joints or non-root free joints are not
+        handled and will fall back to the generic zero-pad branch.
         """
-        
-        # --- 1. Define Pure Unbatched Functions ---
-        def _f_single(x, u):
-            qpos = x[:self.nq]
-            qvel = x[self.nq:]
-            
-            # Map controls (add dummy batch dim, map, then strip)
-            tau = self.control_to_nv(u[None, :], np=jnp)[0]
-            
-            data = mjx.make_data(self.mjx_model)
-            data = data.replace(qpos=qpos, qvel=qvel)
-            
-            # Route the mapped control vector dynamically based on its shape
-            if tau.shape[-1] == self.nu:
-                data = data.replace(ctrl=tau)
-            elif tau.shape[-1] == self.nv:
-                data = data.replace(qfrc_applied=tau)
-                
-            data = mjx.forward(self.mjx_model, data)
-            qacc = data.qacc
-            
-            # Compute dqpos (Handle Quaternions if Free Joint is present)
-            if self.nq == self.nv:
-                dqpos = qvel
-            elif self.nq == self.nv + 1:
+        if not MJX_INSTALLED:
+            return
+
+        nq, nv, nu = self.nq, self.nv, self.nu
+
+        def _apply_control(data, tau):
+            if tau.shape[-1] == nu:
+                return data.replace(ctrl=tau)
+            return data.replace(qfrc_applied=tau)
+
+        def _dqpos(qpos, qvel):
+            if nq == nv:
+                return qvel
+            if nq == nv + 1:
                 dq_lin = qvel[:3]
-                w = qvel[3:6]
-                qw, qx, qy, qz = qpos[3:7]
-                
-                # Quaternion derivative: 0.5 * q \otimes [0, w]
-                dqw = 0.5 * (-qx*w[0] - qy*w[1] - qz*w[2])
-                dqx = 0.5 * ( qw*w[0] + qy*w[2] - qz*w[1])
-                dqy = 0.5 * ( qw*w[1] - qx*w[2] + qz*w[0])
-                dqz = 0.5 * ( qw*w[2] + qx*w[1] - qy*w[0])
-                
+                wx, wy, wz = qvel[3], qvel[4], qvel[5]
+                qw, qx, qy, qz = qpos[3], qpos[4], qpos[5], qpos[6]
+                dqw = 0.5 * (-qx*wx - qy*wy - qz*wz)
+                dqx = 0.5 * ( qw*wx + qy*wz - qz*wy)
+                dqy = 0.5 * ( qw*wy - qx*wz + qz*wx)
+                dqz = 0.5 * ( qw*wz + qx*wy - qy*wx)
                 dq_quat = jnp.array([dqw, dqx, dqy, dqz])
-                dqpos = jnp.concatenate([dq_lin, dq_quat, qvel[6:]])
-            else:
-                pad = jnp.zeros(self.nq - self.nv)
-                dqpos = jnp.concatenate([qvel, pad])
-                
-            return jnp.concatenate([dqpos, qacc])
+                return jnp.concatenate([dq_lin, dq_quat, qvel[6:]])
+            # fallback: zero-pad extra position slots
+            return jnp.concatenate([qvel, jnp.zeros(nq - nv)])
+
+        def _f_single(x, u):
+            qpos, qvel = x[:nq], x[nq:]
+            tau = self.control_to_nv(u[None, :], np=jnp)[0]
+            data = mjx.make_data(self.mjx_model)
+            data = _apply_control(data.replace(qpos=qpos, qvel=qvel), tau)
+            data = mjx.forward(self.mjx_model, data)
+            return jnp.concatenate([_dqpos(qpos, qvel), data.qacc])
 
         def _mjx_step_single(x, u, dt):
             model = self.mjx_model.replace(opt=self.mjx_model.opt.replace(timestep=dt))
-            qpos = x[:self.nq]
-            qvel = x[self.nq:]
-            
+            qpos, qvel = x[:nq], x[nq:]
             tau = self.control_to_nv(u[None, :], np=jnp)[0]
-            
             data = mjx.make_data(model)
-            data = data.replace(qpos=qpos, qvel=qvel)
-            
-            if tau.shape[-1] == self.nu:
-                data = data.replace(ctrl=tau)
-            elif tau.shape[-1] == self.nv:
-                data = data.replace(qfrc_applied=tau)
-                
+            data = _apply_control(data.replace(qpos=qpos, qvel=qvel), tau)
             data = mjx.step(model, data)
             return jnp.concatenate([data.qpos, data.qvel])
 
-        def _mjx_rollout_single(x0_single, us_time_single, dt):
+        def _mjx_rollout_single(x0_single, us_single, dt):
+            """Scan over time axis: us_single has shape (T, nu)."""
             def scan_op(x_prev, u_curr):
                 x_next = _mjx_step_single(x_prev, u_curr, dt)
                 return x_next, x_next
-            _, xs_traj = lax.scan(scan_op, x0_single, us_time_single)
+            _, xs_traj = lax.scan(scan_op, x0_single, us_single)
             return xs_traj
 
-        # --- 2. Compile, Vmap, and Store ---
         self._f_jit = jit(vmap(_f_single, in_axes=(0, 0)))
         self._mjx_step_jit = jit(vmap(_mjx_step_single, in_axes=(0, 0, None)))
-        self._mjx_rollout_jit = jit(vmap(_mjx_rollout_single, in_axes=(0, 1, None)))
+        # us has shape (B, T, nu): vmap over batch axis 0 for both x0 and us.
+        self._mjx_rollout_jit = jit(vmap(_mjx_rollout_single, in_axes=(0, 0, None)))
 
-        # --- 3. Let Base Class Build Jacobians ---
-        # The base class will now use our optimized self.f to construct dfdx, dfdu, etc.
+        # Build base-class Jacobians (jacfwd over self.f).
         super()._setup_jax_functions()
 
-    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray, np: Optional[ModuleType] = None) -> np.ndarray:
-        r"""
-        Computes the continuous-time derivative :math:`[\dot{q}_{pos}, \dot{q}_{vel}]`.
-
-        This leverages ``mjx.forward`` to compute accelerations directly.
-        If the model contains free joints (quaternions), it automatically calculates 
-        the correct quaternion derivatives.
+    def f(self, first_order_state: np.ndarray, first_order_control: np.ndarray,
+          np: Optional[ModuleType] = None) -> np.ndarray:
         """
-        # np argument accepted for base-class JAX wrapper compatibility; jnp is always used internally.
+        Continuous-time state derivative ``[dq_pos, dq_vel]`` via ``mjx.forward``.
+
+        Parameters
+        ----------
+        first_order_state : ndarray of shape (B, nq + nv)
+            Batched generalised positions and velocities.
+        first_order_control : ndarray of shape (B, nu)
+            Batched raw control input (passed through :meth:`control_to_nv`).
+        np : module, optional
+            Accepted for base-class compatibility; ``jnp`` is always used
+            internally.
+
+        Returns
+        -------
+        ndarray of shape (B, nq + nv)
+            Time derivative of the state.
+        """
         return self._f_jit(jnp.asarray(first_order_state), jnp.asarray(first_order_control))
 
-    def step(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1, estimate: bool = False) -> np.ndarray:
-        r"""
-        Advances the MuJoCo system dynamics forward by one time step :math:`dt`.
-
-        :param x0: Current state batch :math:`x_k`.
-        :param u0: Current control batch :math:`u_k`.
-        :param dt: Time step duration in seconds.
-        :param estimate: Retained for signature compatibility, but ignored. 
-            `mjx.step` is strictly used for high-fidelity physics resolution.
+    def step(self, x0: np.ndarray, u0: np.ndarray, dt: float = 0.1,
+             estimate: bool = False) -> np.ndarray:
         """
-        x_next = self._mjx_step_jit(jnp.asarray(x0), jnp.asarray(u0), dt)
-        return np.asarray(x_next)
+        Advance the MuJoCo system by one time step using ``mjx.step``.
 
-    def rollout(self, x0: np.ndarray, us: np.ndarray, dt: float = 0.1, estimate: bool = False) -> np.ndarray:
-        r"""
-        Simulates a batched forward rollout of the MuJoCo dynamics over a sequence of controls.
-        
-        :param estimate: Retained for signature compatibility, but ignored.
+        Parameters
+        ----------
+        x0 : ndarray of shape (B, nq + nv)
+            Current state batch.
+        u0 : ndarray of shape (B, nu)
+            Current control batch.
+        dt : float, optional
+            Integration time step [s].
+        estimate : bool, optional
+            Ignored.  ``mjx.step`` is always used for high-fidelity integration.
+
+        Returns
+        -------
+        ndarray of shape (B, nq + nv)
+            Next state batch.
         """
-        xs = self._mjx_rollout_jit(jnp.asarray(x0), jnp.asarray(us), dt)
-        return np.asarray(xs)
+        return np.asarray(self._mjx_step_jit(jnp.asarray(x0), jnp.asarray(u0), dt))
+
+    def rollout(self, x0: np.ndarray, us: np.ndarray, dt: float = 0.1,
+                estimate: bool = False) -> np.ndarray:
+        """
+        Batched forward rollout over a control sequence using ``mjx.step``.
+
+        Parameters
+        ----------
+        x0 : ndarray of shape (B, nq + nv)
+            Initial state batch.
+        us : ndarray of shape (B, T, nu)
+            Control sequence for each batch element over T time steps.
+        dt : float, optional
+            Integration time step [s].
+        estimate : bool, optional
+            Ignored.  ``mjx.step`` is always used.
+
+        Returns
+        -------
+        ndarray of shape (B, T, nq + nv)
+            State trajectory for each batch element.
+        """
+        return np.asarray(self._mjx_rollout_jit(jnp.asarray(x0), jnp.asarray(us), dt))
 

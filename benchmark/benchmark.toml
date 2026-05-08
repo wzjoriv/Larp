@@ -1,0 +1,87 @@
+# benchmark.toml
+# High-level configuration for the benchmark CLI.
+#
+# Each [[benchmark]] block defines one scenario referencing a vehicle
+# from vehicles.toml and cities from cities.toml.
+#
+# output.store extension determines the persistence format:
+#   .db  -> SQLite (recommended)
+#   .csv -> flat CSV
+#
+# Run 'python cli.py check' to validate.
+
+[output]
+dir   = "results"
+store = "results/benchmark.db"
+
+[run]
+max_workers         = 6
+save_replay         = true
+clearance_threshold = 0.1
+u_bound_factor      = 1.5
+print_metrics       = ["T", "L", "RefCL", "CL", "TT"]
+
+[run.solver]
+dt              = 0.1
+horizon_sec     = 2.5
+stride          = 3
+goal_tol        = 5.0
+safety_dist     = 10.0
+goal_blend      = 12.0
+linearize_every = 1
+field_every     = 1
+t_sim_min       = 120.0
+t_sim_max       = 600.0
+t_sim_factor    = 3.5
+
+[run.al_solver]
+rho_init   = 10.0
+rho_max    = 1.0e6
+rho_scale  = 5.0
+al_iters   = 20
+ilqr_iters = 100
+reg        = 1.0e-6
+
+[figure]
+save       = true
+format     = "svg"
+dpi        = 150
+output_dir = "results/figures"
+style      = "paper"
+width      = 7.0
+height     = 4.5
+
+[analyze]
+per_city            = false
+show                = false
+clearance_central   = "median"
+clearance_log_scale = false
+rate_log_scale      = false
+rate_ymin_zero      = false
+
+[analyze.aliases]
+"SQP (flex bounds, no field)"   = "SQP (Relax Const.)"
+"SQP (flex bounds, QRiskField)" = "SQP (Geo + Relax Const.) (Ours)"
+"SQP (no field)"                = "SQP"
+"SQP (QRiskField)"              = "SQP (Geo) (Ours)"
+"SQP (field)"                   = "SQP (Geo)"
+"iLQR (no field)"               = "iLQR"
+"iLQR (field)"                  = "iLQR (Geo)"
+"DDP (no field)"                = "DDP"
+"DDP (field)"                   = "DDP (Geo)"
+
+[[benchmark]]
+name           = "Quadcopter"
+vehicle        = "Quadcopter"
+enabled        = true
+quick          = false
+cities         = ["UT Austin", "Boston", "Hong Kong", "Marina Bay", "Lucky Plaza"]
+nominal_speeds = [5.0, 8.0, 10.0, 12.0, 15.0]
+algorithms     = [
+    "DDP (no field)",
+    "iLQR (no field)",
+    "SQP (no field)",
+    "SQP (flex bounds, no field)",
+    "SQP (QRiskField)",
+    "SQP (flex bounds, QRiskField)",
+]

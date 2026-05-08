@@ -5,13 +5,16 @@ rug_*
 cache
 
 docs
+!docs/imgs/
 examples
 
 tp_benchmark_route_data
 tp_benchmark_*
-benchmark.toml
+results/
 larp.toml
 console*.txt
+!.github/
+!.gitignore
 .*
 files
 *.mp4

@@ -34,43 +34,6 @@ Public API summary
     a route, inspecting solver behaviour end-to-end, or pre-loading a complete
     trajectory into a tracking controller.  ``stride`` controls how many
     simulated steps are taken between replanning calls.
-
-Both planners accept a pre-computed path from any upstream path-finder
-(e.g. ``larp.pp.QuadPlanner``) and produce references that feed directly
-into ``Solver.solve()``.
-
-WaypointPlanner strategy
-~~~~~~~~~~~~~~~~~~~~~~~~
-Progress is determined by arc-length projection: every ``get_ref`` call
-projects the robot's XY position onto the nearest point on the
-piecewise-linear path (arc-length ``s_robot``) and generates reference
-states by walking forward from ``s_robot + lookahead``.  A windowed scan
-with automatic global fallback keeps projection O(W) in the common case
-and O(M) only when recovery is needed.
-
-SplinePlanner strategy
-~~~~~~~~~~~~~~~~~~~~~~
-A natural cubic spline (C2) is fitted through the waypoints and progress is
-tracked by projecting the robot's XY position onto the piecewise-linear
-path skeleton (same windowed + global-fallback projection as WaypointPlanner).
-The reference is then sampled from the smooth spline rather than the skeleton,
-so corners are naturally rounded.  A curvature-based speed limit
-``v <= sqrt(a_lat_max / kappa)`` automatically slows the reference on tight
-bends.  A heading-alignment penalty prevents the projection from snapping to
-the wrong branch on U-shaped or looping paths.
-
-QuinticPlanner strategy
-~~~~~~~~~~~~~~~~~~~~~~~
-Same projection and velocity-profiling approach as SplinePlanner, but uses a
-quintic B-spline (degree 5, C4 continuous) rather than a cubic spline (C2).
-C4 continuity means position, velocity, acceleration, jerk, and snap are all
-continuous across waypoints, giving the smoothest possible acceleration profile.
-This is particularly beneficial for dynamically sensitive systems where abrupt
-changes in acceleration cause vibration or payload disturbance.
-
-For paths with fewer than 6 waypoints the degree is silently reduced so that
-a valid spline can always be fitted: 2 pts → linear, 3 → quadratic, 4 → cubic,
-5 → quartic, 6+ → quintic.
 """
 
 from abc import ABC, abstractmethod

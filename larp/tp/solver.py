@@ -17,19 +17,6 @@ All solvers share the same public interface:
                           xmin=None, xmax=None,
                           umin=None, umax=None,
                           max_iters=<int>)
-
-Cache behaviour
----------------
-SQPSolver
-  * Dynamics cache  — rebuilds every ``linearize_every`` SQP iterations.
-  * Field cache     — rebuilds every ``field_every`` SQP iterations.
-  * Bound cache     — rebuilds only when per-call bounds differ from defaults.
-
-ALILQRSolver / ALDDPSolver
-  * Dynamics cache  — in the inner iLQR backward pass, (Ad, Bd) is recomputed
-                      every ``linearize_every`` inner iterations.
-  * Field cache     — the outer AL loop re-linearises constraints only every
-                      ``field_every`` AL iterations (and always on iter 0).
 """
 
 from abc import ABC, abstractmethod

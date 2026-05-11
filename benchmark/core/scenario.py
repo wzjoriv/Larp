@@ -122,7 +122,7 @@ class VehicleScenario(BenchmarkScenario):
     def setup(self) -> None:
         import larp as lp
         import larp.pp as pp
-        from larp.env.environments import CityEnvironment
+        from larp.environment.environments import CityEnvironment
         import time
 
         sc       = self.bench_cfg.get("solver", {})

@@ -229,8 +229,8 @@ class Planner():
         Selects a planning algorithm by name or function reference.
 
         Args:
-            alg (Optional[PathAlgArg]): Algorithm name or custom function.
-            reset_memory (bool): Whether to reset internal memory state.
+            alg (PathAlgArg): Algorithm name or custom function.
+            reset_memory (bool): Whether to reset internal memory state. Defaults to True.
         """
 
         if isinstance(alg, str):
@@ -753,7 +753,7 @@ def find_path_bit_star(
             if min_qv >= c_best and min_qe >= c_best:
                 break
 
-            # --- Expand Best Vertex (qv) ---
+            # Expand Best Vertex (qv) 
             if min_qv <= min_qe:
                 _, v_idx = heapq.heappop(qv)
                 
@@ -780,7 +780,7 @@ def find_path_bit_star(
                         if g_scores[v_idx] + dist < g_scores.get(x_idx, np.inf) - 1e-6:
                             heapq.heappush(qe, (f_hat, v_idx, x_idx))
 
-            # --- Expand Best Edge (qe) ---
+            # Expand Best Edge (qe) 
             else:
                 _, v_idx, x_idx = heapq.heappop(qe)
                 
@@ -812,7 +812,7 @@ def find_path_bit_star(
                     if x_idx == 1:
                         c_best = tentative_g
 
-    # --- Reconstruct Path ---
+    #  Reconstruct Path 
     if g_scores[1] < np.inf:
         path_idxs = []
         curr = 1

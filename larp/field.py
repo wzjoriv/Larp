@@ -944,9 +944,9 @@ class RiskField():
         if size is None:
             self.size = size
         elif np.isscalar(size):
-            self.size = np.array([size, size])
+            self.size = np.array([size, size], dtype=float)
         else:
-            self.size = np.atleast_1d(size)
+            self.size = np.atleast_1d(np.array(size, dtype=float))
 
         if properties is None or isinstance(rgjs[0], RGJGeometry):
             for rgj in rgjs:

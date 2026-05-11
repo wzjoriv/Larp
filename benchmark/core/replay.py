@@ -119,7 +119,7 @@ def replay(result_id: int, config_path: str, speed_mult: float = 1.0, save_path:
 
     import matplotlib.pyplot as plt
     from matplotlib.animation import FFMpegWriter
-    from larp.env import QuadcopterPerspective, ZoomedCityVisualizer
+    from larp.environment import QuadcopterPerspective, ZoomedCityVisualizer
 
     robot = QuadcopterPerspective(vehicle_physics, projection="perspective", color="black")
     viz   = ZoomedCityVisualizer(

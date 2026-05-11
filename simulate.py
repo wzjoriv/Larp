@@ -23,12 +23,12 @@ except ImportError:
     import tomli as tomllib
 
 import larp
-import larp.env as _env_module
+import larp.environment as _env_module
 import larp.pp as pp
 from larp.rug_utils.progress_bar import progress_bar
 from larp.tp.planner import LinearPlanner
 from larp.tp.solver import SQPSolver, ALILQRSolver, ALDDPSolver
-from larp.env import ZoomedCityVisualizer
+from larp.environment import ZoomedCityVisualizer
 
 _SOLVER_REGISTRY: dict[str, type] = {
     "SQP":  SQPSolver,

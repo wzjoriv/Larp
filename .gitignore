@@ -10,7 +10,6 @@ docs
 tp_benchmark_route_data
 tp_benchmark_*
 results/
-larp.toml
 console*.txt
 !.github/
 !.gitignore

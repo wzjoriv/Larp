@@ -169,8 +169,8 @@ Interactive Jupyter Notebook demos:
 
 - [General Demo](https://github.com/wzjoriv/Larp/blob/main/presentation.ipynb) — introduction to core functionalities
 - [Hot Reloading for Global Planning](https://github.com/wzjoriv/Larp/blob/main/examples/Hot%20Reloading%20for%20Global%20Planning/presentation.ipynb) — dynamic updates of static obstacles for the global planner
-- [Aerial Cargo Delivery Global Planning](https://github.com/wzjoriv/Larp/blob/main/examples/Cargo%20Delivery%20Global%20Planning.ipynb) — low-altitude global delivery planning across multiple global urban centers
-- [Urban Air Mobility with Trajectory Optimization](https://github.com/wzjoriv/Larp/blob/main/examples/Urban%20Air%20Mobility%20of%20EVTOL/presentation.ipynb) — live trajectory optimization for eVTOL in urban airspace
+- [Aerial Cargo Delivery Global Planning](https://github.com/wzjoriv/Larp/blob/main/examples/Cargo%20Delivery%20Global%20Planning/presentation.ipynb) — low-altitude global delivery planning across multiple global urban centers
+- [Urban Air Mobility with Trajectory Optimization](https://github.com/wzjoriv/Larp/blob/main/examples/Urban%20Trajectory%20Planning/simulate.py) — live trajectory optimization for eVTOL in urban airspace
 
 ---
 

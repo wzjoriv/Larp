@@ -1,0 +1,82 @@
+# larp.toml — configuration for simulate.py
+# State vector: [x, dx, y, dy, z, dz, phi, theta, psi, p, q, r]
+
+[sim]
+dt               = 0.1
+T_sim            = 90.7
+height_sim_bound = 150.0
+x0           = [-290.0, 0.0, -160.0, 0.0, 50.0, 0.0, 0.0, 0.0,  0.0,                0.0, 0.0, 0.0]
+xf           = [  90.0, 0.0,  290.0, 0.0, 50.0, 0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0]
+stable_state = [   0.0, 0.0,    0.0, 0.0, 50.0, 0.0, 0.0, 0.0,  0.0,                0.0, 0.0, 0.0]
+
+[city]
+location          = [1.305602, 103.836688]
+altitude          = 50.0    # nominal UAV flying altitude [m]
+z_lo_margin       = 10.0    # z lower bound
+z_hi_margin       = 10.0    # z upper bound = altitude + z_hi_margin
+dist              = 400
+default_repulsion = [[100.0, 0.0], [0.0, 100.0]]
+
+[vehicle]
+perspective = "QuadcopterPerspective"
+color       = "black"
+projection  = "perspective"
+
+[vehicle.physics]
+frame              = "x"
+mass               = 5.2
+gravity            = 9.807
+inertia            = [0.04, 0.04, 0.08]
+arm_length         = 0.35
+thrust_constant    = 6.0e-5
+motor_inertia      = 2.0e-4
+torque_constant    = 1.0e-6
+translational_drag = [0.5, 0.5, 0.8]
+rotational_drag    = [0.2, 0.2, 0.2]
+
+[optimizer]
+algorithm       = "SQP"   # SQP | iLQR | DDP
+use_risk_field  = true
+horizon         = 2.5
+linearize_every = 1
+field_every     = 3
+safety_distance = 2.0
+Q_diag   = [2000.0, 700.0, 2000.0, 700.0, 5000.0, 500.0, 1000.0, 1000.0, 1000.0, 5000.0, 5000.0, 1000.0]
+Qf_scale = 2.0
+R_scale  = 1.0e-9
+
+[optimizer.x_bounds]
+# z (index z_idx) is filled at runtime: [altitude - z_lo_margin, altitude + z_hi_margin]
+lo    = [-inf, -40.0, -inf, -40.0, -inf, -3.0, -0.6, -0.6, -inf, -1.0, -1.0, -1.0]
+hi    = [ inf,  40.0,  inf,  40.0,  inf,  4.0,  0.6,  0.6,  inf,  1.0,  1.0,  1.0]
+z_idx = 4
+
+[optimizer.u_bounds]
+lo               = [100.0, 100.0, 100.0, 100.0]
+u_hi_hover_ratio = 1.5
+
+[optimizer.al_params]
+rho_init   = 10.0
+rho_max    = 1.0e6
+rho_scale  = 5.0
+al_iters   = 20
+ilqr_iters = 100
+reg        = 1.0e-6
+
+[planning]
+min_quad_size_divisor = 256
+search_quad_divisor   = 18
+search_edge_bounds    = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+nominal_speed         = 8.0
+goal_blend_dist       = 12.0
+ref_indices           = [0, 2, 8]
+
+[vis]
+# Press `t` during simulation to be able to move around screen
+view_range        = 80.0
+zoomed_view_range = 8
+render_every      = 1
+save_video        = false
+output_pdf        = "output.pdf"
+output_video      = "simulation.mp4"
+dpi               = 100

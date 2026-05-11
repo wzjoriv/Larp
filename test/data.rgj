@@ -46,7 +46,6 @@
             "coordinates": [[68, 22], [85, 0]], 
             "repulsion": [[4, 0], [0, 4]]
         }},
-
         { "type": "Feature", 
           "properties": {
             "name": "Column 2"
@@ -55,6 +54,15 @@
             "coordinates": [10, 80], 
             "repulsion": [[9, 0], [0, 9]],
             "shape": [[4, 0], [0, 4]]
+        }},
+
+        { "type": "Feature", 
+          "properties": {
+            "name": "Column 3"
+          },"geometry":{
+            "type": "Polygon",
+            "coordinates": [[75, 75], [75, 85], [80, 80], [85, 85], [85, 75]], 
+            "repulsion": [[9, 0], [0, 9]]
         }}
     ]
 }

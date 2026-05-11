@@ -1,7 +1,23 @@
 # custom
 .rug_*
+rug_*
 .vscode
 cache
+
+!docs/imgs/uam_demo.svg
+docs
+
+tp_benchmark_route_data
+tp_benchmark_*
+results/
+larp.toml
+console*.txt
+!.github/
+!.gitignore
+.*
+files
+*.mp4
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -127,11 +143,17 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.wenv
+.lenv
 env/
 venv/
+wenv/
+lenv/
 ENV/
 env.bak/
 venv.bak/
+wenv.bak/
+lenv.bak/
 
 # Spyder project settings
 .spyderproject

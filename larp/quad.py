@@ -5,7 +5,7 @@ import warnings
 from collections import defaultdict
 
 import numpy as np
-from larp import PotentialField
+from larp import RiskField
 
 import larp.fn as lpf
 from larp.field import RGJGeometry
@@ -13,7 +13,7 @@ from larp.types import Scaler, FieldSize, Point, RGJDict
 
 """
 Author: Josue N Rivera
-Generate the quadtree from the potential field
+Generate the quadtree from the risk field
 """
 
 def __make_index_map__(array: Union[np.ndarray, List]) -> Dict:
@@ -67,8 +67,10 @@ def __deduplicate_with_index_map__(array: List) -> Tuple[List, List[int]]:
 
 class QuadTree():
 
-    def __init__(self, field: PotentialField,
-                 minimum_length_limit:float = 5.0,
+    MAX_DEPTH = 1000
+
+    def __init__(self, field: RiskField,
+                 minimum_length_limit:float | None = None,
                  maximum_length_limit:float = np.inf,
                  edge_bounds:Union[np.ndarray, List[float]] = np.arange(0.2, 0.8, 0.2),
                  size:Optional[float] = None,
@@ -76,9 +78,9 @@ class QuadTree():
                  build_tree:bool = True) -> None:
         
         self.field = field
-        self.min_sector_size = min(minimum_length_limit, *self.field.size)
+        self.min_sector_size = minimum_length_limit
         self.max_sector_size = maximum_length_limit
-        self.size = size if size is not None else np.max(self.field.size)
+        self.size = size or np.max(self.field.size)
 
         self.edge_bounds = np.sort(np.array(edge_bounds))[::-1]
         self.n_zones = len(self.edge_bounds) + 1
@@ -86,8 +88,6 @@ class QuadTree():
         self.ZONEToMaxRANGE = np.concatenate([[1.0, 1.0], self.edge_bounds])
         self.ZONEToMinRANGE = np.concatenate([self.edge_bounds[0:1], self.edge_bounds, [0.0]])
         self.conservative = conservative
-
-        self.MAX_DEPTH = 1000
 
         self.root = None
         self.leaves:Set[QuadNode] = set()
@@ -261,7 +261,7 @@ class QuadTree():
         x = np.atleast_2d(x).astype(float)
         n_points = len(x)
         if max_depth is None:
-            max_depth = self.MAX_DEPTH
+            max_depth = QuadTree.MAX_DEPTH
 
         results = [[] for _ in range(n_points)]  # chain for each point
 
@@ -298,13 +298,13 @@ class QuadTree():
 
         out = []
         for child in quad.children:
-            out.extend(self.__search_leaves__(child, depth=depth+1))
+            out.extend(self.__search_leaves__(child, depth=depth+1, max_depth=max_depth))
 
         return out
 
     def search_leaves(self, quad:Optional[QuadNode] = None, max_depth:Optional[int] = None) -> Set[QuadNode]:
         quad = self.root if quad is None else quad
-        max_depth = self.MAX_DEPTH if max_depth is None else max_depth
+        max_depth = QuadTree.MAX_DEPTH if max_depth is None else max_depth
 
         return set(self.__search_leaves__(quad, depth=0, max_depth=max_depth))
     
@@ -381,11 +381,11 @@ class QuadTree():
         Render a top-down raster image of the quadtree zoning layout.
 
         Args:
-            return_zone (bool): Whether to return the potential limit of each zone or the zone category.
+            return_zone (bool): Whether to return the risk limit of each zone or the zone category.
             return_extent (bool): Whether to return the real-world coordinate extent.
 
         Returns:
-            image (np.ndarray): 2D array with potential or zone values of sectors.
+            image (np.ndarray): 2D array with risk or zone values of sectors.
             extent (Optional[List[float]]): [xmin, xmax, ymin, ymax] real-world bounds if return_extent is True.
         """
         # Get resolution as a power of two
@@ -546,35 +546,35 @@ class QuadNode():
     def __str__(self) -> str:
         return f"Qd({self.center_point.tolist()}, {self.size})"
 
-class QPotentailField(PotentialField):
+class QRiskField(RiskField):
     """
-    A potential field optimized with a quadtree structure for efficient spatial operations.
+    A risk field optimized with a quadtree structure for efficient spatial operations.
 
-    This class wraps a `PotentialField` with a `QuadTree`, allowing for fast spatial queries
-    such as locating RGJs within a region and optimized potential field evaluations and distance search.
+    This class wraps a `RiskField` with a `QuadTree`, allowing for fast spatial queries
+    such as locating RGJs within a region and optimized risk field evaluations and distance search.
     All RGJs must reside within the quadtree's bounds for optimal efficiency.
 
     Args:
-        field_quadtree (Union[PotentialField, QuadTree]): Either a `PotentialField` from which
+        field_quadtree (Union[RiskField, QuadTree]): Either a `RiskField` from which
             to build a quadtree or an existing `QuadTree` with an associated field.
 
     Attributes:
-        field (PotentialField): The underlying potential field containing RGJs.
+        field (RiskField): The underlying risk field containing RGJs.
         quadtree (QuadTree): The quadtree that spatially indexes the field.
     """
 
-    def __init__(self, field_quadtree: Union[PotentialField, QuadTree]):
+    def __init__(self, field_quadtree: Union[RiskField, QuadTree]):
         """
-        Initialize QPotentialField with a PotentialField or a QuadTree.
+        Initialize QRiskField with a RiskField or a QuadTree.
 
-        If a PotentialField is provided, a QuadTree is built from it.
-        If a QuadTree is provided, its associated PotentialField is used.
+        If a RiskField is provided, a QuadTree is built from it.
+        If a QuadTree is provided, its associated RiskField is used.
 
         Args:
-            field_quadtree (Union[PotentialField, QuadTree]): The field or associated quadtree.
+            field_quadtree (Union[RiskField, QuadTree]): The field or associated quadtree.
         """
 
-        if isinstance(field_quadtree, PotentialField):
+        if isinstance(field_quadtree, RiskField):
             field = field_quadtree
             quadtree = QuadTree(field, minimum_length_limit=(np.max(field.size)/8)*0.9, build_tree=True)
         else:
@@ -587,8 +587,8 @@ class QPotentailField(PotentialField):
 
     def __getattr__(self, name):
         """
-        Delegate attribute access to the wrapped PotentialField
-        if the attribute is not found in QPotentialField.
+        Delegate attribute access to the wrapped RiskField
+        if the attribute is not found in QRiskField.
         """
         try:
             return getattr(self.field, name)
@@ -667,7 +667,7 @@ class QPotentailField(PotentialField):
 
     def reload_bbox(self):
         """
-        Reload the bounding box of the underlying PotentialField.
+        Reload the bounding box of the underlying RiskField.
         """
         self.field.reload_bbox()
     
@@ -687,12 +687,12 @@ class QPotentailField(PotentialField):
     def get_extent(self, margin:float = 0.0) -> List[float]:
         return self.field.get_extent(margin=margin)
     
-    def addField(self, new_field: PotentialField, reload_bbox=True):
+    def addField(self, new_field: RiskField, reload_bbox=True):
         """
-        Adds all RGJs from another potential field to this field and updates the quadtree accordingly.
+        Adds all RGJs from another risk field to this field and updates the quadtree accordingly.
 
         Args:
-            new_field (PotentialField): A potential field containing RGJs to add.
+            new_field (RiskField): A risk field containing RGJs to add.
             reload_bbox (bool, optional): Whether to recompute the bounding box after addition. Defaults to True.
 
         Returns:
@@ -794,13 +794,13 @@ class QPotentailField(PotentialField):
             
             rgj = cls(properties=properties, **rgj, **kward)
         
-        new_field = PotentialField([rgj])
+        new_field = RiskField([rgj])
 
         return self.addField(new_field=new_field, reload_bbox=reload_bbox)
 
     def delRGJ(self, idxs: Union[int, List[int]], reload_bbox=True, pop_field=False, pop_tree=False):
         """
-        Deletes one or more RGJs from the potential field and updates the quadtree to reflect these deletions.
+        Deletes one or more RGJs from the risk field and updates the quadtree to reflect these deletions.
 
         This involves:
         - Removing the RGJs from the field.
@@ -811,12 +811,12 @@ class QPotentailField(PotentialField):
         Args:
             idxs (int or List[int]): Index or indices of RGJs to remove.
             reload_bbox (bool): Whether to recompute the bounding box of the field. Defaults to True.
-            pop_field (bool): If True, return a PotentialField containing the removed RGJs.
+            pop_field (bool): If True, return a RiskField containing the removed RGJs.
             pop_tree (bool): If True, return a QuadTree built on the removed RGJs.
 
         Returns:
-            Optional[PotentialField, QuadTree, Tuple]: Depending on `pop_field` and `pop_tree`, 
-                returns the removed RGJs as a PotentialField, a QuadTree, or both.
+            Optional[RiskField, QuadTree, Tuple]: Depending on `pop_field` and `pop_tree`, 
+                returns the removed RGJs as a RiskField, a QuadTree, or both.
         """
         if self.quadtree.conservative:
             warnings.warn("Quadtree made non-conservative")
@@ -882,7 +882,7 @@ class QPotentailField(PotentialField):
 
         # Step 4: Optionally return removed data
         if pop_field or pop_tree:
-            search_field = PotentialField(rgjs)
+            search_field = RiskField(rgjs)
             search_field.reload_center_point(False)
             search_field.center_point = self.field.center_point
             search_field.size = self.field.size
@@ -992,39 +992,103 @@ class QPotentailField(PotentialField):
             return self.field.repulsion_vectors(points=points, filted_idx=filted_idx, min_dist_select=min_dist_select, return_reference=return_reference)
 
         points = np.atleast_2d(points).astype(float)
-        n_points = len(points)
-        repulsion_vectors = np.zeros((n_points, 2), dtype=float)
-        rgj_reference_ids = np.zeros(n_points, dtype=int) if return_reference else None
+        
+        all_vectors = []
+        all_refs = []
 
         unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
 
         for quad_idx, pt_indices in quad_to_point_indices.items():
             quad = unique_quads[quad_idx]
             rgj_indices = quad.rgj_idx
+            if len(rgj_indices) == 0: continue
 
             group_points = points[pt_indices]
-            if return_reference:
-                group_vectors, group_rgj_ids = self.field.repulsion_vectors(
-                    points=group_points,
-                    filted_idx=rgj_indices,
-                    min_dist_select=min_dist_select,
-                    return_reference=True
-                )
-                repulsion_vectors[pt_indices] = group_vectors
-                rgj_reference_ids[pt_indices] = group_rgj_ids
-            else:
-                group_vectors = self.field.repulsion_vectors(
-                    points=group_points,
-                    filted_idx=rgj_indices,
-                    min_dist_select=min_dist_select,
-                    return_reference=False
-                )
-                repulsion_vectors[pt_indices] = group_vectors
+            
+            # This call returns (Num_RGJs * Num_Points_in_Group, 2)
+            res = self.field.repulsion_vectors(
+                points=group_points,
+                filted_idx=rgj_indices,
+                min_dist_select=min_dist_select,
+                return_reference=return_reference
+            )
 
+            if return_reference:
+                all_vectors.append(res[0])
+                all_refs.append(res[1])
+            else:
+                all_vectors.append(res)
+
+        if not all_vectors:
+            return (np.zeros((0, 2)), np.array([], dtype=int)) if return_reference else np.zeros((0, 2))
+
+        final_vectors = np.concatenate(all_vectors, axis=0)
         if return_reference:
-            return repulsion_vectors, rgj_reference_ids
-        else:
-            return repulsion_vectors
+            return final_vectors, np.concatenate(all_refs, axis=0)
+        return final_vectors
+        
+    def contact_points(
+        self,
+        points: Union[np.ndarray, List['Point']],
+        min_dist_select: bool = True,
+        return_reference: bool = False,
+        max_depth: int = 3,
+        filted_idx:Optional[List[int]] = None
+    ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+        """
+        Computes contant points (i.e., closest points touching the nearest RGJs) for 2D points using only relevant RGJs from a quadtree field.
+        Each point is assigned to the deepest quad with non-empty RGJs, and contact points
+        are calculated using those RGJ indices. Redundant calculations are avoided by grouping
+        points per quad.
+
+        Args:
+            points (Union[np.ndarray, List[Point]]): Input 2D points.
+            min_dist_select (bool): Whether to use minimum distance RGJ filtering.
+            return_reference (bool): If True, returns RGJ indices used per point.
+            max_depth (int): Maximum depth in the quadtree to traverse.
+
+        Returns:
+            If return_reference is False:
+                np.ndarray of shape (N, 2): Repulsion vectors for all input points.
+                
+            If return_reference is True:
+                Tuple[np.ndarray, np.ndarray]: (contact_points, rgj_indices_used_per_point)
+        """
+        if filted_idx is not None:
+            return self.field.contact_points(points=points, filted_idx=filted_idx, min_dist_select=min_dist_select, return_reference=return_reference)
+
+        points = np.atleast_2d(points).astype(float)
+        all_points = []
+        all_refs = []
+
+        unique_quads, quad_to_point_indices = self.__group_points_by_quads_with_rgjs(points, max_depth=max_depth)
+
+        for quad_idx, pt_indices in quad_to_point_indices.items():
+            quad = unique_quads[quad_idx]
+            rgj_indices = quad.rgj_idx
+            if len(rgj_indices) == 0: continue
+
+            group_points = points[pt_indices]
+            res = self.field.contact_points(
+                points=group_points,
+                filted_idx=rgj_indices,
+                min_dist_select=min_dist_select,
+                return_reference=return_reference
+            )
+
+            if return_reference:
+                all_points.append(res[0])
+                all_refs.append(res[1])
+            else:
+                all_points.append(res)
+
+        if not all_points:
+            return (np.zeros((0, 2)), np.array([], dtype=int)) if return_reference else np.zeros((0, 2))
+
+        final_points = np.concatenate(all_points, axis=0)
+        if return_reference:
+            return final_points, np.concatenate(all_refs, axis=0)
+        return final_points
         
     def gradient(self, points, min_dist_select=True, max_depth=2):
         points = np.atleast_2d(points).astype(float)
@@ -1049,14 +1113,14 @@ class QPotentailField(PotentialField):
 
     def eval(self, points: Union[np.ndarray, List['Point']], max_depth=2, filted_idx:Optional[List[int]] = None) -> np.ndarray:
         """
-        Evaluate the potential field at given points using quadtree
+        Evaluate the risk field at given points using quadtree
         to filter relevant RGJs efficiently.
 
         Args:
             points (Union[np.ndarray, List[Point]]): Points to evaluate (Nx2).
 
         Returns:
-            np.ndarray: Evaluated potential values at each point.
+            np.ndarray: Evaluated risk values at each point.
         """
         if filted_idx is not None:
             return self.field.eval(points=points, filted_idx=filted_idx)
@@ -1147,7 +1211,7 @@ class QPotentailField(PotentialField):
         for quad_idx, pt_indices in quad_to_point_indices.items():
             quad = unique_quads[quad_idx]
             rgj_indices = quad.rgj_idx
-            if not rgj_indices:
+            if not len(rgj_indices):
                 continue
 
             group_points = points[pt_indices]
@@ -1172,7 +1236,7 @@ class QPotentailField(PotentialField):
 
         return f_eval.sum()*step
     
-    def estimate_route_highest_potential(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 3) -> float:
+    def estimate_route_highest_risk(self, route:Union[List[Point], np.ndarray], step=1e-2, n=0, scale_transform:Scaler = lambda x: x, max_depth:int = 3) -> float:
         route = np.array(route)
 
         points, step, _ = lpf.interpolate_along_route(route=route, step=step, n=n, return_step_n=True)

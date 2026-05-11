@@ -1,8 +1,10 @@
 from os import PathLike
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
+import re
 import numpy as np
-from larp.field import PotentialField, RGJGeometry, RectangleRGJ
+from larp.field import RiskField, RGJGeometry
 from larp.quad import QuadTree
+from larp.const import FLOOT_METER_HEIGHT, OSM_INSTALLED
 from pyproj import CRS, Transformer
 import json
 import pickle
@@ -11,7 +13,7 @@ import pickle
 Author: Josue N Rivera
 """
 
-def saveRGeoJSON(field:PotentialField, file:Union[str, PathLike], return_bbox=False):
+def saveRGeoJSON(field:RiskField, file:Union[str, PathLike], return_bbox=False):
 
     with open(file, "w", encoding='utf-8') as outfile:
         json.dump(field.toRGeoJSON(return_bbox=return_bbox), outfile)
@@ -23,94 +25,21 @@ def saveQuadTree(tree:QuadTree, file:Union[str, PathLike]):
     with open(file, "wb") as outfile:
         pickle.dump(data, outfile)
 
-def loadOccupancyMap(grid: np.ndarray,
-                     bbox: Optional[np.ndarray] = None,
-                     repulsion_matrix: Optional[np.ndarray] = None,
-                     size_offset: float = 0.0,
-                     return_quadtree: bool = False
-                     ) -> Union[PotentialField, Tuple[PotentialField, QuadTree]]:
-    """
-    Convert an occupancy grid to a PotentialField with rectangular repulsive geometries (RGJs).
-
-    Parameters
-    ----------
-    grid : np.ndarray
-        2D binary occupancy grid where `True` or `1` indicates an obstacle cell.
-    bbox : Optional[np.ndarray], optional
-        World-space bounding box of the occupancy grid in the format [[min_x, min_y], [max_x, max_y]].
-        If None, defaults to [[0, 0], [W, H]], where W and H are the grid's width and height.
-    repulsion_matrix : Optional[np.ndarray], optional
-        A 2x2 positive semi-definite matrix representing the repulsion strength and shape.
-        If None, defaults to a scaled identity matrix with magnitude (min_cell_size / 4)^2.
-    size_offset : float, optional
-        Extra padding added symmetrically to the potential field's size in each direction.
-        Default is 0.0.
-    return_quadtree : bool, optional
-        If True, returns a tuple of (PotentialField, QuadTree). Default is False.
-
-    Returns
-    -------
-    PotentialField or Tuple[PotentialField, QuadTree]
-        The potential field composed of rectangular RGJs corresponding to occupied cells.
-        Optionally returns a spatial quadtree if `return_quadtree` is True.
-    """
-    grid = np.array(grid, dtype=bool)
-    grid = np.atleast_2d(grid)
-
-    if bbox is None:
-        bbox = np.array([[0, 0], grid.shape[::-1]], dtype=float)
-
-    bbox = np.array(bbox, dtype=float).reshape((2, 2))  # [[min_x, min_y], [max_x, max_y]]
-    bbox = np.stack([bbox.min(axis=0), bbox.max(axis=0)], axis=0)  # Ensure correct bbox order
-
-    # Compute cell size per dimension
-    cell_size = (bbox[1] - bbox[0]) / np.array(grid.shape[::-1])
-    min_cell_size = float(np.min(cell_size))
-
-    if repulsion_matrix is None:
-        repulsion_matrix = np.eye(2) * (min_cell_size / 4.0) ** 2
-
-    # Get obstacle indices
-    start_yis, start_xis = np.nonzero(grid)
-
-    # Convert grid indices to world-space coordinates
-    x0 = bbox[0, 0] + start_xis * cell_size[0]
-    y0 = bbox[1, 1] - start_yis * cell_size[1]
-    x1 = x0 + cell_size[0]
-    y1 = y0 - cell_size[1]
-
-    # Create bounding boxes for each occupied cell
-    coordinates = np.stack([
-        np.stack([x0, y0], axis=-1),
-        np.stack([x1, y1], axis=-1)
-    ], axis=1)  # Shape: (N, 2, 2)
-
-    # Create RGJs
-    rect_rgjs = [RectangleRGJ(coord, repulsion=repulsion_matrix) for coord in coordinates]
-
-    # Construct PotentialField
-    field = PotentialField(rgjs=rect_rgjs,
-                           center_point=np.mean(bbox, axis=0),
-                           size=(bbox[1] - bbox[0]) + 2 * size_offset)
-
-    if return_quadtree:
-        qtree = QuadTree(field, minimum_length_limit=min_cell_size/8, edge_bounds=[])
-        return field, qtree
-
-    return field
-
-def loadRGeoJSON(rgeojson: dict, size_offset = 0.0) -> PotentialField:
+def loadRGeoJSON(rgeojson: dict, size_offset = 0.0) -> RiskField:
 
     features = rgeojson["features"]
     rgjs = [feature["geometry"] for feature in features]
     properties = [feature["properties"] for feature in features]
 
-    field = PotentialField(rgjs=rgjs, properties=properties, extra_info={key: rgeojson[key] for key in rgeojson if key.lower() not in ["features", "type"]})
+    field = RiskField(rgjs=rgjs, properties=properties, extra_info={key: rgeojson[key] for key in rgeojson if key.lower() not in ["features", "type"]})
     field.size += size_offset*2
 
     return field
 
-def loadRGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0) -> PotentialField:
+def loadShapely():
+    raise NotImplementedError("Not implemented yet. Coming soon.")
+
+def loadRGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0) -> RiskField:
 
     with open(file=file, mode='r', encoding='utf-8') as f:
         rgeojson = json.load(f)
@@ -160,14 +89,95 @@ def loadGeoJSON(geojson: Union[dict, str], size_offset = 0.0):
                 coords.extend(coord)
             geojson["coordinates"] = coords
 
-        elif geojson["type"].lower() == "geometrycollection":
+        if geojson["type"].lower() == "geometrycollection":
             for idx in range(len(geojson["geometries"])):
                 __prune_polygons__(geojson["geometries"][idx])
 
-    for idx in range(len(geojson["features"])):
-        __prune_polygons__(geojson["features"][idx]["geometry"])
-
     return loadRGeoJSON(geojson, size_offset=size_offset)
+
+def loadOSMBuildings(
+    location: Union[Tuple[float, float], str],
+    dist: float = 400.0,
+    min_altitude: float = 50.0,
+    default_repulsion: Optional[List] = None,
+) -> RiskField:
+    """
+    Load OSM buildings at or above *min_altitude* and return a ``RiskField``.
+
+    Parameters
+    ----------
+    location : (lat, lon) or place-name string
+        Query centre passed directly to osmnx.
+    dist : float
+        Tile radius in metres.
+    min_altitude : float
+        Buildings whose estimated height >= min_altitude are returned.
+    default_repulsion : list, optional
+        2x2 repulsion matrix written into every RGJ dict.
+
+    Returns
+    -------
+    RiskField
+    """
+    if not OSM_INSTALLED:
+        raise ImportError("`pip install osmnx` to use loadOSMBuildings")
+
+    import geopandas as gpd
+    import osmnx as ox
+    import pandas as pd
+    from shapely.geometry import Point
+
+    repulsion = default_repulsion or [[20.0, 0], [0, 20.0]]
+
+    def _extract_height(row) -> float:
+        val = row.get("height")
+        if pd.notna(val):
+            m = re.findall(r"[-+]?\d*\.?\d+", str(val))
+            if m:
+                return float(m[0])
+        for col in ("building:levels", "levels"):
+            lvl = row.get(col)
+            if pd.notna(lvl):
+                m = re.findall(r"[-+]?\d*\.?\d+", str(lvl))
+                if m:
+                    return float(m[0]) * FLOOT_METER_HEIGHT
+        return 12.0
+
+    ox.settings.use_cache = True
+    ox.settings.log_console = False
+
+    cp = ox.geocode(location) if isinstance(location, str) else location
+
+    btags = {"building": True, "building:levels": True, "building:part": True, "structure": True}
+    gdf = ox.features_from_point(cp, tags=btags, dist=dist)
+    gdf = gdf[gdf.geometry.type.isin(["Polygon", "MultiPolygon"])].copy()
+    if "location" in gdf.columns:
+        gdf = gdf[gdf["location"] != "underground"]
+
+    utm = gdf.estimate_utm_crs()
+    gdf = gdf.to_crs(utm)
+    gdf["calc_height"] = gdf.apply(_extract_height, axis=1)
+
+    cgs = gpd.GeoSeries([Point(cp[1], cp[0])], crs="EPSG:4326").to_crs(utm)
+    cx, cy = float(cgs[0].x), float(cgs[0].y)
+
+    rgjs = []
+    for _, row in gdf[gdf["calc_height"] >= min_altitude].iterrows():
+        geom = row.geometry
+        polys = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
+        for poly in polys:
+            x, y = poly.convex_hull.exterior.xy
+            pts = np.column_stack((np.array(x) - cx, np.array(y) - cy))
+            if not np.allclose(pts[0], pts[-1]):
+                pts = np.vstack([pts, pts[0]])
+            rgjs.append({
+                "type": "Polygon",
+                "coordinates": pts.tolist(),
+                "repulsion": repulsion,
+            })
+
+    return RiskField(rgjs=rgjs)
+
 
 def loadGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0):
     
@@ -176,7 +186,7 @@ def loadGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0):
 
     return loadGeoJSON(geojson, size_offset=size_offset)
 
-def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG:3857", recal_size=True):
+def projectCoordinates(field: RiskField, from_crs="EPSG:4326", to_crs="EPSG:3857", recal_size=True):
 
     from_crs = CRS(from_crs)
     to_crs = CRS(to_crs)
@@ -185,21 +195,39 @@ def projectCoordinates(field: PotentialField, from_crs="EPSG:4326", to_crs="EPSG
 
     def __prune_coords__(rgj:RGJGeometry):
 
-        if rgj.RGJType.lower() == "geometrycollection":
+        t_type = rgj.RGJType.lower()
+
+        if t_type == "geometrycollection":
             for rgj_n in rgj.rgjs:
                 __prune_coords__(rgj_n)
-        elif rgj.RGJType.lower() in ["point", "ellipse"]:
+        
+        elif t_type in ["point", "ellipse"]:
             rgj.set_coordinates(np.array(proj.transform(rgj.coordinates[0], rgj.coordinates[1])))
-        elif rgj.RGJType.lower() in ["linestring", "rectangle", "multipoint", "multiellipse"]:
+        
+        elif t_type in ["linestring", "rectangle", "multipoint", "multiellipse"]:
             rgj.set_coordinates(np.stack(proj.transform(rgj.coordinates[:,0], rgj.coordinates[:, 1]), axis=1))
-        elif rgj.RGJType.lower() == "multirectangle":
+        
+        elif t_type == "multirectangle":
             rgj.set_coordinates(np.stack(proj.transform(rgj.coordinates[:,:,0], rgj.coordinates[:,:,1]), axis=2))
-        elif rgj.RGJType.lower() == "multilinestring":
+        
+        elif t_type in ["polygon", "multilinestring"]:
             new_coords = []
-            for coord_idx in range(len(rgj.coordinates)):
-                new_coords.append(np.stack(proj.transform(rgj.coordinates[coord_idx][:, 0],\
-                                                                     rgj.coordinates[coord_idx][:, 1]), axis=1))
+            for ring in rgj.coordinates:
+                ring_array = np.asarray(ring)
+                projected_ring = np.stack(proj.transform(ring_array[:, 0], ring_array[:, 1]), axis=1)
+                new_coords.append(projected_ring)
             rgj.set_coordinates(new_coords)
+
+        elif t_type == "multipolygon":
+            new_poly_coords = []
+            for polygon in rgj.coordinates:
+                new_rings = []
+                for ring in polygon:
+                    ring_array = np.asarray(ring)
+                    projected_ring = np.stack(proj.transform(ring_array[:, 0], ring_array[:, 1]), axis=1)
+                    new_rings.append(projected_ring)
+                new_poly_coords.append(new_rings)
+            rgj.set_coordinates(new_poly_coords)
 
     for rgj in field:
         __prune_coords__(rgj)

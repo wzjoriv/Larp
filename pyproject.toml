@@ -8,12 +8,34 @@ version = "0.3.0"
 authors = [
   { name="Josue N Rivera", email="josue.n.rivera@outlook.com" },
 ]
-description = "Larp (/lärp/): Last-Mile Restrictive Planning"
+description = "Larp (/lärp/): Last-Mile Autonomous Route Planning"
 readme = "README.md"
-dependencies = ['numpy>=2.0.0', 'pyproj', 'matplotlib', 'scipy']
+
+dependencies = [
+    'numpy>=2.0.0',
+    'scipy',
+    'matplotlib',
+    'osmnx',
+    'jax',
+    'osqp'
+]
+
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+cuda = [ # NOTE: Future feature 
+    "jax[cuda12]",
+    "osqp[cuda]",
+    "cupy-cuda12x",
+]
+
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "typer[all]"
 ]
 
 [project.urls]
@@ -21,7 +43,10 @@ Homepage = "https://github.com/wzjoriv/Larp"
 Issues = "https://github.com/wzjoriv/Larp/issues"
 
 [tool.setuptools.packages.find]
-include = ["larp"]
+include = ["larp*"]
 
-[tool.ruff.lint]
-select = ["NPY201"]
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --disable-plugin-autoload"
+testpaths = ["test"]
+pythonpath = ["larp"]

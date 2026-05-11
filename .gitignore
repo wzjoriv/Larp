@@ -4,8 +4,8 @@ rug_*
 .vscode
 cache
 
+!docs/imgs/uam_demo.svg
 docs
-!docs/imgs/
 examples
 
 tp_benchmark_route_data

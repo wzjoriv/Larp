@@ -259,7 +259,7 @@ def simulate(cfg: dict) -> list[np.ndarray]:
             traj.append(x_cur.copy())
             progress_bar((k + 1) / T_steps)
 
-    plt.savefig(cfg["vis"]["output_pdf"])
+    #plt.savefig(cfg["vis"]["output_pdf"])
     if not save_video:
         plt.ioff()
         plt.show()

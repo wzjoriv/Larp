@@ -1,6 +1,9 @@
-# Larp: Last-Mile Autonomous Route Planning
+# 🧭 Larp: Last-Mile Autonomous Route Planning
 
-A fast, flexible Python toolkit for autonomous aerial urban navigation optimized for dynamic environments and complex spatial constraints.
+> [!WARNING]
+> **Alpha Stage:** This project is in active development. Expect breaking changes and bugs.
+
+A fast, flexible Python toolkit for aerial autonomous urban navigation optimized for dynamic environments and complex spatial constraints.
 
 <div align="center">
   <img src="docs/imgs/uam_demo.svg" alt="Larp Trajectory Planning Illustration" width="550" />
@@ -10,32 +13,32 @@ A fast, flexible Python toolkit for autonomous aerial urban navigation optimized
 
 ## Overview
 
-**Larp** (/lärp/) is a modular framework for autonomous navigation that leverages *risk fields* to model obstacles and environmental constraints. It provides a full planning pipeline — from global path search to real-time trajectory optimization — where each stage can be used independently or replaced with a custom implementation. This makes Larp equally suitable for rapid prototyping, algorithm benchmarking, and integration into production systems.
+**Larp** (/lärp/) is a modular framework for autonomous navigation that leverages *risk/potential fields* to model obstacles and UAM environmental constraints. It provides a full planning pipeline, from global path search to real-time trajectory optimization, where each stage can be used independently or replaced with a custom implementation. This makes Larp suitable for rapid prototyping, research work, and integration into UAM and UTM navigation systems.
 
 ---
 
-## Planning Pipeline
+## Composable Planning Pipeline
 
 Larp structures navigation as a three-stage pipeline. Each stage is independently usable and interchangeable.
 
 ```
-RiskField / Environment
+  RiskField / Environment
         |
         v
-  [Global Planner]        larp.pp — A*, Dijkstra over QuadTree or continuous field
+  [Global Planner]        larp.pp — Path planning over the field
         |
         v
   [Reference Planner]     larp.tp — Waypoint, Spline, or Quintic path follower
         |
         v
-  [Trajectory Optimizer]  larp.tp — SQP, iLQR, or DDP with dynamics and constraints
+  [Trajectory Optimizer]  larp.tp — Traj. Opt. with dynamics and enviromental constraints
 ```
 
 **Repulsive Risk Fields**
 Model obstacles and spatial constraints using artificial repulsive fields that guide navigation using non-binary influence.
 
 **Global Path Planning (`larp.pp`)**
-Finds a collision-free route from start to goal over a risk field. The `QuadPlanner` decomposes the field into a hierarchical quadtree network for fast multi-resolution search. The `FieldPlanner` operates directly on the continuous field for higher-precision planning in smaller environments.
+Finds a collision-free global route from start to goal over a risk field. The `QuadPlanner` decomposes the field into a hierarchical quadtree network for fast multi-resolution search.
 
 **Reference Trajectory Generation (`larp.tp`)**
 Converts a global path into a time-parameterized reference for the optimizer. The `WaypointPlanner` uses arc-length projection for robust real-time tracking. `SplinePlanner` and `QuinticPlanner` provide C2 and C4 smooth profiles respectively.
@@ -44,8 +47,6 @@ Converts a global path into a time-parameterized reference for the optimizer. Th
 Solves a constrained optimal control problem at each time step, respecting vehicle dynamics, state and control bounds, and obstacle avoidance constraints derived from the risk field:
 
 - `SQPSolver` — Sequential Quadratic Programming via OSQP; fast warm-started solves suitable for real-time operation.
-- `ALILQRSolver` — Augmented-Lagrangian iLQR; efficient for smooth nonlinear dynamics.
-- `ALDDPSolver` — Augmented-Lagrangian DDP with full second-order Hessian correction; highest solution quality.
 
 The pipeline is composable. Any stage can be replaced — for example, substituting a custom global planner, using a different dynamics model, or feeding the optimizer references from an external source.
 
@@ -53,15 +54,15 @@ The pipeline is composable. Any stage can be replaced — for example, substitut
 
 ## Obstacle Representation
 
-Obstacles are defined using **RGeoJSON** (Repulsion GeoJSON), an extension of the standard GeoJSON format that adds repulsion metadata to geometric features. Larp supports the full GeoJSON geometry set — `Point`, `LineString`, `Polygon`, `MultiPolygon`, and geometry collections — augmented with per-feature repulsion parameters such as influence radius and metric tensors.
+Obstacles are defined using **RGeoJSON** (Repulsion GeoJSON), an extension of the standard GeoJSON format that adds repulsion metadata to geometric features. Larp supports the full GeoJSON geometry set — `Point`, `LineString`, `Polygon`, `MultiPolygon`, and geometry collections — augmented with per-feature repulsion parameters such as replusion influence metric and per-obstacle features.
 
 Because RGeoJSON is a superset of GeoJSON, standard GeoJSON files can be imported directly. Urban geometry from **OpenStreetMap** can be loaded via the `osmnx` integration, making it straightforward to plan over real city data without manual obstacle definition.
 
 ---
 
-## Vehicle Dynamics
+## Vehicle Digital Twin
 
-The trajectory optimizer works with any dynamics model that implements the `larp.dynamics.Dynamics` interface, which defines state transition, Jacobian computation, and rollout methods. Several models are included out of the box, and new vehicles can be added by subclassing `Dynamics`. For high-fidelity simulation, `MJXDynamics` provides a JAX-compiled MuJoCo physics backend.
+The trajectory optimizer works with any dynamics model that implements the `larp.dynamics.Dynamics` interface, which defines state transition, Jacobian computation, and rollout methods. Several digital twin models are included out of the box, and new vehicles can be added by subclassing `Dynamics`. For high-fidelity simulation, `MJXDynamics` is actively being developed for JAX-compiled MuJoCo physics backend.
 
 ---
 
@@ -83,7 +84,7 @@ quadtree = larp.quad.QuadTree(field, maximum_length_limit=10, edge_bounds=risk_c
 # Global path planning
 planner = larp.pp.QuadPlanner(quadtree)
 planner.select_alg("a*")
-path = planner.find_path(start=(20, 20), end=(50, 55), smooth_path=True)
+path = planner.find_path(start=(20, 20), end=(50, 55))
 
 # Set up robot and trajectory optimizer
 robot  = WMR(config={"wheels_distance": 1.0})
@@ -135,7 +136,7 @@ larp/
   env/
     environments.py CityEnvironment, FieldHeatmapEnvironment
     visualizers.py  FieldTrajectoryVisualizer, CityVisualizer, ZoomedCityVisualizer
-    twin.py         MuJoCo digital twin integration
+    twin.py         Digital twins
 ```
 
 ---
@@ -167,9 +168,8 @@ pip install larp
 Interactive Jupyter Notebook demos:
 
 - [General Demo](https://github.com/wzjoriv/Larp/blob/main/presentation.ipynb) — introduction to core functionalities
-- [Hot Reloading in Room Scene](https://github.com/wzjoriv/Larp/blob/main/examples/Hot%20Reloading%20in%20Room/presentation.ipynb) — dynamic updates of static obstacles for the global planner
-- [City Center in Lafayette, IN](https://github.com/wzjoriv/Larp/blob/main/examples/Lafayette%20Court%20House/presentation.ipynb) — path planning around real city geometry
-- [Aerial Cargo Delivery Path Planning](https://github.com/wzjoriv/Larp/blob/main/examples/Aerial%20Cargo%20Delivery/presentation.ipynb) — low-altitude delivery planning on a university campus
+- [Hot Reloading for Global Planning](https://github.com/wzjoriv/Larp/blob/main/examples/Hot%20Reloading%20for%20Global%20Planning/presentation.ipynb) — dynamic updates of static obstacles for the global planner
+- [Aerial Cargo Delivery Global Planning](https://github.com/wzjoriv/Larp/blob/main/examples/Cargo%20Delivery%20Global%20Planning.ipynb) — low-altitude global delivery planning across multiple global urban centers
 - [Urban Air Mobility with Trajectory Optimization](https://github.com/wzjoriv/Larp/blob/main/examples/Urban%20Air%20Mobility%20of%20EVTOL/presentation.ipynb) — live trajectory optimization for eVTOL in urban airspace
 
 ---
@@ -210,5 +210,5 @@ Larp is released under the [GNU General Public License v3.0](https://www.gnu.org
 ## Links
 
 - [Homepage](https://github.com/wzjoriv/Larp)
-- [Documentation](https://wzjoriv.github.io/larp/)
+<!-- - [Documentation](https://wzjoriv.github.io/larp/) -->
 - [Issue Tracker](https://github.com/wzjoriv/Larp/issues)

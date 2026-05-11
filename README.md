@@ -3,7 +3,7 @@
 A fast, flexible Python toolkit for autonomous aerial urban navigation optimized for dynamic environments and complex spatial constraints.
 
 <div align="center">
-  <img src="docs/imgs/uam.svg" alt="Larp Trajectory Planning Illustration" width="550" />
+  <img src="docs/imgs/uam_demo.svg" alt="Larp Trajectory Planning Illustration" width="550" />
 </div>
 
 ---

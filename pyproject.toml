@@ -8,7 +8,7 @@ version = "0.3.0"
 authors = [
   { name="Josue N Rivera", email="josue.n.rivera@outlook.com" },
 ]
-description = "Larp (/lärp/): Last-Mile Route Planning"
+description = "Larp (/lärp/): Last-Mile Autonomous Route Planning"
 readme = "README.md"
 
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
     'matplotlib',
     'osmnx',
     'jax',
+    'osqp'
 ]
 
 classifiers = [
@@ -25,10 +26,6 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-full = [
-    "mujoco-mjx[warp]",
-    "osqp"
-]
 cuda = [ # NOTE: Future feature 
     "jax[cuda12]",
     "osqp[cuda]",
@@ -38,6 +35,7 @@ cuda = [ # NOTE: Future feature
 dev = [
     "pytest>=8.0",
     "pytest-cov",
+    "typer[all]"
 ]
 
 [project.urls]

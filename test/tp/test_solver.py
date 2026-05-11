@@ -1,51 +1,17 @@
-"""
-test/tp/test_solver.py
-======================
-Tests for larp.tp.solver: SQPSolver, ALILQRSolver, ALDDPSolver.
-
-Fixtures
---------
-Uses WMRDynamics (wheel-mobile-robot, 3-state unicycle) and a minimal
-RiskField built from test/data.rgj so tests run without an urban map or
-network access.  All obstacle tests use the ``data.rgj`` Point obstacles
-(see test fixture ``risk_field``).
-
-Test categories
----------------
-1. Solver construction — verify shapes, default params, bound parsing.
-2. Rollout — RK4 integration correctness.
-3. Field constraints — half-plane extraction from obstacles.
-4. SQP solve — stable output shape, warm-start, linearize_every / field_every.
-5. AL solve  — same interface as SQP; cache params; DDP vs iLQR.
-6. Correctness near goal — verifies solver does not diverge at zero-error ref.
-7. Cache speedup smoke test — fewer discretize calls with linearize_every > 1.
-
-Notes
------
-* ``R = 0`` (pure state-tracking) can cause near-degenerate QP near the goal.
-  The test ``test_sqp_near_goal_finite`` guards that the solver returns finite
-  values even in this regime.  Use at least ``R = 1e-6 * I`` in production.
-* GPU / JAX tests are skipped when JAX is not installed.
-"""
-
 import os
 import json
 import pytest
 import numpy as np
 from unittest.mock import patch
 
-# ── Minimal larp import (skip if package not importable) ──────────────────
+# Minimal larp import (skip if package not importable) 
 larp = pytest.importorskip("larp")
 from larp.dynamics import WMRDynamics
 from larp.tp.solver import Solver, SQPSolver, ALILQRSolver, ALDDPSolver
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Shared fixtures
-# ══════════════════════════════════════════════════════════════════════════════
-
 DATA_RGJ_PATH = os.path.join(os.path.dirname(__file__), "..", "data.rgj")
-
 
 def _load_risk_field():
     """Build a RiskField from test/data.rgj."""
@@ -129,9 +95,7 @@ def _straight_ref(solver: Solver, x_goal: np.ndarray) -> np.ndarray:
     return np.tile(x_goal, (solver.N, 1))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 1. Solver Construction
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestSolverConstruction:
 
@@ -209,9 +173,7 @@ class TestSolverConstruction:
         assert s._il_dyn_cache["Bd"] is None
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 2. Rollout
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestRollout:
 
@@ -255,9 +217,7 @@ class TestRollout:
         assert np.allclose(xs_default, xs_python, atol=1e-12)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 3. Field Constraints
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestFieldConstraints:
 
@@ -310,9 +270,7 @@ class TestFieldConstraints:
             assert A.shape[0] == b.shape[0], "A rows must match b length"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 4. SQP Solver
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestSQPSolver:
 
@@ -446,9 +404,7 @@ class TestSQPSolver:
         assert np.all(np.isfinite(xs))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 5. AL Solvers (iLQR and DDP)
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestALSolvers:
 
@@ -568,9 +524,7 @@ class TestALSolvers:
             "iLQR should reduce distance to goal"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 6. Obstacle avoidance with field
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestSolverWithField:
 
@@ -608,9 +562,7 @@ class TestSolverWithField:
             assert s.cache["A_field"].shape[1] == s.var_count
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 7. Parse-bounds helpers
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestParseBounds:
 

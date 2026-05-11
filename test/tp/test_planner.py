@@ -1,26 +1,3 @@
-"""
-test/tp/test_planner.py
-=======================
-Tests for larp.tp.planner:
-  Planner (ABC), WaypointPlanner, SplinePlanner, QuinticPlanner, LinearPlanner alias.
-
-Test categories
----------------
-1.  TestPlannerABC           — abstract-method enforcement and class hierarchy
-2.  TestWaypointConstruction — WaypointPlanner construction, path geometry, reset
-3.  TestArcLengthProjection  — hybrid windowed + fallback projection
-4.  TestWaypointGetRef       — shape, content, near-goal saturation, _last_s update
-5.  TestWaypointNearGoal     — edge cases: past end, repeated calls, reset
-6.  TestWaypointFindTraj     — find_trajectory shapes, warm-start, repeated steps
-7.  TestSplinePlanner        — construction, get_ref (N rows, ahead of x0), curvature
-8.  TestQuinticPlanner       — construction, degree fallback, get_ref, smoothness
-9.  TestGetFullRef           — base vs override, inheritance, span, speed scaling
-10. TestPlannerAPIContract   — parametrised: all 4 methods on all 3 planners
-11. TestGetFullTrajectory    — stride, max_steps, goal stop, xs[0]==x0
-12. TestLinearPlannerAlias   — LinearPlanner is WaypointPlanner
-13. TestPathEdgeCases        — collinear, duplicate pts, very short, negative coords
-"""
-
 import pytest
 import numpy as np
 
@@ -33,9 +10,7 @@ from larp.tp.planner import (
 )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Shared helpers
-# ══════════════════════════════════════════════════════════════════════════════
 
 def _make_solver(horizon: int = 10) -> SQPSolver:
     dyn = WMRDynamics()
@@ -65,9 +40,7 @@ def _stable() -> np.ndarray:
 ALL_PLANNERS = [WaypointPlanner, SplinePlanner, QuinticPlanner]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 1. TestPlannerABC
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestPlannerABC:
 
@@ -116,9 +89,7 @@ class TestPlannerABC:
         assert src.index('class SplinePlanner') < src.index('class QuinticPlanner')
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 2. TestWaypointConstruction
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestWaypointConstruction:
 
@@ -177,9 +148,7 @@ class TestWaypointConstruction:
         assert wp.seg_idx == 4
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 3. TestArcLengthProjection
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestArcLengthProjection:
 
@@ -265,9 +234,7 @@ class TestArcLengthProjection:
         assert abs(wp._project_to_path(np.array([10., 0.])) - 10.) < 0.5
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 4. TestWaypointGetRef
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestWaypointGetRef:
 
@@ -324,9 +291,7 @@ class TestWaypointGetRef:
         assert ref.shape == (s.N, 3)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 5. TestWaypointNearGoal
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestWaypointNearGoal:
 
@@ -354,9 +319,7 @@ class TestWaypointNearGoal:
             prev_s = wp._last_s
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 6. TestWaypointFindTrajectory
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestWaypointFindTrajectory:
 
@@ -389,9 +352,7 @@ class TestWaypointFindTrajectory:
             x = xs[1].copy()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 7. TestSplinePlanner
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestSplinePlanner:
 
@@ -470,9 +431,7 @@ class TestSplinePlanner:
         assert sp._seg_idx >= 33
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 8. TestQuinticPlanner
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestQuinticPlanner:
 
@@ -588,9 +547,7 @@ class TestQuinticPlanner:
         assert QuinticPlanner.get_full_ref is SplinePlanner.get_full_ref
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 9. TestGetFullRef
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestGetFullRef:
     """
@@ -649,7 +606,6 @@ class TestGetFullRef:
         assert sig.parameters['nominal_speed'].default == 2.0
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 10. TestHeadingContinuity
 #
 # WaypointPlanner previously stored raw arctan2 headings (range [-π, π]) in
@@ -663,7 +619,6 @@ class TestGetFullRef:
 #
 # The fix: Planner.get_full_ref (base class) now applies np.unwrap() to the
 # auto-computed heading column before returning, matching the curve planners.
-# ══════════════════════════════════════════════════════════════════════════════
 
 def _fig8_path(n: int = 16) -> np.ndarray:
     """Parametric figure-8 with `n` evenly-spaced points."""
@@ -835,9 +790,7 @@ class TestHeadingContinuity:
             )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 11. TestPlannerAPIContract
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestPlannerAPIContract:
     """All three planners must satisfy the identical public interface."""
@@ -916,9 +869,7 @@ class TestPlannerAPIContract:
         assert np.allclose(xs[0], x0)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 11. TestGetFullTrajectory
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestGetFullTrajectory:
 
@@ -995,9 +946,7 @@ class TestGetFullTrajectory:
             assert np.all(np.isfinite(xs)) and np.all(np.isfinite(us))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 12. TestLinearPlannerAlias
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestLinearPlannerAlias:
 
@@ -1017,9 +966,7 @@ class TestLinearPlannerAlias:
         assert np.allclose(wp.get_ref(x0), lp.get_ref(x0), atol=1e-10)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # 13. TestPathEdgeCases
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestPathEdgeCases:
 

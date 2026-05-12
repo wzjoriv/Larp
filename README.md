@@ -1,7 +1,7 @@
 # 🧭 Larp: Last-Mile Autonomous Route Planning
 
 > [!WARNING]
-> **Alpha Stage:** This project is in active development. Expect breaking changes and bugs.
+> **Pre-Alpha Stage:** This project is in active development. Expect breaking changes and bugs.
 
 A fast, flexible Python toolkit for aerial autonomous urban navigation optimized for dynamic environments and complex spatial constraints.
 

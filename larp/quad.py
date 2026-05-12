@@ -78,7 +78,7 @@ class QuadTree():
                  build_tree:bool = True) -> None:
         
         self.field = field
-        self.min_sector_size = minimum_length_limit
+        self.min_sector_size = np.min(field.size)/128.0 if minimum_length_limit is None else minimum_length_limit
         self.max_sector_size = maximum_length_limit
         self.size = size or np.max(self.field.size)
 

@@ -72,19 +72,22 @@ The trajectory optimizer works with any dynamics model that implements the `larp
 import numpy as np
 import larp
 import larp.io as lpio
-from larp.env import WMR, FieldTrajectoryVisualizer
+from larp.environment import WMR
 
-# Load a risk field from RGeoJSON (compatible with standard GeoJSON)
-field = lpio.loadRGeoJSONFile("path/to/field.rgj")
+# Load a risk field from RGeoJSON (compatible with standard GeoJSON geometry format)
+field = lpio.loadRGeoJSONFile("test/data.rgj") # path/to/field.rgj
+# field = lpio.loadGeoJSONFile("test/.rug_data_gdf.geojson") # Alternative for full GeoJSON file 
+
+field.size += 20
 
 # Build a quadtree for fast spatial queries
-risk_caps = [0.1, 0.2, 0.4, 0.6, 0.8]
-quadtree = larp.quad.QuadTree(field, maximum_length_limit=10, edge_bounds=risk_caps)
+risk_caps = [0.2, 0.4, 0.6, 0.8]
+quadtree = larp.quad.QuadTree(field, edge_bounds=risk_caps)
 
 # Global path planning
 planner = larp.pp.QuadPlanner(quadtree)
 planner.select_alg("a*")
-path = planner.find_path(start=(20, 20), end=(50, 55))
+path = planner.find_path((20, 20), (60, 60))
 
 # Set up robot and trajectory optimizer
 robot  = WMR(config={"wheels_distance": 1.0})
@@ -95,9 +98,9 @@ solver = larp.tp.ALILQRSolver(
     horizon         = 2.5,
     Q               = np.diag([10, 10, 5.0]),
     R               = np.diag([2, 2.0]),
-    Qf              = np.diag([10, 10, 5.0]) * 3,
+    Qf              = np.diag([10, 10, 5.0]) * 2,
     u_bounds        = ([0.0, -2.0], [5.0, 2.0]),
-    minimum_dist    = 2.0,
+    minimum_dist    = 5.0,
     linearize_every = 1,
     field_every     = 1,
     statefield_idxs = [0, 1],
@@ -109,12 +112,22 @@ tj_planner = larp.tp.WaypointPlanner(
     path              = path,
     stable_state      = [0, 0, 0],
     ref_state_indices = [0, 1, 2],
-    goal_blend_dist   = 3,
+    goal_blend_dist   = 5,
 )
 
 # Run full trajectory
 x0 = [20, 20, 0.0]
-xs, us = tj_planner.get_full_trajectory(x0, nominal_speed=4, stride=1, max_steps=200)
+xs, us = tj_planner.get_full_trajectory(x0, nominal_speed=3.5, stride=1)
+
+
+plt.figure()
+display, extent = field.to_image()
+plt.imshow(display, cmap='jet', extent=extent, alpha=0.8)
+plt.colorbar().set_ticks([0.0] + risk_caps + [1.0])
+plt.plot(xs[:, 0], xs[:, 1], color="#fff", alpha=1.0, linewidth=1.0)
+plt.plot(path[0, 0], path[0, 1], 'r4', markersize=10.0, markeredgewidth=1.5)
+plt.plot(path[-1, 0], path[-1, 1], 'wx')
+plt.show()
 ```
 
 ---

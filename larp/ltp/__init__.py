@@ -13,9 +13,8 @@ ALDDPSolver     : Augmented-Lagrangian DDP (full 2nd-order dynamics)
 
 Planner         : abstract base for all reference planners
 WaypointPlanner : arc-length-projection waypoint follower (recommended default)
-SplinePlanner   : cubic-spline (C2) path following with velocity profiling
-QuinticPlanner  : quintic B-spline (C4) path following — smoothest acceleration
-LinearPlanner   : alias for WaypointPlanner
+SplinePlanner   : B-spline path following with curvature-based velocity profiling;
+                  degree selectable (default 3 cubic, 5 for quintic smoothness)
 
 All planners share the same public interface:
 
@@ -25,13 +24,11 @@ All planners share the same public interface:
     get_full_trajectory(x0, ...)        -> (xs, us)  pre-planned full trajectory
 """
 
-from larp.tp.solver import Solver, SQPSolver, ALILQRSolver, ALDDPSolver
-from larp.tp.planner import (
+from larp.ltp.solver.solver import Solver, SQPSolver, ALILQRSolver, ALDDPSolver
+from larp.ltp.solver.planner import (
     Planner,
     WaypointPlanner,
     SplinePlanner,
-    QuinticPlanner,
-    LinearPlanner,
 )
 
 __all__ = [
@@ -44,6 +41,4 @@ __all__ = [
     "Planner",
     "WaypointPlanner",
     "SplinePlanner",
-    "QuinticPlanner",
-    "LinearPlanner",
 ]

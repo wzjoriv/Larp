@@ -35,7 +35,8 @@ cuda = [ # NOTE: Future feature
 dev = [
     "pytest>=8.0",
     "pytest-cov",
-    "typer[all]"
+    'rich',
+    "typer"
 ]
 
 [project.urls]

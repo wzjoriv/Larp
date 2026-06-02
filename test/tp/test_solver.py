@@ -7,7 +7,7 @@ from unittest.mock import patch
 # Minimal larp import (skip if package not importable) 
 larp = pytest.importorskip("larp")
 from larp.dynamics import WMRDynamics
-from larp.tp.solver import Solver, SQPSolver, ALILQRSolver, ALDDPSolver
+from larp.ltp.solver.solver import Solver, SQPSolver, ALILQRSolver, ALDDPSolver
 
 
 # Shared fixtures

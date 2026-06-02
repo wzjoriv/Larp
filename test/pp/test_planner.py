@@ -22,7 +22,7 @@ def test_planner():
                                   build_tree=True,
                                   minimum_length_limit=5)
     
-    planner = larp.pp.QuadPlanner(quadtree, 'a*')
+    planner = larp.lpp.QuadPlanner(quadtree, 'a*')
 
     path = planner.find_path((45, 45), (65, 65), reset_memory=True)
     

@@ -121,7 +121,7 @@ class VehicleScenario(BenchmarkScenario):
 
     def setup(self) -> None:
         import larp as lp
-        import larp.pp as pp
+        import larp.lpp as lpp
         from larp.environment.environments import CityEnvironment
         import time
 
@@ -166,7 +166,7 @@ class VehicleScenario(BenchmarkScenario):
         print(f"  Done in {time.time() - t0:.2f}s")
 
         self._city_data = {}
-        self._load_cities(lp, pp, CityEnvironment)
+        self._load_cities(lp, lpp, CityEnvironment)
 
     def _city_names(self) -> list[str]:
         requested = self.bench_cfg.get("cities", list(self.city_registry.keys()))
@@ -359,7 +359,7 @@ class WMRScenario(BenchmarkScenario):
 
     def setup(self) -> None:
         import larp as lp
-        import larp.pp as pp
+        import larp.lpp as lpp
         import larp.io as larp_io
         from larp.dynamics import WMRDynamics
 
@@ -382,7 +382,7 @@ class WMRScenario(BenchmarkScenario):
         n = self.dynamics.first_order_state_n
         self.x_bounds = ([-np.inf] * n, [np.inf] * n)
 
-        self.path_planner = pp.QuadPlanner(
+        self.path_planner = lpp.QuadPlanner(
             lp.quad.QuadTree(
                 self.field, minimum_length_limit=10.0,
                 edge_bounds=[0.2, 0.5, 0.8], build_tree=True,

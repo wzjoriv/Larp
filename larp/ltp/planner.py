@@ -7,9 +7,9 @@ Planner hierarchy
 -----------------
 Planner (ABC)           - shared interface: update_path, get_ref, get_full_ref,
                           find_trajectory, get_full_trajectory
-├── WaypointPlanner     - arc-length-projection following on the raw piecewise-linear path
-├── SplinePlanner       - cubic-spline (C2) path following with velocity profiling
-└── QuinticPlanner      - quintic B-spline (C4) path following with velocity profiling
+├ WaypointPlanner     - arc-length-projection following on the raw piecewise-linear path
+└ SplinePlanner       - B-spline path following with curvature-based velocity profiling;
+                        degree selectable (default 3 cubic, 5 for quintic smoothness)
 
 Public API summary
 ------------------
@@ -20,9 +20,8 @@ Public API summary
 ``get_full_ref(nominal_speed)``
     Complete (T, n) reference showing the idealised path the robot will
     follow over its entire journey.  Useful for visualisation and comparing
-    actual vs. intended motion.  A generic piecewise-linear implementation
-    is provided on the base class; subclasses may override for a smoother
-    result (e.g. SplinePlanner and QuinticPlanner sample their fitted curve).
+    actual vs. intended motion.  WaypointPlanner uses piecewise-linear
+    interpolation; SplinePlanner samples its fitted curve for a smoother result.
 
 ``find_trajectory(x0, ...)``
     Call ``get_ref`` then run the solver.  Returns the optimised predictive
@@ -40,15 +39,13 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple, List, Union
 
 import numpy as np
-from scipy.interpolate import CubicSpline, make_interp_spline
+from scipy.interpolate import make_interp_spline
 
-from larp.tp.solver import Solver
+from larp.ltp.solver.solver import Solver
 from larp.types import Point, Trajectory
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Abstract base
-# ══════════════════════════════════════════════════════════════════════════════
 
 class Planner(ABC):
     """
@@ -100,7 +97,7 @@ class Planner(ABC):
 
         self.update_path(path)
 
-    # ── Path management ────────────────────────────────────────────────────
+    #  Path management 
 
     def update_path(self, path: Union[List[Point], np.ndarray]):
         """
@@ -143,7 +140,7 @@ class Planner(ABC):
         """Reset per-path planner state (progress bookmark, warm start)."""
         self.prev_us = None
 
-    # ── Abstract interface ─────────────────────────────────────────────────
+    #  Abstract interface 
 
     @abstractmethod
     def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
@@ -164,7 +161,7 @@ class Planner(ABC):
         ref : (N, n) reference states
         """
 
-    # ── Concrete shared methods ────────────────────────────────────────────
+    #  Concrete shared methods 
 
     def get_full_ref(self, nominal_speed: float = 2.0) -> np.ndarray:
         """
@@ -330,9 +327,7 @@ class Planner(ABC):
         return np.array(all_xs), np.array(all_us)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # WaypointPlanner
-# ══════════════════════════════════════════════════════════════════════════════
 
 class WaypointPlanner(Planner):
     """
@@ -391,7 +386,7 @@ class WaypointPlanner(Planner):
         self._last_s  = 0.0
         self._seg_idx = 0
 
-    # ── Arc-length projection ──────────────────────────────────────────────
+    #  Arc-length projection 
 
     def _project_to_path(self, pos: np.ndarray) -> float:
         """
@@ -485,7 +480,7 @@ class WaypointPlanner(Planner):
 
         return np.array(ref_states)
 
-    # ── Helpers ────────────────────────────────────────────────────────────
+    #  Helpers 
 
     def reset_path(self):
         """Reset waypoint progress to the start of the path."""
@@ -497,24 +492,40 @@ class WaypointPlanner(Planner):
         return self._seg_idx
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Internal base for curve-based planners
-# ══════════════════════════════════════════════════════════════════════════════
+# SplinePlanner
 
-class _CurvePlanner(Planner):
+class SplinePlanner(Planner):
     """
-    Internal base for planners that maintain a smooth parametric curve over
-    the path (SplinePlanner uses a cubic spline; QuinticPlanner uses a quintic
-    B-spline).
+    Reference planner using a smooth parametric **B-spline** over the path.
 
-    Provides:
-    - Shared arc-length projection with heading-alignment penalty
-    - Shared curvature-aware ``get_ref`` template
-    - Shared ``get_full_ref`` that samples the fitted curve
+    Fits a B-spline of the requested ``degree`` through the path waypoints,
+    applies a curvature-based speed limit ``v <= sqrt(a_lat_max / kappa)``
+    to slow the reference on tight bends, and uses a heading-alignment
+    penalty to keep projection stable on U-shaped paths.
 
-    Subclasses must set ``self._curve`` (callable with the same interface as
-    scipy ``CubicSpline``) and ``self.raw_path`` inside their ``update_path``
-    implementation, and call ``self._reset_state()`` at the end.
+    The actual degree is clamped to ``min(degree, M - 1)`` so a valid spline
+    can always be fitted regardless of how many waypoints are given.  Use
+    ``degree=3`` (default, cubic, C2) for general path following or
+    ``degree=5`` (quintic, C4) when jerk and snap continuity matter (cargo
+    drones, surgical robots, high-speed arms).
+
+    Parameters
+    ----------
+    solver : Solver
+    path : array-like, shape (M, 2)
+        Only XY is used; headings are derived from the spline tangent.
+    stable_state : array-like, shape (n,)
+    ref_state_indices : list of int, optional
+        Must contain at least [i_x, i_y, i_yaw].  Optional 4th and 5th
+        entries are velocity indices [i_vx, i_vy] filled from the tangent.
+    degree : int
+        B-spline degree.  Default 3 (cubic, C2).  Use 5 for quintic (C4).
+    lookahead : float
+        Extra arc length ahead of the projected position.  Default 0.5.
+    projection_window : int
+        Windowed projection window size.  Default 15.
+    max_lat_accel : float
+        Maximum lateral acceleration for speed limiting (m/s²).  Default 2.0.
     """
 
     def __init__(
@@ -523,26 +534,52 @@ class _CurvePlanner(Planner):
         path: Union[List[Point], np.ndarray],
         stable_state: np.ndarray,
         ref_state_indices: Optional[List[int]] = None,
+        degree: int = 3,
         lookahead: float = 0.5,
         projection_window: int = 15,
         max_lat_accel: float = 2.0,
     ):
+        self._requested_degree  = degree
+        self._degree: int       = degree
         self.lookahead          = lookahead
         self._projection_window = max(1, int(projection_window))
         self.max_lat_accel      = max_lat_accel
-
-        # Set before super().__init__ so update_path can use them
-        self._curve             = None   # set by subclass update_path
+        self._curve             = None
         self.raw_path: Optional[np.ndarray] = None
 
         super().__init__(solver, path, stable_state, ref_state_indices)
 
     def _reset_state(self):
         super()._reset_state()
-        self._last_s: float  = 0.0
-        self._seg_idx: int   = 0
+        self._last_s: float = 0.0
+        self._seg_idx: int  = 0
 
-    # ── Arc-length projection with heading penalty ─────────────────────────
+    def update_path(self, path: Union[List[Point], np.ndarray]):
+        points = np.atleast_2d(np.copy(path))
+        if points.shape[0] < 2:
+            raise ValueError("Path must contain at least 2 waypoints.")
+
+        xy     = points[:, :2]
+        M      = len(xy)
+        deltas = xy[1:] - xy[:-1]
+        dists  = np.maximum(np.linalg.norm(deltas, axis=1), 1e-8)
+        cum    = np.concatenate(([0.0], np.cumsum(dists)))
+
+        self._degree             = min(self._requested_degree, M - 1)
+        self._curve              = make_interp_spline(cum, xy, k=self._degree)
+        self.raw_path            = xy
+        self.cached_cum_len      = cum
+        self.total_len           = float(cum[-1])
+        self.cached_seg_lens     = dists
+        self.cached_directions   = deltas / dists[:, None]
+        seg_headings             = np.arctan2(deltas[:, 1], deltas[:, 0])
+        final_heading            = seg_headings[-1] if seg_headings.size > 0 else 0.0
+        self.path                = np.column_stack(
+            (xy, np.append(seg_headings, final_heading)))
+        self.cached_seg_headings = seg_headings
+        self._use_custom_heading = False
+
+        self._reset_state()
 
     def _project_to_path(
         self,
@@ -588,9 +625,9 @@ class _CurvePlanner(Planner):
                       + t_vals[i] * np.sqrt(max(seg_lens_sq[i], 0.0)))
             return a + i, s
 
-        start    = max(0, self._seg_idx - 2)
-        end      = min(M, self._seg_idx + self._projection_window)
-        best, s  = _scan(start, end)
+        start   = max(0, self._seg_idx - 2)
+        end     = min(M, self._seg_idx + self._projection_window)
+        best, s = _scan(start, end)
 
         if best == end - 1 and end < M:
             best, s = _scan(0, M)
@@ -599,20 +636,17 @@ class _CurvePlanner(Planner):
         self._seg_idx = max(self._seg_idx, best)
         return s
 
-    # ── Reference generation (shared by SplinePlanner & QuinticPlanner) ───
-
     def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
         """
         Generate N reference states with curvature-based velocity profiling.
 
         Returns states x₁ … xₙ — one step ahead of ``x0`` through N steps.
-        Samples ``self._curve`` at arc-length positions computed by walking
+        Samples the fitted curve at arc-length positions computed by walking
         forward from the projected robot position.
         """
         ix, iy, ith = self.ref_idx[0], self.ref_idx[1], self.ref_idx[2]
 
-        current_s    = self._project_to_path(x0[ix], x0[iy],
-                                              theta_curr=x0[ith])
+        current_s    = self._project_to_path(x0[ix], x0[iy], theta_curr=x0[ith])
         self._last_s = current_s
 
         dt = self.solver.dt
@@ -625,8 +659,8 @@ class _CurvePlanner(Planner):
             s_curr    = s_future[-1]
             s_clamped = float(np.clip(s_curr, 0.0, self.total_len))
 
-            der1 = self._curve(s_clamped, 1)
-            der2 = self._curve(s_clamped, 2)
+            der1      = self._curve(s_clamped, 1)
+            der2      = self._curve(s_clamped, 2)
             cross     = der1[0] * der2[1] - der1[1] * der2[0]
             norm_sq   = der1[0] ** 2 + der1[1] ** 2
             curvature = abs(cross) / (norm_sq ** 1.5 + 1e-8)
@@ -648,29 +682,24 @@ class _CurvePlanner(Planner):
             yaw_diff = (yaw - prev_yaw + np.pi) % (2 * np.pi) - np.pi
             yaw      = prev_yaw + yaw_diff
 
-            state        = self.stable_state.copy()
-            state[ix]    = pos[0]
-            state[iy]    = pos[1]
-            state[ith]   = yaw + self.solver.dynamics.heading_convention_offset
+            state      = self.stable_state.copy()
+            state[ix]  = pos[0]
+            state[iy]  = pos[1]
+            state[ith] = yaw + self.solver.dynamics.heading_convention_offset
 
             if len(self.ref_idx) >= 5:
-                ivx, ivy    = self.ref_idx[3], self.ref_idx[4]
-                state[ivx]  = tan_vec[0] * target_v
-                state[ivy]  = tan_vec[1] * target_v
+                ivx, ivy   = self.ref_idx[3], self.ref_idx[4]
+                state[ivx] = tan_vec[0] * target_v
+                state[ivy] = tan_vec[1] * target_v
 
             all_states.append(state)
             s_future.append(s_curr + target_v * dt)
 
-        # Discard k=0 (current position) → return x₁ … xₙ
         return np.array(all_states[1:])
 
     def get_full_ref(self, nominal_speed: float = 2.0) -> np.ndarray:
         """
         Sample the complete reference from path start to end via the fitted curve.
-
-        Overrides the base-class piecewise-linear implementation with smooth
-        curve-sampled positions, continuous tangent-derived headings, and
-        optionally filled velocity indices.
 
         Parameters
         ----------
@@ -685,8 +714,7 @@ class _CurvePlanner(Planner):
             return np.empty((0, len(self.stable_state)))
 
         dt        = self.solver.dt
-        num_steps = int(np.ceil(self.total_len
-                                / max(nominal_speed * dt, 1e-8)))
+        num_steps = int(np.ceil(self.total_len / max(nominal_speed * dt, 1e-8)))
         s_vals    = np.linspace(0.0, self.total_len, num_steps)
 
         pos_ref  = self._curve(s_vals)
@@ -711,190 +739,11 @@ class _CurvePlanner(Planner):
         return full_ref
 
     @property
+    def degree(self) -> int:
+        """Actual polynomial degree used (clamped to M-1 for short paths)."""
+        return self._degree
+
+    @property
     def seg_idx(self) -> int:
         """Current best-match segment index into the path skeleton."""
         return self._seg_idx
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SplinePlanner
-# ══════════════════════════════════════════════════════════════════════════════
-
-class SplinePlanner(_CurvePlanner):
-    """
-    Reference planner using a natural **cubic spline** (C2 continuous).
-
-    Fits a cubic spline through the path waypoints so corners are naturally
-    rounded, then samples it to build the reference.  A curvature-based
-    speed limit ``v <= sqrt(a_lat_max / kappa)`` slows the reference on
-    tight bends.  A heading-alignment penalty keeps projection stable on
-    U-shaped paths.
-
-    Parameters
-    ----------
-    solver : Solver
-    path : array-like, shape (M, 2)
-        Only XY is used; headings are derived from the spline tangent.
-    stable_state : array-like, shape (n,)
-    ref_state_indices : list of int, optional
-        Must contain at least [i_x, i_y, i_yaw].  Optional 4th and 5th
-        entries are velocity indices [i_vx, i_vy] filled from the tangent.
-    lookahead : float
-        Extra arc length ahead of the projected position.  Default 0.5.
-    projection_window : int
-        Windowed projection window size.  Default 15.
-    max_lat_accel : float
-        Maximum lateral acceleration for speed limiting (m/s²).  Default 2.0.
-    """
-
-    def __init__(
-        self,
-        solver: Solver,
-        path: Union[List[Point], np.ndarray],
-        stable_state: np.ndarray,
-        ref_state_indices: Optional[List[int]] = None,
-        lookahead: float = 0.5,
-        projection_window: int = 15,
-        max_lat_accel: float = 2.0,
-    ):
-        super().__init__(solver, path, stable_state, ref_state_indices,
-                         lookahead=lookahead,
-                         projection_window=projection_window,
-                         max_lat_accel=max_lat_accel)
-
-    def update_path(self, path: Union[List[Point], np.ndarray]):
-        points  = np.atleast_2d(np.copy(path))
-        if points.shape[0] < 2:
-            raise ValueError("Path must contain at least 2 waypoints.")
-
-        xy      = points[:, :2]
-        deltas  = xy[1:] - xy[:-1]
-        dists   = np.maximum(np.linalg.norm(deltas, axis=1), 1e-8)
-        cum     = np.concatenate(([0.0], np.cumsum(dists)))
-
-        # Fit cubic spline; expose as both cs (public) and _curve (internal)
-        self.cs      = CubicSpline(cum, xy, bc_type='natural')
-        self._curve  = self.cs
-        self.raw_path = xy
-
-        # Piecewise-linear geometry for projection
-        self.cached_cum_len      = cum
-        self.total_len           = float(cum[-1])
-        self.cached_seg_lens     = dists
-        self.cached_directions   = deltas / dists[:, None]
-        seg_headings             = np.arctan2(deltas[:, 1], deltas[:, 0])
-        final_heading            = seg_headings[-1] if seg_headings.size > 0 else 0.0
-        self.path                = np.column_stack(
-            (xy, np.append(seg_headings, final_heading)))
-        self.cached_seg_headings = seg_headings
-        self._use_custom_heading = False
-
-        self._reset_state()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# QuinticPlanner
-# ══════════════════════════════════════════════════════════════════════════════
-
-class QuinticPlanner(_CurvePlanner):
-    """
-    Reference planner using a **quintic B-spline** (degree 5, C4 continuous).
-
-    Compared to ``SplinePlanner`` (cubic, C2):
-
-    * Degree 5 polynomial per segment — C4 continuity at waypoints.
-    * Position, velocity, acceleration, jerk, and snap are all continuous
-      across waypoints, giving the smoothest possible acceleration profile.
-    * Particularly beneficial for dynamically sensitive systems where
-      abrupt changes in acceleration cause vibration or payload disturbance
-      (e.g. cargo drones, surgical robots, high-speed industrial arms).
-
-    For paths with fewer than 6 waypoints the quintic degree is silently
-    reduced so a valid spline can always be fitted:
-
-    ===== =====
-    M pts Degree
-    ===== =====
-    2     1 (linear)
-    3     2 (quadratic)
-    4     3 (cubic)
-    5     4 (quartic)
-    6+    5 (quintic)
-    ===== =====
-
-    All other behaviour (projection, curvature speed limiting, heading
-    penalty, full reference sampling) is identical to ``SplinePlanner``.
-
-    Parameters
-    ----------
-    solver : Solver
-    path : array-like, shape (M, 2)
-        Only XY is used; headings are derived from the spline tangent.
-    stable_state : array-like, shape (n,)
-    ref_state_indices : list of int, optional
-        Must contain at least [i_x, i_y, i_yaw].  Optional 4th and 5th
-        entries are velocity indices [i_vx, i_vy] filled from the tangent.
-    lookahead : float
-        Extra arc length ahead of the projected position.  Default 0.5.
-    projection_window : int
-        Windowed projection window size.  Default 15.
-    max_lat_accel : float
-        Maximum lateral acceleration for speed limiting (m/s²).  Default 2.0.
-    """
-
-    def __init__(
-        self,
-        solver: Solver,
-        path: Union[List[Point], np.ndarray],
-        stable_state: np.ndarray,
-        ref_state_indices: Optional[List[int]] = None,
-        lookahead: float = 0.5,
-        projection_window: int = 15,
-        max_lat_accel: float = 2.0,
-    ):
-        self._degree: int = 5   # actual degree set in update_path; store for info
-        super().__init__(solver, path, stable_state, ref_state_indices,
-                         lookahead=lookahead,
-                         projection_window=projection_window,
-                         max_lat_accel=max_lat_accel)
-
-    def update_path(self, path: Union[List[Point], np.ndarray]):
-        points  = np.atleast_2d(np.copy(path))
-        if points.shape[0] < 2:
-            raise ValueError("Path must contain at least 2 waypoints.")
-
-        xy      = points[:, :2]
-        M       = len(xy)
-        deltas  = xy[1:] - xy[:-1]
-        dists   = np.maximum(np.linalg.norm(deltas, axis=1), 1e-8)
-        cum     = np.concatenate(([0.0], np.cumsum(dists)))
-
-        # Quintic if M >= 6; gracefully degrade for shorter paths
-        self._degree = min(5, M - 1)
-        self.qs      = make_interp_spline(cum, xy, k=self._degree)
-        self._curve  = self.qs
-        self.raw_path = xy
-
-        # Piecewise-linear geometry for projection
-        self.cached_cum_len      = cum
-        self.total_len           = float(cum[-1])
-        self.cached_seg_lens     = dists
-        self.cached_directions   = deltas / dists[:, None]
-        seg_headings             = np.arctan2(deltas[:, 1], deltas[:, 0])
-        final_heading            = seg_headings[-1] if seg_headings.size > 0 else 0.0
-        self.path                = np.column_stack(
-            (xy, np.append(seg_headings, final_heading)))
-        self.cached_seg_headings = seg_headings
-        self._use_custom_heading = False
-
-        self._reset_state()
-
-    @property
-    def degree(self) -> int:
-        """Actual polynomial degree used (5 for 6+ waypoints, less otherwise)."""
-        return self._degree
-
-
-# ── Alias ─────────────────────────────────────────────────────────────────
-
-LinearPlanner = WaypointPlanner

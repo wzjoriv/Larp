@@ -6,7 +6,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 from larp.field import RiskField
 from larp.fn import interpolate_along_route
-from larp.pp.network import QuadNetwork
+from larp.lpp._network import QuadNetwork
 
 from larp.quad import QuadNode, QuadTree, QRiskField
 from larp.types import Scaler, Point

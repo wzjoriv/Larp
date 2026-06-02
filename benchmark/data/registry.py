@@ -7,7 +7,7 @@ and algorithm → (solver_class, field_key, flexible_bounds) mappings.
 
 import larp.dynamics as _dyn_module
 
-from larp.tp.solver import SQPSolver, ALILQRSolver, ALDDPSolver
+from larp.ltp.solver.solver import SQPSolver, ALILQRSolver, ALDDPSolver
 
 
 def get_dynamics_cls(name: str) -> type:

@@ -23,7 +23,7 @@ def test_network_on_simple_pf():
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2))
     
-    network = larp.pp.QuadNetwork(quadtree=quadtree, build_network=True)
+    network = larp.lpp.QuadNetwork(quadtree=quadtree, build_network=True)
 
 test_network_on_simple_pf()
 
@@ -45,7 +45,7 @@ def test_refresh_of_network():
                                   minimum_length_limit=5,
                                   edge_bounds=np.arange(0.2, 0.8, 0.2))
     
-    network = larp.pp.QuadNetwork(quadtree=quadtree, build_network=True)
+    network = larp.lpp.QuadNetwork(quadtree=quadtree, build_network=True)
 
     qfield = larp.QRiskField(quadtree)
     qfield.delRGJ([1])

@@ -3,10 +3,9 @@ import numpy as np
 
 larp = pytest.importorskip("larp")
 from larp.dynamics import WMRDynamics
-from larp.tp.solver import SQPSolver
-from larp.tp.planner import (
-    Planner, WaypointPlanner, SplinePlanner, QuinticPlanner, LinearPlanner,
-    _CurvePlanner,
+from larp.ltp.solver.solver import SQPSolver
+from larp.ltp.solver.planner import (
+    Planner, WaypointPlanner, SplinePlanner,
 )
 
 
@@ -37,7 +36,7 @@ def _stable() -> np.ndarray:
     return np.zeros(3)
 
 
-ALL_PLANNERS = [WaypointPlanner, SplinePlanner, QuinticPlanner]
+ALL_PLANNERS = [WaypointPlanner, SplinePlanner]
 
 
 # 1. TestPlannerABC
@@ -69,24 +68,11 @@ class TestPlannerABC:
     def test_spline_is_planner(self):
         assert issubclass(SplinePlanner, Planner)
 
-    def test_quintic_is_planner(self):
-        assert issubclass(QuinticPlanner, Planner)
-
-    def test_spline_inherits_curve_planner(self):
-        assert issubclass(SplinePlanner, _CurvePlanner)
-
-    def test_quintic_inherits_curve_planner(self):
-        assert issubclass(QuinticPlanner, _CurvePlanner)
-
-    def test_linear_alias(self):
-        assert LinearPlanner is WaypointPlanner
-
     def test_ordering_in_module(self):
         """WaypointPlanner must appear before SplinePlanner in the source."""
-        import inspect, larp.tp.planner as pm
+        import inspect, larp.ltp.solver.planner as pm
         src = inspect.getsource(pm)
         assert src.index('class WaypointPlanner') < src.index('class SplinePlanner')
-        assert src.index('class SplinePlanner') < src.index('class QuinticPlanner')
 
 
 # 2. TestWaypointConstruction
@@ -358,7 +344,7 @@ class TestSplinePlanner:
 
     def test_instantiation(self):
         sp = SplinePlanner(_make_solver(), _straight_path(), _stable())
-        assert sp.cs is not None and sp.raw_path is not None
+        assert sp._curve is not None and sp.raw_path is not None
 
     def test_get_ref_shape_N(self):
         s  = _make_solver()
@@ -431,120 +417,122 @@ class TestSplinePlanner:
         assert sp._seg_idx >= 33
 
 
-# 8. TestQuinticPlanner
+# 8. TestSplinePlannerDegree
 
-class TestQuinticPlanner:
+class TestSplinePlannerDegree:
+    """Tests for SplinePlanner with non-default degrees (e.g. degree=5)."""
 
-    def test_instantiation(self):
-        qp = QuinticPlanner(_make_solver(), _straight_path(), _stable())
-        assert qp.qs is not None and qp.raw_path is not None
+    def test_instantiation_degree5(self):
+        sp = SplinePlanner(_make_solver(), _straight_path(), _stable(), degree=5)
+        assert sp._curve is not None and sp.raw_path is not None
 
     def test_degree_quintic_for_6plus_waypoints(self):
         path = np.column_stack((np.linspace(0., 10., 7), np.zeros(7)))
-        qp = QuinticPlanner(_make_solver(), path, _stable())
-        assert qp.degree == 5
+        sp = SplinePlanner(_make_solver(), path, _stable(), degree=5)
+        assert sp.degree == 5
 
     def test_degree_degrades_for_fewer_waypoints(self):
         for n_pts, expected_deg in [(2,1),(3,2),(4,3),(5,4),(6,5)]:
             xs = np.linspace(0., float(n_pts-1), n_pts)
             path = np.column_stack((xs, np.zeros(n_pts)))
-            qp = QuinticPlanner(_make_solver(), path, _stable())
-            assert qp.degree == expected_deg, \
-                f"n_pts={n_pts}: expected degree {expected_deg}, got {qp.degree}"
+            sp = SplinePlanner(_make_solver(), path, _stable(), degree=5)
+            assert sp.degree == expected_deg, \
+                f"n_pts={n_pts}: expected degree {expected_deg}, got {sp.degree}"
 
     def test_get_ref_shape_N(self):
         s  = _make_solver()
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
-        qp = QuinticPlanner(s, path, _stable())
-        ref = qp.get_ref(np.zeros(3), nominal_speed=2.)
+        sp = SplinePlanner(s, path, _stable(), degree=5)
+        ref = sp.get_ref(np.zeros(3), nominal_speed=2.)
         assert ref.shape == (s.N, 3)
 
     def test_get_ref_never_n_plus_1(self):
         s  = _make_solver()
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
         for x in [np.zeros(3), np.array([5.,0.,0.])]:
-            qp = QuinticPlanner(s, path, _stable())
-            assert qp.get_ref(x).shape[0] == s.N
+            sp = SplinePlanner(s, path, _stable(), degree=5)
+            assert sp.get_ref(x).shape[0] == s.N
 
     def test_get_ref_starts_ahead(self):
         s  = _make_solver()
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
-        qp = QuinticPlanner(s, path, _stable())
-        ref = qp.get_ref(np.zeros(3), nominal_speed=2.)
+        sp = SplinePlanner(s, path, _stable(), degree=5)
+        ref = sp.get_ref(np.zeros(3), nominal_speed=2.)
         assert ref[0, 0] > 0.
 
     def test_get_ref_finite(self):
         s  = _make_solver()
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
-        qp = QuinticPlanner(s, path, _stable())
-        assert np.all(np.isfinite(qp.get_ref(np.zeros(3))))
+        sp = SplinePlanner(s, path, _stable(), degree=5)
+        assert np.all(np.isfinite(sp.get_ref(np.zeros(3))))
 
     def test_get_ref_with_2_waypoints(self):
         """Degree degrades to 1 (linear) — must still produce valid output."""
         s  = _make_solver()
-        qp = QuinticPlanner(s, np.array([[0.,0.],[10.,0.]]), _stable())
-        assert qp.degree == 1
-        ref = qp.get_ref(np.zeros(3), nominal_speed=2.)
+        sp = SplinePlanner(s, np.array([[0.,0.],[10.,0.]]), _stable(), degree=5)
+        assert sp.degree == 1
+        ref = sp.get_ref(np.zeros(3), nominal_speed=2.)
         assert ref.shape == (s.N, 3) and np.all(np.isfinite(ref))
 
     def test_get_full_ref_overrides_base(self):
-        assert QuinticPlanner.get_full_ref is not Planner.get_full_ref
+        assert SplinePlanner.get_full_ref is not Planner.get_full_ref
 
     def test_get_full_ref_shape_and_content(self):
         s  = _make_solver()
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
-        qp = QuinticPlanner(s, path, _stable())
-        full = qp.get_full_ref(nominal_speed=2.)
+        sp = SplinePlanner(s, path, _stable(), degree=5)
+        full = sp.get_full_ref(nominal_speed=2.)
         assert full.ndim == 2 and full.shape[1] == 3
         assert np.all(np.isfinite(full)) and full.shape[0] > s.N
         assert full[0, 0] < 0.5 and full[-1, 0] > 9.
 
-    def test_quintic_smoother_than_spline_on_l_path(self):
-        """QuinticPlanner (C4) should have smaller max 2nd-diff of heading
-        than SplinePlanner (C2) on a sharp L-path, indicating smoother turns."""
+    def test_degree5_smoother_than_degree3_on_l_path(self):
+        """degree=5 (C4) should produce output at least as smooth as degree=3 (C2)."""
         s  = _make_solver()
-        # Dense L-path so both planners have enough knots
         l6 = np.array([[0.,0.],[2.,0.],[4.,0.],[6.,0.],[6.,2.],[6.,4.],[6.,6.]])
-        sp = SplinePlanner(s,  l6, _stable())
-        qp = QuinticPlanner(s, l6, _stable())
-        full_sp = sp.get_full_ref(2.)
-        full_qp = qp.get_full_ref(2.)
-        assert np.all(np.isfinite(full_sp)) and np.all(np.isfinite(full_qp))
-        # Both should span the path
-        assert full_sp.shape[0] > s.N and full_qp.shape[0] > s.N
+        sp3 = SplinePlanner(s, l6, _stable(), degree=3)
+        sp5 = SplinePlanner(s, l6, _stable(), degree=5)
+        full3 = sp3.get_full_ref(2.)
+        full5 = sp5.get_full_ref(2.)
+        assert np.all(np.isfinite(full3)) and np.all(np.isfinite(full5))
+        assert full3.shape[0] > s.N and full5.shape[0] > s.N
 
     def test_update_path_resets_state(self):
         s  = _make_solver()
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
-        qp = QuinticPlanner(s, path, _stable())
-        qp._last_s = 7.; qp._seg_idx = 4
-        qp.update_path(path)
-        assert qp._last_s == 0. and qp._seg_idx == 0
+        sp = SplinePlanner(s, path, _stable(), degree=5)
+        sp._last_s = 7.; sp._seg_idx = 4
+        sp.update_path(path)
+        assert sp._last_s == 0. and sp._seg_idx == 0
+
+    def test_update_path_preserves_requested_degree(self):
+        """Calling update_path with a short path shouldn't permanently lower degree."""
+        s    = _make_solver()
+        sp   = SplinePlanner(s, np.array([[0.,0.],[1.,0.]]), _stable(), degree=5)
+        assert sp.degree == 1
+        long = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
+        sp.update_path(long)
+        assert sp.degree == 5
 
     def test_projection_fallback(self):
         s  = _make_solver()
         path = np.column_stack((np.linspace(0., 50., 51), np.zeros(51)))
-        qp = QuinticPlanner(s, path, _stable(), projection_window=5)
-        qp._seg_idx = 5; qp._last_s = 5.
-        s_proj = qp._project_to_path(35., 0.)
+        sp = SplinePlanner(s, path, _stable(), degree=5, projection_window=5)
+        sp._seg_idx = 5; sp._last_s = 5.
+        s_proj = sp._project_to_path(35., 0.)
         assert abs(s_proj - 35.) < 0.2
-        assert qp._seg_idx >= 33
+        assert sp._seg_idx >= 33
 
     def test_seg_idx_property(self):
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
-        qp = QuinticPlanner(_make_solver(), path, _stable())
-        qp._seg_idx = 5
-        assert qp.seg_idx == 5
+        sp = SplinePlanner(_make_solver(), path, _stable(), degree=5)
+        sp._seg_idx = 5
+        assert sp.seg_idx == 5
 
     def test_degree_property(self):
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
-        qp = QuinticPlanner(_make_solver(), path, _stable())
-        assert qp.degree == 5
-
-    def test_same_shared_methods_as_spline(self):
-        """get_ref and get_full_ref resolve through _CurvePlanner — same impl."""
-        assert QuinticPlanner.get_ref     is SplinePlanner.get_ref
-        assert QuinticPlanner.get_full_ref is SplinePlanner.get_full_ref
+        sp = SplinePlanner(_make_solver(), path, _stable(), degree=5)
+        assert sp.degree == 5
 
 
 # 9. TestGetFullRef
@@ -561,12 +549,6 @@ class TestGetFullRef:
 
     def test_spline_overrides_base(self):
         assert SplinePlanner.get_full_ref is not Planner.get_full_ref
-
-    def test_quintic_overrides_base(self):
-        assert QuinticPlanner.get_full_ref is not Planner.get_full_ref
-
-    def test_spline_and_quintic_share_implementation(self):
-        assert SplinePlanner.get_full_ref is QuinticPlanner.get_full_ref
 
     def test_waypoint_spans_path(self):
         s  = _make_solver()
@@ -612,9 +594,9 @@ class TestGetFullRef:
 # get_full_ref with no unwrapping.  On any path where consecutive segments
 # cross the ±180° boundary this produces a discontinuous heading column —
 # e.g. on a figure-8 a jump of ~302° appears between 146° and -156° even
-# though the robot is only turning ~58°.  SplinePlanner and QuinticPlanner
-# called np.unwrap() on their spline-derived headings so they returned ~220°
-# for the same point, making the three planners look completely different even
+# though the robot is only turning ~58°.  SplinePlanner called np.unwrap() on
+# its spline-derived headings so it returned ~220° for the same point, making
+# the planners look completely different even
 # though the underlying physical heading is identical.
 #
 # The fix: Planner.get_full_ref (base class) now applies np.unwrap() to the
@@ -723,14 +705,14 @@ class TestHeadingContinuity:
         planners = {
             "Waypoint": WaypointPlanner(s, _fig8_path(), _stable()),
             "Spline":   SplinePlanner(s,   _fig8_path(), _stable()),
-            "Quintic":  QuinticPlanner(s,  _fig8_path(), _stable()),
+            "SplineQ5": SplinePlanner(s,   _fig8_path(), _stable(), degree=5),
         }
         spans = {}
         for name, pl in planners.items():
             full = pl.get_full_ref(2.)
             spans[name] = np.degrees(full[:, 2].max() - full[:, 2].min())
 
-        for other in ["Spline", "Quintic"]:
+        for other in ["Spline", "SplineQ5"]:
             span_diff = abs(spans["Waypoint"] - spans[other])
             assert span_diff < 30., (
                 f"Waypoint vs {other}: heading span diff = {span_diff:.1f}° "
@@ -946,27 +928,7 @@ class TestGetFullTrajectory:
             assert np.all(np.isfinite(xs)) and np.all(np.isfinite(us))
 
 
-# 12. TestLinearPlannerAlias
-
-class TestLinearPlannerAlias:
-
-    def test_is_waypoint(self):
-        assert LinearPlanner is WaypointPlanner
-
-    def test_instantiation(self):
-        lp = LinearPlanner(_make_solver(), _straight_path(), _stable())
-        assert isinstance(lp, WaypointPlanner) and isinstance(lp, Planner)
-
-    def test_same_behaviour(self):
-        s    = _make_solver()
-        path = _straight_path()
-        wp   = WaypointPlanner(s, path.copy(), _stable())
-        lp   = LinearPlanner(s,  path.copy(), _stable())
-        x0   = np.zeros(3)
-        assert np.allclose(wp.get_ref(x0), lp.get_ref(x0), atol=1e-10)
-
-
-# 13. TestPathEdgeCases
+# 12. TestPathEdgeCases
 
 class TestPathEdgeCases:
 

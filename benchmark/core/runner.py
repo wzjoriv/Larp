@@ -24,8 +24,8 @@ from data.config import load_config, validate_config
 from data.registry import ALGO_REGISTRY
 from core.result import SimulationResult
 
-from larp.tp.solver import SQPSolver, ALILQRSolver, ALDDPSolver
-from larp.tp.planner import WaypointPlanner
+from larp.ltp.solver.solver import SQPSolver, ALILQRSolver, ALDDPSolver
+from larp.ltp.solver.planner import WaypointPlanner
 
 try:
     from rich.progress import (

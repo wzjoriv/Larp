@@ -24,10 +24,10 @@ except ImportError:
 
 import larp
 import larp.environment as _env_module
-import larp.pp as pp
-from larp.rug_utils.progress_bar import progress_bar
-from larp.tp.planner import LinearPlanner
-from larp.tp.solver import SQPSolver, ALILQRSolver, ALDDPSolver
+import larp.lpp as lpp
+from rich.progress import Progress
+from larp.ltp.solver.planner import WaypointPlanner
+from larp.ltp.solver.solver import SQPSolver, ALILQRSolver, ALDDPSolver
 from larp.environment import ZoomedCityVisualizer
 
 _SOLVER_REGISTRY: dict[str, type] = {
@@ -194,7 +194,7 @@ def simulate(cfg: dict) -> list[np.ndarray]:
     goal_xy     = xf[ref_indices[:2]]
     print(f"\nPath planning: {start_xy} → {goal_xy}")
 
-    path = pp.QuadPlanner(quadtree).find_path(start_xy, goal_xy)
+    path = lpp.QuadPlanner(quadtree).find_path(start_xy, goal_xy)
     if path is None:
         raise RuntimeError("QuadPlanner found no path. Check start/goal or map.")
 
@@ -204,7 +204,7 @@ def simulate(cfg: dict) -> list[np.ndarray]:
     solver   = _build_solver(cfg, dyn, opt_field, u_bounds, x_bounds)
     print(f"\nSolver  N={solver.N}  safety={cfg['optimizer']['safety_distance']} m")
 
-    traj_planner = LinearPlanner(
+    traj_planner = WaypointPlanner(
         solver            = solver,
         path              = path,
         stable_state      = stable_state,
@@ -226,38 +226,37 @@ def simulate(cfg: dict) -> list[np.ndarray]:
     height_sim_bound = cfg["sim"]["height_sim_bound"]
     z_idx            = cfg["optimizer"]["x_bounds"].get("z_idx", 4)
 
-    print(f"\nRunning {T_steps} steps …")
-    progress_bar(0.0)
+    with Progress() as progress:
+        task = progress.add_task(f"Simulating {T_steps} steps", total=T_steps)
+        with _video_writer(viz.fig, cfg["vis"]["output_video"], fps,
+                           cfg["vis"]["dpi"], save_video) as writer:
+            for k in range(T_steps):
+                ref = traj_planner.get_ref(x_cur, nominal_speed=nominal_speed)
+                xs_pred, us = solver.solve(x_cur, ref, us_prev)
 
-    with _video_writer(viz.fig, cfg["vis"]["output_video"], fps,
-                       cfg["vis"]["dpi"], save_video) as writer:
-        for k in range(T_steps):
-            ref = traj_planner.get_ref(x_cur, nominal_speed=nominal_speed)
-            xs_pred, us = solver.solve(x_cur, ref, us_prev)
+                u_cur   = us[0]
+                us_prev = np.vstack([us[1:], us[-1:]])
 
-            u_cur   = us[0]
-            us_prev = np.vstack([us[1:], us[-1:]])
+                Ad, Bd, gd = dyn.discretize(x_cur[None, :], u_cur[None, :], dt, estimate=False)
+                x_next = Ad[0] @ x_cur + Bd[0] @ u_cur + gd[0]
 
-            Ad, Bd, gd = dyn.discretize(x_cur[None, :], u_cur[None, :], dt, estimate=False)
-            x_next = Ad[0] @ x_cur + Bd[0] @ u_cur + gd[0]
+                z = x_next[z_idx]
+                if np.any(np.isnan(x_next)) or z < 0 or z > height_sim_bound:
+                    raise RuntimeError(f"Simulation unstable at step {k}: z={z:.2f} m")
 
-            z = x_next[z_idx]
-            if np.any(np.isnan(x_next)) or z < 0 or z > height_sim_bound:
-                raise RuntimeError(f"Simulation unstable at step {k}: z={z:.2f} m")
+                if k % cfg["vis"]["render_every"] == 0:
+                    A_c, B_c = solver.get_field_constraints(x_cur)
+                    viz.update(
+                        (k + 1) * dt, x_cur, u_cur, xs_pred,
+                        np.array(traj), ref_traj=ref,
+                        A_constraint=A_c, B_constraint=B_c,
+                    )
+                    if writer is not None:
+                        writer.grab_frame()
 
-            if k % cfg["vis"]["render_every"] == 0:
-                A_c, B_c = solver.get_field_constraints(x_cur)
-                viz.update(
-                    (k + 1) * dt, x_cur, u_cur, xs_pred,
-                    np.array(traj), ref_traj=ref,
-                    A_constraint=A_c, B_constraint=B_c,
-                )
-                if writer is not None:
-                    writer.grab_frame()
-
-            x_cur = x_next
-            traj.append(x_cur.copy())
-            progress_bar((k + 1) / T_steps)
+                x_cur = x_next
+                traj.append(x_cur.copy())
+                progress.advance(task)
 
     #plt.savefig(cfg["vis"]["output_pdf"])
     if not save_video:

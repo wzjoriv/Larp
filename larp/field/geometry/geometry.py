@@ -1,0 +1,151 @@
+from __future__ import annotations
+from abc import ABC, abstractmethod
+from typing import List, Optional, Union
+
+import numpy as np
+from larp.types import Point, RGeoJSONObject
+
+"""
+Author: Josue N Rivera
+
+x are assumed to be a list of point coordinates in euclidean space
+
+"""
+
+
+__all__ = ["RGJGeometry", "MultiRGJGeometry"]
+
+
+class RGJGeometry(ABC):
+
+    RGJType = None
+
+    def __init__(self,
+                 coordinates:Union[np.ndarray, List[Point], List[List[Point]], Point],
+                 repulsion:Optional[np.ndarray] = None,
+                 properties:Optional[dict] = None, **kwargs) -> None:
+        
+        self.coordinates = np.array(coordinates)
+        self.repulsion = np.eye(2)
+        self.inv_repulsion = np.linalg.inv(self.repulsion)
+        self.eye_repulsion = np.eye(len(self.repulsion))
+        self.properties = {} if properties is None else properties
+        self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
+        
+        bbox = self.coordinates.reshape(-1, 2)
+        self.bbox = np.array([bbox.min(0), bbox.max(0)])
+
+    def set_coordinates(self, new_coords):
+        self.coordinates = np.array(new_coords)
+        bbox = self.coordinates.reshape(-1, 2)
+        self.bbox = np.array([bbox.min(0), bbox.max(0)])
+
+    def set_repulsion(self, new_repulsion):
+        self.repulsion = np.array(new_repulsion)
+        self.inv_repulsion = np.linalg.inv(self.repulsion)
+        self.eye_repulsion = np.eye(len(self.repulsion))
+        self.grad_matrix = self.inv_repulsion + self.inv_repulsion.T
+
+    def get_dist_matrix(self, scaled=True, inverted=True):
+
+        if inverted and scaled:
+            return self.inv_repulsion
+        if not scaled:
+            return self.eye_repulsion
+        
+        return self.repulsion
+
+    def get_center_point(self) -> np.ndarray:
+        if len(self.coordinates.shape) <= 1:
+            return self.coordinates
+        
+        coords = np.reshape(self.coordinates, (-1, 2))
+
+        return (coords.min(0) + coords.max(0))/2.0
+    
+    def in_bbox(self, x:Point) -> bool:
+        bboxes = self.bbox.reshape((-1, 2))
+        for i in range(0, len(bboxes), 2):
+            if all(x >= bboxes[i]) and all(x <= bboxes[i+1]):
+                return True
+
+        return False
+
+    def squared_dist(self, x: np.ndarray, scaled=True, inverted=True, **kwargs) -> np.ndarray:
+        nvector = self.repulsion_vector(x, min_dist_select = True)
+        matrix = self.get_dist_matrix(scaled=scaled, inverted=inverted)
+
+        return ((nvector@matrix)*nvector).sum(axis=1)
+    
+    @abstractmethod
+    def repulsion_vector(self, x:np.ndarray, **kwargs) -> np.ndarray:
+        raise NotImplementedError
+    
+    def contact_point(self, x:np.ndarray, **kwargs):
+        return x - self.repulsion_vector(x, **kwargs)
+    
+    def gradient(self, x:np.ndarray, **kwargs):
+        repulsion_vector = self.repulsion_vector(x, **kwargs)
+        return - self.eval(x=x).reshape(-1, 1) * (repulsion_vector@self.grad_matrix.T)
+
+    def eval(self, x:np.ndarray):
+        return np.exp(-self.squared_dist(x))
+    
+    def toRGeoJSON(self) -> RGeoJSONObject:
+        if self.RGJType is None: 
+            return UserWarning(f"Object doesn't have a RGJType")
+        
+        return {
+            "type": "Feature",
+            "properties": self.properties,
+            "geometry": {
+                "type": self.RGJType,
+                "coordinates": self.coordinates.tolist() if isinstance(self.coordinates, np.ndarray) else self.coordinates,
+                "repulsion": self.repulsion.tolist()
+            }
+        }
+    
+    def __repr__(self):
+        """
+        Returns a more concise and unambiguous string representation of the object,
+        typically used in debugging.
+        """
+        return str(self.toRGeoJSON())
+
+    def __str__(self):
+        """
+        Returns a user-friendly string representation of the object,
+        using its RGeoJSON representation.
+        """
+
+        def ndnumpy_to_str(array):
+            string = f"{array.tolist()}"
+
+            if len(string) > 50:
+                string = string[:25] + "..." + string[-25:]
+
+            return string
+
+        return f"{self.__class__.__name__}(coordinates={ndnumpy_to_str(self.coordinates)} repulsion={ndnumpy_to_str(self.repulsion)})"
+    
+    def __geo_interface__(self):
+        return self.toRGeoJSON()["geometry"]
+
+
+class MultiRGJGeometry(RGJGeometry, ABC):
+    
+    RGJType = None
+
+    def repulsion_vector(self, x: np.ndarray, min_dist_select:bool = True, **kwargs) -> np.ndarray:
+        raise NotImplementedError
+
+    def contact_point(self, x: np.ndarray, min_dist_select:bool = True, **kwargs):
+        vectors = self.repulsion_vector(x=x, min_dist_select=min_dist_select, **kwargs)
+
+        if min_dist_select:
+            return x - vectors
+        
+        n = len(x)
+        points_idx = np.tile(np.arange(n), len(vectors)//n)
+
+        return x[points_idx] - vectors

@@ -118,73 +118,100 @@ def optimize_path_via_edge_bundling(path: List[Point], quad_path: List[QuadNode]
 
     return optimized_points
 
-def has_quad_zone_sight(
-        p1: np.ndarray,
-        p2: np.ndarray,
-        network: QuadNetwork,
-        step: Optional[float] = None,
-        min_zone:int = 3
-    ) -> Tuple[bool, Optional[int], Optional[QuadNode]]:
+MAX_SMOOTHING_SAMPLES = 1024
 
+def segment_risk_load(p1: np.ndarray, p2: np.ndarray, network: QuadNetwork, step: float) -> float:
     """
-    Returns whether the path from p1 to p2 maintains or increases zone (i.e., risk doesn't increase).
+    Computes the risk-weighted length of the straight segment from ``p1`` to ``p2``.
 
-    Args:
-        p1 (np.ndarray): Start point.
-        p2 (np.ndarray): End point.
-        network (QuadNetwork): The quad network to check in.
-        step (float): Distance between sample points.
+    Each sampled sub-interval is weighted by the maximum field value of the quad it
+    falls in, integrating the risk "load" carried along the segment. A segment that
+    enters a forbidden cell (``boundary_zone == 0``) returns infinity.
 
-    Returns:
-        bool: True if zone doesn't decrease, False otherwise.
+    Parameters
+    ----------
+    p1, p2 : np.ndarray
+        Segment endpoints.
+    network : QuadNetwork
+        Quad network providing the per-cell risk weight.
+    step : float
+        Sampling distance along the segment.
+
+    Returns
+    -------
+    float
+        Risk-weighted length, or ``np.inf`` if the segment crosses a forbidden cell.
     """
-    if step is None:
-        step = network.quadtree.min_sector_size / 4
+    diff = np.asarray(p2, dtype=float) - np.asarray(p1, dtype=float)
+    distance = float(np.linalg.norm(diff))
 
-    p1 = np.asarray(p1, dtype=float)
-    p2 = np.asarray(p2, dtype=float)
-
-    if np.allclose(p1, p2):
-        return True
-
-    distance = np.linalg.norm(p2 - p1)
-    num_samples = max(2, int(distance / step))
-    alphas = np.linspace(0, 1, num_samples)
-    points = (1 - alphas[:, None]) * p1 + alphas[:, None] * p2
+    num_samples = min(max(2, int(distance / step) + 1), MAX_SMOOTHING_SAMPLES)
+    alphas = np.linspace(0.0, 1.0, num_samples)
+    points = p1 + alphas[:, None] * diff
 
     quads = network.find_quad(points)
-    allowed_zone = max(quads[0].boundary_zone, min_zone)
 
-    # Reduce to unique quads
-    used = set()
-    quads = [x for x in quads if x not in used and (used.add(x) or True)]
+    weights = np.empty(num_samples)
+    for k, quad in enumerate(quads):
+        if quad is None or quad.boundary_zone == 0:
+            return np.inf
+        weights[k] = quad.boundary_max_range
 
-    # Accept quads that have a non-decending quad zone order 
-    for quad in quads:
-        if quad is None or quad.boundary_zone < allowed_zone:
-            return False
-        
-        allowed_zone = quad.boundary_zone
+    sub_length = distance / (num_samples - 1)
+    return float(sub_length * 0.5 * (weights[:-1] + weights[1:]).sum())
 
-    return True
-
-def network_path_smoothing(path: List[Point], network: QuadNetwork, step: Optional[float] = None) -> np.ndarray:
+def network_path_smoothing(path: List[Point], network: QuadNetwork, step: Optional[float] = None, tolerance: float = 1.0) -> np.ndarray:
     """
-    Smooths a path by merging segments that are in the same zone or higher zone.
+    Shortcuts a path while keeping its accumulated risk load bounded.
+
+    Walking from the start, the furthest reachable waypoint is selected whose
+    straight shortcut neither crosses a forbidden cell nor carries more risk load
+    than the original sub-path it replaces, scaled by ``tolerance``. With
+    ``tolerance == 1.0`` the smoothed path never increases load over the input.
+
+    Parameters
+    ----------
+    path : List[Point]
+        Ordered waypoints produced by a network planner.
+    network : QuadNetwork
+        Quad network whose cells provide the per-cell risk weight.
+    step : float, optional
+        Sampling distance along candidate segments. Defaults to a quarter of the
+        smallest quad sector.
+    tolerance : float, optional
+        Allowed risk load relative to the original sub-path. Values above ``1.0``
+        trade higher load for straighter paths.
+
+    Returns
+    -------
+    np.ndarray
+        Smoothed waypoints.
     """
-    if len(path) <= 2:
-        return np.array(path, dtype=float)
+    path = np.asarray(path, dtype=float)
+    n = len(path)
+    if n <= 2:
+        return path
 
-    optimized = [path[0]]
+    if step is None:
+        step = network.quadtree.min_sector_size / 4.0
 
-    i = 1
-    while i < len(path) - 1:
-        if not has_quad_zone_sight(optimized[-1], path[i+1], network=network, step=step):
-            optimized.append(path[i])
-        i += 1
+    cumulative_load = np.zeros(n)
+    for i in range(1, n):
+        cumulative_load[i] = cumulative_load[i - 1] + segment_risk_load(path[i - 1], path[i], network, step)
 
-    optimized.append(path[-1])
-    return np.array(optimized, dtype=float)
+    keep = [0]
+    anchor = 0
+    while anchor < n - 1:
+        chosen = anchor + 1
+        for j in range(n - 1, anchor + 1, -1):
+            baseline = cumulative_load[j] - cumulative_load[anchor]
+            if segment_risk_load(path[anchor], path[j], network, step) <= baseline * tolerance:
+                chosen = j
+                break
+        keep.append(chosen)
+        anchor = chosen
+
+    return path[keep]
 
 class Planner():
 
@@ -408,33 +435,96 @@ class QuadPlanner(Planner):
         return  path
 
 # Path planning algorithms
-def smooth_path_line_of_sight(path: np.ndarray, field: RiskField, threshold: float):
-    if len(path) < 3:
+def field_segment_risk_load(p1: np.ndarray, p2: np.ndarray, field: RiskField, threshold: float, step: float) -> float:
+    """
+    Computes the risk-weighted length of the straight segment from ``p1`` to ``p2``.
+
+    The field value is integrated along the segment as a continuous risk weight. A
+    segment that reaches a sample above ``threshold`` is treated as colliding and
+    returns infinity.
+
+    Parameters
+    ----------
+    p1, p2 : np.ndarray
+        Segment endpoints.
+    field : RiskField
+        Field providing the per-point risk value.
+    threshold : float
+        Hard ceiling above which a sample counts as a collision.
+    step : float
+        Sampling distance along the segment.
+
+    Returns
+    -------
+    float
+        Risk-weighted length, or ``np.inf`` if the segment collides.
+    """
+    diff = np.asarray(p2, dtype=float) - np.asarray(p1, dtype=float)
+    distance = float(np.linalg.norm(diff))
+
+    num_samples = min(max(2, int(distance / step) + 1), MAX_SMOOTHING_SAMPLES)
+    alphas = np.linspace(0.0, 1.0, num_samples)
+    values = field.eval(p1 + alphas[:, None] * diff)
+
+    if np.any(values > threshold):
+        return np.inf
+
+    sub_length = distance / (num_samples - 1)
+    return float(sub_length * 0.5 * (values[:-1] + values[1:]).sum())
+
+def smooth_path_line_of_sight(path: np.ndarray, field: RiskField, threshold: float, step: Optional[float] = None, tolerance: float = 1.0) -> np.ndarray:
+    """
+    Shortcuts a field path while keeping its accumulated risk load bounded.
+
+    From each anchor the furthest collision-free waypoint is selected whose straight
+    shortcut carries no more risk load than the original sub-path it replaces, scaled
+    by ``tolerance``. With ``tolerance == 1.0`` the smoothed path never increases load.
+
+    Parameters
+    ----------
+    path : np.ndarray
+        Ordered waypoints.
+    field : RiskField
+        Field providing the per-point risk value.
+    threshold : float
+        Hard ceiling above which a sample counts as a collision.
+    step : float, optional
+        Sampling distance along candidate segments. Defaults to a fraction of the
+        field extent.
+    tolerance : float, optional
+        Allowed risk load relative to the original sub-path. Values above ``1.0``
+        trade higher load for straighter paths.
+
+    Returns
+    -------
+    np.ndarray
+        Smoothed waypoints.
+    """
+    path = np.asarray(path, dtype=float)
+    n = len(path)
+    if n < 3:
         return path
 
-    smoothed = [path[0]]
-    curr_idx = 0
-    
-    while curr_idx < len(path) - 1:
-        found_next = False
-        # Try to find the furthest shortcut
-        for next_idx in range(len(path) - 1, curr_idx, -1):
-            dist = np.linalg.norm(path[next_idx] - smoothed[-1])
-            steps = max(3, int(dist / 2.0))
-            check_pts = np.linspace(smoothed[-1], path[next_idx], steps)
-            
-            if not np.any(field.eval(check_pts) > threshold):
-                smoothed.append(path[next_idx])
-                curr_idx = next_idx
-                found_next = True
+    if step is None:
+        step = max(field.size) / 256.0
+
+    cumulative_load = np.zeros(n)
+    for i in range(1, n):
+        cumulative_load[i] = cumulative_load[i - 1] + field_segment_risk_load(path[i - 1], path[i], field, threshold, step)
+
+    keep = [0]
+    anchor = 0
+    while anchor < n - 1:
+        chosen = anchor + 1
+        for j in range(n - 1, anchor + 1, -1):
+            baseline = cumulative_load[j] - cumulative_load[anchor]
+            if field_segment_risk_load(path[anchor], path[j], field, threshold, step) <= baseline * tolerance:
+                chosen = j
                 break
-        
-        # FALLBACK: If no shortcut is found, move to the very next point
-        if not found_next:
-            curr_idx += 1
-            smoothed.append(path[curr_idx])
-            
-    return np.array(smoothed)
+        keep.append(chosen)
+        anchor = chosen
+
+    return path[keep]
 
 def find_path_irrt_star(
     start_point: Point,

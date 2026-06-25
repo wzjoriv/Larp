@@ -7,9 +7,9 @@ Planner hierarchy
 -----------------
 Planner (ABC)           - shared interface: update_path, get_ref, get_full_ref,
                           find_trajectory, get_full_trajectory
-├── WaypointPlanner     - arc-length-projection following on the raw piecewise-linear path
-├── SplinePlanner       - cubic-spline (C2) path following with velocity profiling
-└── QuinticPlanner      - quintic B-spline (C4) path following with velocity profiling
+├ WaypointPlanner     - arc-length-projection following on the raw piecewise-linear path
+├ SplinePlanner       - cubic-spline (C2) path following with velocity profiling
+└ QuinticPlanner      - quintic B-spline (C4) path following with velocity profiling
 
 Public API summary
 ------------------
@@ -46,9 +46,7 @@ from larp.tp.solver import Solver
 from larp.types import Point, Trajectory
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Abstract base
-# ══════════════════════════════════════════════════════════════════════════════
 
 class Planner(ABC):
     """
@@ -100,7 +98,7 @@ class Planner(ABC):
 
         self.update_path(path)
 
-    # ── Path management ────────────────────────────────────────────────────
+    #  Path management 
 
     def update_path(self, path: Union[List[Point], np.ndarray]):
         """
@@ -143,7 +141,7 @@ class Planner(ABC):
         """Reset per-path planner state (progress bookmark, warm start)."""
         self.prev_us = None
 
-    # ── Abstract interface ─────────────────────────────────────────────────
+    #  Abstract interface 
 
     @abstractmethod
     def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
@@ -164,7 +162,7 @@ class Planner(ABC):
         ref : (N, n) reference states
         """
 
-    # ── Concrete shared methods ────────────────────────────────────────────
+    #  Concrete shared methods 
 
     def get_full_ref(self, nominal_speed: float = 2.0) -> np.ndarray:
         """
@@ -221,6 +219,7 @@ class Planner(ABC):
         max_iters: int = 10,
         nominal_speed: float = 2.0,
         reset: bool = False,
+        us_init:np.ndarray|None = None
     ) -> Trajectory:
         """
         Generate a reference and solve for the optimised predictive trajectory.
@@ -238,6 +237,8 @@ class Planner(ABC):
             Target progression speed (m/s).
         reset : bool
             If True, resets progress state and bumps max_iters to at least 20.
+        us_init : (m, )
+            Initial control reference
 
         Returns
         -------
@@ -249,8 +250,10 @@ class Planner(ABC):
             max_iters = max(max_iters, 20)
 
         ref_traj = self.get_ref(x0, nominal_speed=nominal_speed)
+
+        us_init = us_init or self.prev_us
         xs, us   = self.solver.solve(x0, ref_traj,
-                                     us_init=self.prev_us,
+                                     us_init=us_init,
                                      max_iters=max_iters)
         self.prev_us = us
         return xs, us
@@ -260,9 +263,10 @@ class Planner(ABC):
         x0: np.ndarray,
         nominal_speed: float = 2.0,
         goal_tolerance: float = 1.0,
-        max_steps: int = 10000,
+        max_steps: int = 1000,
         max_iters: int = 10,
         stride: int = 1,
+        us_init: np.ndarray|None = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute a complete optimised trajectory from ``x0`` to the path goal.
@@ -307,6 +311,7 @@ class Planner(ABC):
         ix, iy      = self.ref_idx[0], self.ref_idx[1]
         goal_xy     = self.path[-1, :2]
         steps_taken = 0
+        self.prev_us = us_init
 
         while steps_taken < max_steps:
             xs, us = self.find_trajectory(x_cur,
@@ -330,9 +335,7 @@ class Planner(ABC):
         return np.array(all_xs), np.array(all_us)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # WaypointPlanner
-# ══════════════════════════════════════════════════════════════════════════════
 
 class WaypointPlanner(Planner):
     """
@@ -391,7 +394,7 @@ class WaypointPlanner(Planner):
         self._last_s  = 0.0
         self._seg_idx = 0
 
-    # ── Arc-length projection ──────────────────────────────────────────────
+    #  Arc-length projection 
 
     def _project_to_path(self, pos: np.ndarray) -> float:
         """
@@ -458,34 +461,28 @@ class WaypointPlanner(Planner):
         s_robot      = self._project_to_path(np.array([x0[ix], x0[iy]]))
         self._last_s = s_robot
 
-        dt  = self.solver.dt
-        N   = self.solver.N
+        dt = self.solver.dt
+        N  = self.solver.N
         hdg_off = self.solver.dynamics.heading_convention_offset
 
-        goal_pos, goal_hdg = self._interp_on_path(self.total_len)
-        goal_state         = self.stable_state.copy()
-        goal_state[ix]     = goal_pos[0]
-        goal_state[iy]     = goal_pos[1]
-        goal_state[ith]    = goal_hdg + hdg_off
-
         ref_states = []
-        for k in range(N):
-            s_ref = s_robot + self.lookahead + (k + 1) * nominal_speed * dt
+        s_prev = s_robot + self.lookahead
+        for _ in range(N):
+            remaining = max(self.total_len - s_prev, 0.0)
+            speed = (nominal_speed * min(1.0, remaining / self.goal_blend_dist)
+                    if self.goal_blend_dist > 0 else nominal_speed)
+            s_prev = min(s_prev + speed * dt, self.total_len)
 
-            if s_ref >= self.total_len - self.goal_blend_dist:
-                ref_states.append(goal_state)
-                continue
-
-            pos_ref, hdg_ref = self._interp_on_path(s_ref)
-            state            = self.stable_state.copy()
-            state[ix]        = pos_ref[0]
-            state[iy]        = pos_ref[1]
-            state[ith]       = hdg_ref + hdg_off
+            pos_ref, hdg_ref = self._interp_on_path(s_prev)
+            state      = self.stable_state.copy()
+            state[ix]  = pos_ref[0]
+            state[iy]  = pos_ref[1]
+            state[ith] = hdg_ref + hdg_off
             ref_states.append(state)
 
         return np.array(ref_states)
 
-    # ── Helpers ────────────────────────────────────────────────────────────
+    #  Helpers 
 
     def reset_path(self):
         """Reset waypoint progress to the start of the path."""
@@ -497,9 +494,7 @@ class WaypointPlanner(Planner):
         return self._seg_idx
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Internal base for curve-based planners
-# ══════════════════════════════════════════════════════════════════════════════
 
 class _CurvePlanner(Planner):
     """
@@ -542,7 +537,7 @@ class _CurvePlanner(Planner):
         self._last_s: float  = 0.0
         self._seg_idx: int   = 0
 
-    # ── Arc-length projection with heading penalty ─────────────────────────
+    #  Arc-length projection with heading penalty 
 
     def _project_to_path(
         self,
@@ -599,7 +594,7 @@ class _CurvePlanner(Planner):
         self._seg_idx = max(self._seg_idx, best)
         return s
 
-    # ── Reference generation (shared by SplinePlanner & QuinticPlanner) ───
+    #  Reference generation (shared by SplinePlanner & QuinticPlanner) 
 
     def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
         """
@@ -716,9 +711,7 @@ class _CurvePlanner(Planner):
         return self._seg_idx
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # SplinePlanner
-# ══════════════════════════════════════════════════════════════════════════════
 
 class SplinePlanner(_CurvePlanner):
     """
@@ -792,9 +785,7 @@ class SplinePlanner(_CurvePlanner):
         self._reset_state()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # QuinticPlanner
-# ══════════════════════════════════════════════════════════════════════════════
 
 class QuinticPlanner(_CurvePlanner):
     """
@@ -895,6 +886,6 @@ class QuinticPlanner(_CurvePlanner):
         return self._degree
 
 
-# ── Alias ─────────────────────────────────────────────────────────────────
+#  Alias 
 
 LinearPlanner = WaypointPlanner

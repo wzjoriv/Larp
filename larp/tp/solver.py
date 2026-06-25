@@ -6,9 +6,9 @@ Trajectory-planning solvers for the larp framework.
 Solver hierarchy
 ----------------
 Solver (ABC)               - shared rollout (RK4), obstacle constraints, bound parsing
-├── SQPSolver              - Sequential QP via OSQP with warm-start caching
-├── ALILQRSolver           - Augmented-Lagrangian iLQR  (Gauss-Newton, no 2nd-order dynamics)
-└── ALDDPSolver            - Augmented-Lagrangian DDP   (full 2nd-order dynamics correction)
+├ SQPSolver              - Sequential QP via OSQP with warm-start caching
+├ ALILQRSolver           - Augmented-Lagrangian iLQR  (Gauss-Newton, no 2nd-order dynamics)
+└ ALDDPSolver            - Augmented-Lagrangian DDP   (full 2nd-order dynamics correction)
 
 All solvers share the same public interface:
 
@@ -43,9 +43,7 @@ else:
         pass
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Base Solver
-# ══════════════════════════════════════════════════════════════════════════════
 
 class Solver(ABC):
     """
@@ -74,6 +72,7 @@ class Solver(ABC):
         linearize_every: int = 1,
         field_every: int = 3,
         tol: float = 1e-4,
+        rtol: float = 1e-3,
         verbose: bool = False,
     ):
         self.dynamics = dynamics
@@ -83,6 +82,7 @@ class Solver(ABC):
         self.N = int(horizon) if isinstance(horizon, int) else int(np.ceil(horizon / dt))
         self.minimum_dist = minimum_dist
         self.tol = tol
+        self.rtol = rtol
         self.verbose = verbose
 
         # Update frequencies
@@ -113,7 +113,7 @@ class Solver(ABC):
         self.num_u_vars = self.N * self.m
         self.var_count   = self.num_x_vars + self.num_u_vars
 
-    # ── Utilities ──────────────────────────────────────────────────────────
+    # Utilities
 
     def _parse_bounds(self, bounds, dim: int) -> Tuple[np.ndarray, np.ndarray]:
         if bounds is None:
@@ -142,7 +142,7 @@ class Solver(ABC):
             us = np.resize(us, (self.N, self.m))
         return us.copy()
 
-    # ── RK4 Rollout ────────────────────────────────────────────────────────
+    # RK4 Rollout
 
     def rollout(self, x0: np.ndarray, us: np.ndarray) -> np.ndarray:
         """
@@ -185,7 +185,7 @@ class Solver(ABC):
         _, xs_traj = lax.scan(rk4_step, x0, us)
         return jnp.concatenate([x0[None, :], xs_traj], axis=0)
 
-    # ── Field / Obstacle Constraints ───────────────────────────────────────
+    # Field / Obstacle Constraints
 
     def get_nearby_repulsion(
         self, x_curr: np.ndarray
@@ -248,7 +248,7 @@ class Solver(ABC):
 
         return A_local, b_local
 
-    # ── Abstract interface ─────────────────────────────────────────────────
+    # Abstract interface
 
     @abstractmethod
     def solve(self, *args, **kwargs):
@@ -257,9 +257,7 @@ class Solver(ABC):
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SQP Solver  (OSQP-based, warm-start cache)
-# ══════════════════════════════════════════════════════════════════════════════
+# SQP Solver  (OSQP-based)
 
 class SQPSolver(Solver):
     """
@@ -278,7 +276,7 @@ class SQPSolver(Solver):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # ── Constant cost matrix  P  ──────────────────────────────────────
+        # Constant cost matrix  P 
         P_x_blocks = [sparse.csc_matrix(2 * self.Q)] * (self.N - 1)
         P_x_blocks.append(sparse.csc_matrix(2 * self.Qf))
         self.P = sparse.block_diag(
@@ -293,7 +291,7 @@ class SQPSolver(Solver):
         # OSQP instance
         self.prob = osqp.OSQP()
 
-        # ── Cache ─────────────────────────────────────────────────────────
+        # Cache
         self.cache: Dict[str, Any] = {
             "A_dyn":   None, "l_dyn":   None, "u_dyn":   None,
             "A_field": None, "l_field": None, "u_field": None,
@@ -301,7 +299,7 @@ class SQPSolver(Solver):
         }
         self._update_bounds_cache(None, None, None, None)
 
-    # ── Cache helpers ──────────────────────────────────────────────────────
+    # Cache helpers
 
     def _update_bounds_cache(self, xmin, xmax, umin, umax):
         """Rebuild l_box / u_box only when the effective bounds have changed."""
@@ -433,7 +431,7 @@ class SQPSolver(Solver):
             np.hstack(vecs_u),
         )
 
-    # ── Public interface ───────────────────────────────────────────────────
+    # Public interface
 
     def solve(
         self,
@@ -446,6 +444,7 @@ class SQPSolver(Solver):
         umax: Optional[np.ndarray] = None,
         max_iters: int = 10,
     ) -> Tuple[np.ndarray, np.ndarray]:
+        self._update_bounds_cache(xmin, xmax, umin, umax)
 
         x0 = np.asarray(x0).reshape(-1)
         us = self._init_controls(us_init)
@@ -454,7 +453,6 @@ class SQPSolver(Solver):
         assert not np.any(np.isnan(xs)), f"Initial rollout has a nan value in xs. values = {xs}"
         assert not np.any(np.isnan(us)), f"Initial controls has a nan value in us. values = {us}"
 
-        self._update_bounds_cache(xmin, xmax, umin, umax)
 
         force_update = True
         max_ref_idx  = len(ref) - 1
@@ -484,11 +482,15 @@ class SQPSolver(Solver):
                 q[idx : idx + self.n] = -2.0 * (Qk @ xref)
 
             z_warm = np.concatenate([xs[1:].flatten(), us.flatten()])
+
             self.prob.setup(
                 P=self.P, q=q, A=A, l=l, u=u,
                 verbose=self.verbose, polish=False, warm_starting=True,
+                eps_rel=self.rtol, eps_abs=self.tol
             )
+
             self.prob.warm_start(x=z_warm)
+
             res = self.prob.solve()
 
             if "solved" not in res.info.status:
@@ -513,9 +515,7 @@ class SQPSolver(Solver):
         return xs, us
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Shared AL + iLQR / DDP machinery
-# ══════════════════════════════════════════════════════════════════════════════
 
 class _ALSolverBase(Solver):
     """
@@ -570,7 +570,7 @@ class _ALSolverBase(Solver):
         # Dynamics Jacobian cache for inner iLQR loop
         self._il_dyn_cache: Dict[str, Any] = {"Ad": None, "Bd": None}
 
-    # ── Constraint helpers ─────────────────────────────────────────────────
+    # Constraint helpers
 
     def _linearize_field_along_traj(self, xs):
         """Linearise field constraints at every state on the trajectory."""
@@ -581,7 +581,7 @@ class _ALSolverBase(Solver):
         """Constraint residual  c = A_t @ x - b_t  (feasible when c <= 0)."""
         return A_t @ x - b_t
 
-    # ── AL penalty ────────────────────────────────────────────────────────
+    # AL penalty
 
     @staticmethod
     def _al_terms(lam, rho, c, c_x):
@@ -601,7 +601,7 @@ class _ALSolverBase(Solver):
 
         return cost, grad, hess
 
-    # ── Per-step cost ──────────────────────────────────────────────────────
+    # Per-step cost
 
     def _stage_cost(self, x, u, x_ref, lam, rho, lin_con):
         diff = x - x_ref
@@ -658,7 +658,7 @@ class _ALSolverBase(Solver):
         J += l
         return J
 
-    # ── Box-DDP gains ──────────────────────────────────────────────────────
+    # Box-DDP gains
 
     def _box_ddp_gains(self, Q_uu, Q_u, Q_ux, u_bar, u_lb, u_ub):
         Q_uu_reg  = Q_uu + self.reg * np.eye(self.m)
@@ -672,7 +672,7 @@ class _ALSolverBase(Solver):
         K[saturated] = 0.0
         return k, K
 
-    # ── DDP second-order correction ───────────────────────────────────────
+    # DDP second-order correction
 
     def ddp_correction(self, V_x, xs_t, us_t):
         if JAX_INSTALLED and self.dynamics.jax_backend:
@@ -746,7 +746,7 @@ class _ALSolverBase(Solver):
 
         for iteration in range(self.ilqr_iters):
 
-            # ── Dynamics Jacobian (linearize_every) ──────────────────────
+            # Dynamics Jacobian (linearize_every)
             if self._il_dyn_cache["Ad"] is None or iteration % self.linearize_every == 0:
                 Ad, Bd, _ = self.dynamics.discretize(
                     xs[:-1], us, dt=self.dt, estimate=False
@@ -757,7 +757,7 @@ class _ALSolverBase(Solver):
                 Ad = self._il_dyn_cache["Ad"]
                 Bd = self._il_dyn_cache["Bd"]
 
-            # ── Field constraints (field_every, skip iteration 0) ─────────
+            # Field constraints (field_every, skip iteration 0)
             if iteration > 0 and iteration % self.field_every == 0:
                 lin_cons = self._linearize_field_along_traj(xs)
                 for t in range(self.N + 1):
@@ -765,7 +765,7 @@ class _ALSolverBase(Solver):
                     if len(lam_list[t]) != n_c:
                         lam_list[t] = np.zeros(n_c)
 
-            # ── Backward pass ─────────────────────────────────────────────
+            # Backward pass
             x_ref_N      = ref[min(self.N, max_ref_idx)]
             _, V_x, V_xx = self._terminal_cost(
                 xs[self.N], x_ref_N, lam_list[self.N], rho, lin_cons[self.N]
@@ -812,7 +812,7 @@ class _ALSolverBase(Solver):
             if back_failed:
                 break
 
-            # ── Forward pass ──────────────────────────────────────────────
+            # Forward pass
             J_old    = self._total_aug_cost(xs, us, ref, lam_list, rho, lin_cons)
             accepted = False
 
@@ -857,7 +857,7 @@ class _ALSolverBase(Solver):
 
         return xs, us, lin_cons, lam_list
 
-    # ── Violation check ────────────────────────────────────────────────────
+    # Violation check
 
     def _max_field_violation(self, xs):
         max_viol = 0.0
@@ -868,7 +868,7 @@ class _ALSolverBase(Solver):
                 max_viol = max(max_viol, float(np.max(c)))
         return max_viol
 
-    # ── Public interface ───────────────────────────────────────────────────
+    # Public interface
 
     def solve(
         self,
@@ -958,9 +958,7 @@ class _ALSolverBase(Solver):
         return xs, us
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Public AL solvers
-# ══════════════════════════════════════════════════════════════════════════════
 
 class ALILQRSolver(_ALSolverBase):
     """

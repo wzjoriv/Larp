@@ -989,11 +989,11 @@ class RiskField():
         warnings.warn(f"Object of type {type(idxs)} not supported")
         return None
 
-    def __iter__(self):
+    def __iter__(self) -> RiskField:
         self.rgj_idx = 0
         return self
     
-    def __next__(self):
+    def __next__(self) -> RGJGeometry:
         if self.rgj_idx >= len(self):
             raise StopIteration
         out = self.rgjs[self.rgj_idx]

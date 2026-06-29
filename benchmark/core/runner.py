@@ -167,7 +167,7 @@ def run_route(
     x0: np.ndarray,
     goal_xy: np.ndarray,
     altitude: float,
-    nominal_speed: float,
+    nominal_pace: float,
     solver_cfg: dict,
     ref_indices: list,
     height_state_idx: int = 4,
@@ -179,7 +179,7 @@ def run_route(
 ) -> dict:
     dt         = solver_cfg["dt"]
     t_sim      = route_timeout(
-        path, nominal_speed,
+        path, nominal_pace,
         solver_cfg.get("t_sim_factor", 3.5),
         solver_cfg.get("t_sim_min", 120.0),
         solver_cfg.get("t_sim_max", 600.0),
@@ -215,7 +215,7 @@ def run_route(
 
     for step in range(int(t_sim / dt)):
         if step % stride == 0:
-            ref_traj = planner.get_ref(x_cur, nominal_speed=nominal_speed)
+            ref_traj = planner.get_ref(x_cur, nominal_pace=nominal_pace)
             t0 = time.time()
             try:
                 xs_pred, us = solver.solve(x_cur, ref_traj, us_init=prev_us)
@@ -407,7 +407,7 @@ class SimulationTask:
                 str(npz_path),
                 xs=rep["xs"], us=rep["us"], path=rep["path"],
                 x0=rep["x0"], goal_xy=rep["goal_xy"],
-                nominal_speed=self.speed, dt=self.solver_cfg["dt"],
+                nominal_pace=self.speed, dt=self.solver_cfg["dt"],
             )
             replay_npz = str(npz_path)
 
@@ -416,7 +416,7 @@ class SimulationTask:
             scenario          = self.city_name,
             algorithm         = self.algo_name,
             segment           = self.seg_i,
-            nominal_speed     = self.speed,
+            nominal_pace     = self.speed,
             success           = metrics["Success"],
             is_clear          = metrics["Is Clear"],
             crash_reason      = metrics["Crash Reason"],

@@ -13,11 +13,11 @@ Planner (ABC)           - shared interface: update_path, get_ref, get_full_ref,
 
 Public API summary
 ------------------
-``get_ref(x0, nominal_speed)``
+``get_ref(x0, nominal_pace)``
     Dense (N, n) reference for one solver horizon, starting one step ahead of
     the robot's current position (x₁ … xₙ).  Call this inside a real-time loop.
 
-``get_full_ref(nominal_speed)``
+``get_full_ref(nominal_pace)``
     Complete (T, n) reference showing the idealised path the robot will
     follow over its entire journey.  Useful for visualisation and comparing
     actual vs. intended motion.  A generic piecewise-linear implementation
@@ -144,7 +144,7 @@ class Planner(ABC):
     #  Abstract interface 
 
     @abstractmethod
-    def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
+    def get_ref(self, x0: np.ndarray, nominal_pace: float = 2.0) -> np.ndarray:
         """
         Generate a dense reference for the current solver horizon.
 
@@ -154,17 +154,18 @@ class Planner(ABC):
         Parameters
         ----------
         x0 : (n,) current state
-        nominal_speed : float
+        nominal_pace : float
             Target progression speed along the path (m/s).
 
         Returns
         -------
         ref : (N, n) reference states
         """
+        raise NotImplementedError
 
     #  Concrete shared methods 
 
-    def get_full_ref(self, nominal_speed: float = 2.0) -> np.ndarray:
+    def get_full_ref(self, nominal_pace: float = 2.0) -> np.ndarray:
         """
         Sample the complete reference the robot will follow over its journey.
 
@@ -179,9 +180,9 @@ class Planner(ABC):
 
         Parameters
         ----------
-        nominal_speed : float
+        nominal_pace : float
             Determines the number of steps T:
-            ``T = ceil(total_len / (nominal_speed * dt))``.
+            ``T = ceil(total_len / (nominal_pace * dt))``.
 
         Returns
         -------
@@ -191,7 +192,7 @@ class Planner(ABC):
             return np.empty((0, len(self.stable_state)))
 
         dt        = self.solver.dt
-        num_steps = int(np.ceil(self.total_len / max(nominal_speed * dt, 1e-8)))
+        num_steps = int(np.ceil(self.total_len / max(nominal_pace * dt, 1e-8)))
         s_vals    = np.linspace(0.0, self.total_len, num_steps)
 
         seg_idxs  = np.searchsorted(self.cached_cum_len, s_vals, side='right') - 1
@@ -206,6 +207,7 @@ class Planner(ABC):
 
         if not self._use_custom_heading:
             headings = np.unwrap(headings)
+            
         ix, iy, ith = self.ref_idx[0], self.ref_idx[1], self.ref_idx[2]
         full_ref = np.tile(self.stable_state, (num_steps, 1))
         full_ref[:, ix]  = positions[:, 0]
@@ -217,7 +219,7 @@ class Planner(ABC):
         self,
         x0: np.ndarray,
         max_iters: int = 10,
-        nominal_speed: float = 2.0,
+        nominal_pace: float = 2.0,
         reset: bool = False,
         us_init:np.ndarray|None = None
     ) -> Trajectory:
@@ -233,7 +235,7 @@ class Planner(ABC):
         x0 : (n,) current state
         max_iters : int
             Maximum solver iterations.
-        nominal_speed : float
+        nominal_pace : float
             Target progression speed (m/s).
         reset : bool
             If True, resets progress state and bumps max_iters to at least 20.
@@ -249,7 +251,7 @@ class Planner(ABC):
             self._reset_state()
             max_iters = max(max_iters, 20)
 
-        ref_traj = self.get_ref(x0, nominal_speed=nominal_speed)
+        ref_traj = self.get_ref(x0, nominal_pace=nominal_pace)
 
         us_init = us_init or self.prev_us
         xs, us   = self.solver.solve(x0, ref_traj,
@@ -261,12 +263,13 @@ class Planner(ABC):
     def get_full_trajectory(
         self,
         x0: np.ndarray,
-        nominal_speed: float = 2.0,
+        nominal_pace: float = 2.0,
         goal_tolerance: float = 1.0,
         max_steps: int = 1000,
         max_iters: int = 10,
         stride: int = 1,
         us_init: np.ndarray|None = None,
+        goal_step_buffer: int = 0
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute a complete optimised trajectory from ``x0`` to the path goal.
@@ -287,7 +290,7 @@ class Planner(ABC):
         Parameters
         ----------
         x0 : (n,) initial state
-        nominal_speed : float
+        nominal_pace : float
             Target progression speed (m/s).
         goal_tolerance : float
             Euclidean distance (m) to the final waypoint to consider done.
@@ -308,14 +311,15 @@ class Planner(ABC):
         all_xs      = [x_cur.copy()]
         all_us: List[np.ndarray] = []
 
-        ix, iy      = self.ref_idx[0], self.ref_idx[1]
-        goal_xy     = self.path[-1, :2]
-        steps_taken = 0
+        ix, iy   = self.ref_idx[0], self.ref_idx[1]
+        goal_xy      = self.path[-1, :2]
+        steps_taken  = 0
         self.prev_us = us_init
+        goal_reached = 0
 
         while steps_taken < max_steps:
             xs, us = self.find_trajectory(x_cur,
-                                           nominal_speed=nominal_speed,
+                                           nominal_pace=nominal_pace,
                                            max_iters=max_iters)
             actual = min(stride, max_steps - steps_taken)
 
@@ -330,6 +334,9 @@ class Planner(ABC):
             self.prev_us = np.vstack([us[actual:], np.tile(us[-1], (actual, 1))])
 
             if np.linalg.norm(x_cur[[ix, iy]] - goal_xy) < goal_tolerance:
+                goal_reached = steps_taken
+
+            if goal_reached and steps_taken - goal_reached >= goal_step_buffer:
                 break
 
         return np.array(all_xs), np.array(all_us)
@@ -368,7 +375,7 @@ class WaypointPlanner(Planner):
         uses a windowed scan with automatic global fallback: if the best
         match is at the far window edge a full O(M) scan recovers the correct
         position.  A practical lower bound is
-        ``nominal_speed * dt * N / min_seg_len``.  Default 15.
+        ``nominal_pace * dt * N / min_seg_len``.  Default 15.
     """
 
     def __init__(
@@ -443,12 +450,13 @@ class WaypointPlanner(Planner):
             0, len(self.path) - 2,
         ))
         ds      = s - self.cached_cum_len[seg_idx]
+        direction = self.cached_directions[seg_idx]
         pos     = self.path[seg_idx, :2] + self.cached_directions[seg_idx] * ds
         heading = float(self.path[seg_idx, 2] if self._use_custom_heading
                         else self.cached_seg_headings[seg_idx])
-        return pos, heading
+        return pos, heading, direction
 
-    def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
+    def get_ref(self, x0: np.ndarray, nominal_pace: float = 2.0) -> np.ndarray:
         """
         Generate N reference states by walking ahead from the projected position.
 
@@ -457,6 +465,9 @@ class WaypointPlanner(Planner):
         stationary target.
         """
         ix, iy, ith = self.ref_idx[0], self.ref_idx[1], self.ref_idx[2]
+        has_vel = len(self.ref_idx) >= 5
+        if has_vel:
+            ivx, ivy = self.ref_idx[3], self.ref_idx[4]
 
         s_robot      = self._project_to_path(np.array([x0[ix], x0[iy]]))
         self._last_s = s_robot
@@ -469,15 +480,18 @@ class WaypointPlanner(Planner):
         s_prev = s_robot + self.lookahead
         for _ in range(N):
             remaining = max(self.total_len - s_prev, 0.0)
-            speed = (nominal_speed * min(1.0, remaining / self.goal_blend_dist)
-                    if self.goal_blend_dist > 0 else nominal_speed)
+            speed = (nominal_pace * min(1.0, remaining / self.goal_blend_dist)
+                    if self.goal_blend_dist > 0 else nominal_pace)
             s_prev = min(s_prev + speed * dt, self.total_len)
 
-            pos_ref, hdg_ref = self._interp_on_path(s_prev)
+            pos_ref, hdg_ref, direction = self._interp_on_path(s_prev)
             state      = self.stable_state.copy()
             state[ix]  = pos_ref[0]
             state[iy]  = pos_ref[1]
             state[ith] = hdg_ref + hdg_off
+            if has_vel:
+                state[ivx] = direction[0] * speed
+                state[ivy] = direction[1] * speed
             ref_states.append(state)
 
         return np.array(ref_states)
@@ -596,7 +610,7 @@ class _CurvePlanner(Planner):
 
     #  Reference generation (shared by SplinePlanner & QuinticPlanner) 
 
-    def get_ref(self, x0: np.ndarray, nominal_speed: float = 2.0) -> np.ndarray:
+    def get_ref(self, x0: np.ndarray, nominal_pace: float = 2.0) -> np.ndarray:
         """
         Generate N reference states with curvature-based velocity profiling.
 
@@ -626,9 +640,9 @@ class _CurvePlanner(Planner):
             norm_sq   = der1[0] ** 2 + der1[1] ** 2
             curvature = abs(cross) / (norm_sq ** 1.5 + 1e-8)
 
-            target_v = (min(nominal_speed,
+            target_v = (min(nominal_pace,
                             np.sqrt(self.max_lat_accel / curvature))
-                        if curvature > 1e-4 else nominal_speed)
+                        if curvature > 1e-4 else nominal_pace)
 
             if s_curr >= self.total_len:
                 target_v = 0.0
@@ -659,7 +673,7 @@ class _CurvePlanner(Planner):
         # Discard k=0 (current position) → return x₁ … xₙ
         return np.array(all_states[1:])
 
-    def get_full_ref(self, nominal_speed: float = 2.0) -> np.ndarray:
+    def get_full_ref(self, nominal_pace: float = 2.0) -> np.ndarray:
         """
         Sample the complete reference from path start to end via the fitted curve.
 
@@ -669,8 +683,8 @@ class _CurvePlanner(Planner):
 
         Parameters
         ----------
-        nominal_speed : float
-            Determines T via ``T = ceil(total_len / (nominal_speed * dt))``.
+        nominal_pace : float
+            Determines T via ``T = ceil(total_len / (nominal_pace * dt))``.
 
         Returns
         -------
@@ -681,14 +695,14 @@ class _CurvePlanner(Planner):
 
         dt        = self.solver.dt
         num_steps = int(np.ceil(self.total_len
-                                / max(nominal_speed * dt, 1e-8)))
+                                / max(nominal_pace * dt, 1e-8)))
         s_vals    = np.linspace(0.0, self.total_len, num_steps)
 
         pos_ref  = self._curve(s_vals)
         vel_tan  = self._curve(s_vals, 1)
         norms    = np.linalg.norm(vel_tan, axis=1, keepdims=True)
         norms[norms < 1e-6] = 1.0
-        vel_vec  = (vel_tan / norms) * nominal_speed
+        vel_vec  = (vel_tan / norms) * nominal_pace
         headings = np.unwrap(np.arctan2(vel_vec[:, 1], vel_vec[:, 0]),
                              discont=np.pi)
 

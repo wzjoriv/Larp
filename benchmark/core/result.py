@@ -11,7 +11,7 @@ class SimulationResult:
     scenario:          str
     algorithm:         str
     segment:           int
-    nominal_speed:     float
+    nominal_pace:     float
     success:           bool  = False
     is_clear:          bool  = False
     crash_reason:      str   = ""
@@ -33,7 +33,7 @@ class SimulationResult:
             "Scenario":          self.scenario,
             "Algorithm":         self.algorithm,
             "Segment":           self.segment,
-            "Nominal Speed":     self.nominal_speed,
+            "Nominal Speed":     self.nominal_pace,
             "Success":           self.success,
             "Is Clear":          self.is_clear,
             "Crash Reason":      self.crash_reason,
@@ -51,9 +51,9 @@ class SimulationResult:
 
     @classmethod
     def failure(cls, city: str, scenario: str, algorithm: str,
-                segment: int, nominal_speed: float, reason: str) -> "SimulationResult":
+                segment: int, nominal_pace: float, reason: str) -> "SimulationResult":
         return cls(
             city=city, scenario=scenario, algorithm=algorithm,
-            segment=segment, nominal_speed=nominal_speed,
+            segment=segment, nominal_pace=nominal_pace,
             success=False, is_clear=False, crash_reason=reason,
         )

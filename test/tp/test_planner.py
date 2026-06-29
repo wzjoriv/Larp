@@ -241,7 +241,7 @@ class TestWaypointGetRef:
     def test_shape(self):
         s  = _make_solver()
         wp = WaypointPlanner(s, _straight_path(), _stable())
-        ref = wp.get_ref(np.zeros(3), nominal_speed=2.)
+        ref = wp.get_ref(np.zeros(3), nominal_pace=2.)
         assert ref.shape == (s.N, 3)
 
     def test_finite(self):
@@ -252,13 +252,13 @@ class TestWaypointGetRef:
     def test_advances_along_path(self):
         s  = _make_solver()
         wp = WaypointPlanner(s, _straight_path(), _stable())
-        ref = wp.get_ref(np.zeros(3), nominal_speed=2.)
+        ref = wp.get_ref(np.zeros(3), nominal_pace=2.)
         assert ref[-1, 0] > ref[0, 0]
 
     def test_headings_along_x_path(self):
         s  = _make_solver()
         wp = WaypointPlanner(s, _straight_path(), _stable())
-        ref = wp.get_ref(np.zeros(3), nominal_speed=2.)
+        ref = wp.get_ref(np.zeros(3), nominal_pace=2.)
         assert np.all(np.abs(ref[:, 2]) < np.pi / 4)
 
     def test_goal_saturation(self):
@@ -266,7 +266,7 @@ class TestWaypointGetRef:
         wp = WaypointPlanner(s, _straight_path(n=3), _stable(),
                              goal_blend_dist=0.)
         wp._last_s = wp.total_len
-        ref = wp.get_ref(np.array([10., 0., 0.]), nominal_speed=2.)
+        ref = wp.get_ref(np.array([10., 0., 0.]), nominal_pace=2.)
         assert np.allclose(ref[:, 0], 10., atol=1e-6)
 
     def test_goal_blend_dist(self):
@@ -274,13 +274,13 @@ class TestWaypointGetRef:
         wp = WaypointPlanner(s, _straight_path(n=5), _stable(),
                              goal_blend_dist=3.)
         wp._last_s = 8.
-        ref = wp.get_ref(np.array([8., 0., 0.]), nominal_speed=2.)
+        ref = wp.get_ref(np.array([8., 0., 0.]), nominal_pace=2.)
         assert np.allclose(ref[:, 0], 10., atol=1e-6)
 
     def test_last_s_updated(self):
         s  = _make_solver()
         wp = WaypointPlanner(s, _straight_path(), _stable())
-        wp.get_ref(np.array([3., 0., 0.]), nominal_speed=2.)
+        wp.get_ref(np.array([3., 0., 0.]), nominal_pace=2.)
         assert wp._last_s >= 2.5
 
     def test_stable_state_fill(self):
@@ -363,7 +363,7 @@ class TestSplinePlanner:
     def test_get_ref_shape_N(self):
         s  = _make_solver()
         sp = SplinePlanner(s, _straight_path(), _stable())
-        ref = sp.get_ref(np.zeros(3), nominal_speed=2.)
+        ref = sp.get_ref(np.zeros(3), nominal_pace=2.)
         assert ref.shape == (s.N, 3), f"Expected ({s.N},3), got {ref.shape}"
 
     def test_get_ref_never_n_plus_1(self):
@@ -375,7 +375,7 @@ class TestSplinePlanner:
     def test_get_ref_starts_ahead(self):
         s  = _make_solver()
         sp = SplinePlanner(s, _straight_path(), _stable())
-        ref = sp.get_ref(np.zeros(3), nominal_speed=2.)
+        ref = sp.get_ref(np.zeros(3), nominal_pace=2.)
         assert ref[0, 0] > 0.
 
     def test_get_ref_finite(self):
@@ -387,7 +387,7 @@ class TestSplinePlanner:
         s   = _make_solver()
         sp  = SplinePlanner(s, np.array([[0.,0.],[1.,0.],[1.,1.]]),
                             _stable(), max_lat_accel=1.0)
-        ref = sp.get_ref(np.zeros(3), nominal_speed=5.)
+        ref = sp.get_ref(np.zeros(3), nominal_pace=5.)
         assert np.all(np.isfinite(ref))
 
     def test_seg_idx_property(self):
@@ -456,7 +456,7 @@ class TestQuinticPlanner:
         s  = _make_solver()
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
         qp = QuinticPlanner(s, path, _stable())
-        ref = qp.get_ref(np.zeros(3), nominal_speed=2.)
+        ref = qp.get_ref(np.zeros(3), nominal_pace=2.)
         assert ref.shape == (s.N, 3)
 
     def test_get_ref_never_n_plus_1(self):
@@ -470,7 +470,7 @@ class TestQuinticPlanner:
         s  = _make_solver()
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
         qp = QuinticPlanner(s, path, _stable())
-        ref = qp.get_ref(np.zeros(3), nominal_speed=2.)
+        ref = qp.get_ref(np.zeros(3), nominal_pace=2.)
         assert ref[0, 0] > 0.
 
     def test_get_ref_finite(self):
@@ -484,7 +484,7 @@ class TestQuinticPlanner:
         s  = _make_solver()
         qp = QuinticPlanner(s, np.array([[0.,0.],[10.,0.]]), _stable())
         assert qp.degree == 1
-        ref = qp.get_ref(np.zeros(3), nominal_speed=2.)
+        ref = qp.get_ref(np.zeros(3), nominal_pace=2.)
         assert ref.shape == (s.N, 3) and np.all(np.isfinite(ref))
 
     def test_get_full_ref_overrides_base(self):
@@ -494,7 +494,7 @@ class TestQuinticPlanner:
         s  = _make_solver()
         path = np.column_stack((np.linspace(0.,10.,7), np.zeros(7)))
         qp = QuinticPlanner(s, path, _stable())
-        full = qp.get_full_ref(nominal_speed=2.)
+        full = qp.get_full_ref(nominal_pace=2.)
         assert full.ndim == 2 and full.shape[1] == 3
         assert np.all(np.isfinite(full)) and full.shape[0] > s.N
         assert full[0, 0] < 0.5 and full[-1, 0] > 9.
@@ -602,8 +602,8 @@ class TestGetFullRef:
     def test_signature(self, Cls):
         import inspect
         sig = inspect.signature(Cls.get_full_ref)
-        assert 'nominal_speed' in sig.parameters
-        assert sig.parameters['nominal_speed'].default == 2.0
+        assert 'nominal_pace' in sig.parameters
+        assert sig.parameters['nominal_pace'].default == 2.0
 
 
 # 10. TestHeadingContinuity
@@ -664,7 +664,7 @@ class TestHeadingContinuity:
         """
         s  = _make_solver()
         wp = WaypointPlanner(s, _fig8_path(), _stable())
-        full = wp.get_full_ref(nominal_speed=2.)
+        full = wp.get_full_ref(nominal_pace=2.)
         max_jump = _max_heading_jump_deg(full[:, 2])
         assert max_jump < 180., (
             f"WaypointPlanner heading jump on figure-8: {max_jump:.1f}° "
@@ -678,7 +678,7 @@ class TestHeadingContinuity:
         """
         s  = _make_solver()
         wp = WaypointPlanner(s, _u_path(), _stable())
-        full = wp.get_full_ref(nominal_speed=2.)
+        full = wp.get_full_ref(nominal_pace=2.)
         max_jump = _max_heading_jump_deg(full[:, 2])
         assert max_jump < 180., (
             f"WaypointPlanner heading jump on U-path: {max_jump:.1f}°"
@@ -689,7 +689,7 @@ class TestHeadingContinuity:
         """On a straight horizontal path every planner returns heading ≈ 0°."""
         s  = _make_solver()
         pl = Cls(s, _straight_path(), _stable())
-        full = pl.get_full_ref(nominal_speed=2.)
+        full = pl.get_full_ref(nominal_pace=2.)
         max_jump = _max_heading_jump_deg(full[:, 2])
         assert max_jump < 1., \
             f"{Cls.__name__} heading jump on straight path: {max_jump:.1f}°"
@@ -704,7 +704,7 @@ class TestHeadingContinuity:
         """
         s  = _make_solver()
         pl = Cls(s, _l_path(), _stable())
-        full = pl.get_full_ref(nominal_speed=2.)
+        full = pl.get_full_ref(nominal_pace=2.)
         max_jump = _max_heading_jump_deg(full[:, 2])
         assert max_jump < 180., \
             f"{Cls.__name__} heading jump on L-path: {max_jump:.1f}°"
@@ -749,7 +749,7 @@ class TestHeadingContinuity:
                                  np.array([0., np.pi/4, -np.pi/4, 0., 0.])))
         wp = WaypointPlanner(s, path, _stable())
         assert wp._use_custom_heading, "Expected custom heading mode"
-        full = wp.get_full_ref(nominal_speed=2.)
+        full = wp.get_full_ref(nominal_pace=2.)
         # Check that the stored headings include the supplied -π/4 value
         assert np.any(full[:, 2] < 0.), \
             "Custom negative headings were unwrapped (should be preserved)"
@@ -765,7 +765,7 @@ class TestHeadingContinuity:
         # Drive the robot around the figure-8 collecting per-step refs
         x_cur = np.zeros(3)
         for _ in range(20):
-            ref = wp.get_ref(x_cur, nominal_speed=2.)
+            ref = wp.get_ref(x_cur, nominal_pace=2.)
             assert np.all(ref[:, 2] >= -np.pi - 1e-6), \
                 "get_ref heading below -π"
             assert np.all(ref[:, 2] <=  np.pi + 1e-6), \
@@ -823,7 +823,7 @@ class TestPlannerAPIContract:
     def test_get_full_ref_signature(self, Cls):
         import inspect
         sig = inspect.signature(Cls.get_full_ref)
-        assert sig.parameters['nominal_speed'].default == 2.0
+        assert sig.parameters['nominal_pace'].default == 2.0
 
     @pytest.mark.parametrize("Cls", ALL_PLANNERS)
     def test_get_full_ref_returns_correct_shape(self, Cls):
@@ -931,7 +931,7 @@ class TestGetFullTrajectory:
         for Cls in ALL_PLANNERS:
             pl = Cls(s, short.copy(), _stable())
             xs, _ = pl.get_full_trajectory(np.array([2.,0.,0.]),
-                                            nominal_speed=2.,
+                                            nominal_pace=2.,
                                             max_steps=100,
                                             goal_tolerance=3.)
             assert xs.shape[0] == 2, f"{Cls.__name__}: {xs.shape[0]}"
@@ -975,7 +975,7 @@ class TestPathEdgeCases:
         s = _make_solver()
         path = np.column_stack((np.linspace(0,10,20), np.zeros(20)))
         pl = Cls(s, path, _stable())
-        assert np.all(np.isfinite(pl.get_ref(np.zeros(3), nominal_speed=1.)))
+        assert np.all(np.isfinite(pl.get_ref(np.zeros(3), nominal_pace=1.)))
 
     @pytest.mark.parametrize("Cls", ALL_PLANNERS)
     def test_diagonal_path(self, Cls):
@@ -995,7 +995,7 @@ class TestPathEdgeCases:
         s  = _make_solver()
         path = np.array([[0.,0.],[0.05,0.]])
         wp = WaypointPlanner(s, path, _stable())
-        assert np.all(np.isfinite(wp.get_ref(np.zeros(3), nominal_speed=2.)))
+        assert np.all(np.isfinite(wp.get_ref(np.zeros(3), nominal_pace=2.)))
 
     def test_negative_coords(self):
         s  = _make_solver()
@@ -1003,7 +1003,7 @@ class TestPathEdgeCases:
         for Cls in ALL_PLANNERS:
             pl = Cls(s, path, _stable())
             assert np.all(np.isfinite(
-                pl.get_ref(np.array([-10.,-10.,0.]), nominal_speed=2.)))
+                pl.get_ref(np.array([-10.,-10.,0.]), nominal_pace=2.)))
 
     def test_too_short_raises(self):
         for Cls in ALL_PLANNERS:

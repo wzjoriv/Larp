@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS results (
     scenario          TEXT,
     algorithm         TEXT,
     segment           INTEGER,
-    nominal_speed     REAL,
+    nominal_pace     REAL,
     success           INTEGER,
     is_clear          INTEGER,
     crash_reason      TEXT,
@@ -141,7 +141,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 
 _INSERT_RESULT = """
 INSERT INTO results
-    (run_id, city, scenario, algorithm, segment, nominal_speed,
+    (run_id, city, scenario, algorithm, segment, nominal_pace,
      success, is_clear, crash_reason,
      avg_solve_time, std_solve_time, min_clearance, ref_min_clearance,
      travel_time, path_length, converge_rate, control_effort, steps,
@@ -186,7 +186,7 @@ class BenchmarkStore(AbstractStore):
         r = result
         with self._conn() as conn:
             conn.execute(_INSERT_RESULT, (
-                run_id, r.city, r.scenario, r.algorithm, r.segment, r.nominal_speed,
+                run_id, r.city, r.scenario, r.algorithm, r.segment, r.nominal_pace,
                 int(r.success), int(r.is_clear), r.crash_reason,
                 _nan_none(r.avg_solve_time), _nan_none(r.std_solve_time),
                 _nan_none(r.min_clearance),  _nan_none(r.ref_min_clearance),
@@ -236,7 +236,7 @@ class BenchmarkStore(AbstractStore):
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT r.id, r.run_id, r.city, r.algorithm, r.segment, "
-                "r.nominal_speed, r.success, r.replay_npz "
+                "r.nominal_pace, r.success, r.replay_npz "
                 "FROM results r WHERE r.replay_npz != '' "
                 "ORDER BY r.run_id DESC, r.id"
             ).fetchall()
@@ -264,7 +264,7 @@ class BenchmarkStore(AbstractStore):
 
 _CSV_COLUMNS = [
     "run_id", "timestamp", "benchmark", "dynamics", "quick",
-    "city", "scenario", "algorithm", "segment", "nominal_speed",
+    "city", "scenario", "algorithm", "segment", "nominal_pace",
     "success", "is_clear", "crash_reason",
     "avg_solve_time", "std_solve_time", "min_clearance", "ref_min_clearance",
     "travel_time", "path_length", "converge_rate", "control_effort", "steps",
@@ -337,7 +337,7 @@ class CSVStore(AbstractStore):
             "scenario":          r.scenario,
             "algorithm":         r.algorithm,
             "segment":           r.segment,
-            "nominal_speed":     r.nominal_speed,
+            "nominal_pace":     r.nominal_pace,
             "success":           int(r.success),
             "is_clear":          int(r.is_clear),
             "crash_reason":      r.crash_reason,
@@ -374,7 +374,7 @@ class CSVStore(AbstractStore):
             df = pd.read_csv(self.csv_path)
             df = df[df["replay_npz"].notna() & (df["replay_npz"] != "")]
             return df[["run_id", "city", "algorithm", "segment",
-                        "nominal_speed", "success", "replay_npz"]].copy()
+                        "nominal_pace", "success", "replay_npz"]].copy()
         except Exception:
             return pd.DataFrame()
 
@@ -412,7 +412,7 @@ def _rows_to_df(rows: list) -> pd.DataFrame:
             "Scenario":          d.get("scenario"),
             "Algorithm":         d.get("algorithm"),
             "Segment":           d.get("segment"),
-            "Nominal Speed":     d.get("nominal_speed"),
+            "Nominal Speed":     d.get("nominal_pace"),
             "Success":           bool(d.get("success")),
             "Is Clear":          bool(d.get("is_clear")),
             "Crash Reason":      d.get("crash_reason", ""),

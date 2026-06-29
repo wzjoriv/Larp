@@ -117,7 +117,7 @@ tj_planner = larp.tp.WaypointPlanner(
 
 # Run full trajectory
 x0 = [20, 20, 0.0]
-xs, us = tj_planner.get_full_trajectory(x0, nominal_speed=3.5, stride=1)
+xs, us = tj_planner.get_full_trajectory(x0, nominal_pace=3.5, stride=1)
 
 
 plt.figure()

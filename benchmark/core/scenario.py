@@ -423,7 +423,7 @@ class WMRScenario(BenchmarkScenario):
                     city_name   = "cityhall",
                     algo_name   = algo_name,
                     seg_i       = seg_i,
-                    speed       = self.solver_cfg.get("nominal_speed", 4.0),
+                    speed       = self.solver_cfg.get("nominal_pace", 4.0),
                     route_data  = route_data,
                     altitude    = 0.0,
                     dynamics    = self.dynamics,
@@ -462,7 +462,7 @@ def _fmt_result_line(res: SimulationResult, metric_keys: list[str]) -> str:
     status = "OK" if res.success else f"FAIL({res.crash_reason[:20]})"
     line   = (
         f"    [{res.algorithm}] {res.city} Seg {res.segment}"
-        f" v={res.nominal_speed:.0f}m/s -> {status}"
+        f" v={res.nominal_pace:.0f}m/s -> {status}"
     )
     for key in metric_keys:
         spec = _METRIC_SPEC.get(key)

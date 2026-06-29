@@ -19,8 +19,8 @@ LinearPlanner   : alias for WaypointPlanner
 
 All planners share the same public interface:
 
-    get_ref(x0, nominal_speed)          -> (N, n)    one-horizon reference
-    get_full_ref(nominal_speed)         -> (T, n)    full-path reference
+    get_ref(x0, nominal_pace)          -> (N, n)    one-horizon reference
+    get_full_ref(nominal_pace)         -> (T, n)    full-path reference
     find_trajectory(x0, ...)            -> (xs, us)  solve for one horizon
     get_full_trajectory(x0, ...)        -> (xs, us)  pre-planned full trajectory
 """

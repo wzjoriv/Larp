@@ -222,7 +222,7 @@ def simulate(cfg: dict) -> list[np.ndarray]:
     T_steps = int(cfg["sim"]["T_sim"] / dt)
     fps     = 1.0 / (dt * cfg["vis"]["render_every"])
 
-    nominal_speed    = cfg["planning"]["nominal_speed"]
+    nominal_pace    = cfg["planning"]["nominal_pace"]
     height_sim_bound = cfg["sim"]["height_sim_bound"]
     z_idx            = cfg["optimizer"]["x_bounds"].get("z_idx", 4)
 
@@ -232,7 +232,7 @@ def simulate(cfg: dict) -> list[np.ndarray]:
     with _video_writer(viz.fig, cfg["vis"]["output_video"], fps,
                        cfg["vis"]["dpi"], save_video) as writer:
         for k in range(T_steps):
-            ref = traj_planner.get_ref(x_cur, nominal_speed=nominal_speed)
+            ref = traj_planner.get_ref(x_cur, nominal_pace=nominal_pace)
             xs_pred, us = solver.solve(x_cur, ref, us_prev)
 
             u_cur   = us[0]

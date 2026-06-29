@@ -42,7 +42,7 @@ def list_replay_results(store) -> None:
     print(f"\n{'ID':>6}  {'Run ID':<22}  {'City':<14}  {'Algorithm':<28}  {'Seg':>3}  {'Speed':>7}  {'OK'}")
     print("-" * 100)
     for _, row in df.iterrows():
-        spd = f"{row['nominal_speed']:.0f} m/s" if row["nominal_speed"] else "  --"
+        spd = f"{row['nominal_pace']:.0f} m/s" if row["nominal_pace"] else "  --"
         ok  = "yes" if row["success"] else "no"
         print(f"{int(row['id']):>6}  {row['run_id']:<22}  {str(row['city']):<14}  "
               f"{str(row['algorithm']):<28}  {int(row['segment']):>3}  {spd:>7}  {ok}")
@@ -80,7 +80,7 @@ def replay(result_id: int, config_path: str, speed_mult: float = 1.0, save_path:
     algo    = row.get("algorithm", "")
     city    = row.get("city", "")
     seg     = row.get("segment", 0)
-    spd_lbl = f"v={row['nominal_speed']:.0f}m/s" if row.get("nominal_speed") else ""
+    spd_lbl = f"v={row['nominal_pace']:.0f}m/s" if row.get("nominal_pace") else ""
     print(f"\nReplaying result #{result_id}: {city} | {algo} | seg {seg} {spd_lbl}")
     print(f"  Steps: {T}  |  Duration: {T*dt:.1f}s  |  dt: {dt}s")
 

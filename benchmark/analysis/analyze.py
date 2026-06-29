@@ -904,7 +904,7 @@ _FIGURE_DISPATCH = {
 
 _COLUMN_MAP = {
     "city": "City", "scenario": "Scenario", "algorithm": "Algorithm",
-    "segment": "Segment", "nominal_speed": "Nominal Speed",
+    "segment": "Segment", "nominal_pace": "Nominal Speed",
     "success": "Success", "is_clear": "Is Clear", "crash_reason": "Crash Reason",
     "avg_solve_time": "Avg Solve Time", "std_solve_time": "Std Solve Time",
     "min_clearance": "Min Clearance", "ref_min_clearance": "Ref Min Clearance",

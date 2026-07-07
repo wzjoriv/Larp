@@ -13,7 +13,7 @@ A fast, flexible Python toolkit for aerial autonomous urban navigation optimized
 
 ## Overview
 
-**Larp** (/lärp/) is a modular framework for autonomous navigation that leverages *risk/potential fields* to model obstacles and UAM environmental constraints. It provides a full planning pipeline, from global path search to real-time trajectory optimization, where each stage can be used independently or replaced with a custom implementation. This makes Larp suitable for rapid prototyping, research work, and integration into UAM and UTM navigation systems.
+**Larp** (/lärp/) is a modular framework for autonomous navigation that leverages *risk/potential fields* to model obstacles and UAM environmental constraints. It provides a full planning pipeline, from global path search to real-time trajectory optimization, where each stage can be used independently or replaced with a custom implementation. This makes Larp suitable for rapid prototyping, research work, and exploration of UAM and UTM navigation systems.
 
 ---
 
@@ -34,16 +34,16 @@ Larp structures navigation as a three-stage pipeline. Each stage is independentl
   [Trajectory Optimizer]  larp.tp — Traj. Opt. with dynamics and enviromental constraints
 ```
 
-**Repulsive Risk Fields**
+**Risk Fields:**
 Model obstacles and spatial constraints using artificial repulsive fields that guide navigation using non-binary influence.
 
-**Global Path Planning (`larp.pp`)**
+**Global Path Planning (`larp.pp`):**
 Finds a collision-free global route from start to goal over a risk field. The `QuadPlanner` decomposes the field into a hierarchical quadtree network for fast multi-resolution search.
 
-**Reference Trajectory Generation (`larp.tp`)**
+**Reference Trajectory Generation (`larp.tp`):**
 Converts a global path into a time-parameterized reference for the optimizer. The `WaypointPlanner` uses arc-length projection for robust real-time tracking. `SplinePlanner` and `QuinticPlanner` provide C2 and C4 smooth profiles respectively.
 
-**Trajectory Optimization (`larp.tp`)**
+**Trajectory Optimization (`larp.tp`):**
 Solves a constrained optimal control problem at each time step, respecting vehicle dynamics, state and control bounds, and obstacle avoidance constraints derived from the risk field:
 
 - `SQPSolver` — Sequential Quadratic Programming via OSQP; fast warm-started solves suitable for real-time operation.
@@ -193,8 +193,8 @@ If you use Larp in your work, please cite:
 
 ```bibtex
 @inproceedings{rivera2026citywide,
-  title = {City-{{Wide Low-Altitude Urban Air Mobility}}: {{A Scalable Global Path Planning Approach}} via {{Risk-Aware Multi-Scale Cell Decomposition}}},
-  booktitle = {Proceedings of the 2026 {{IEEE}} 6th {{International Conference}} on {{Human-Machine Systems}} ({{ICHMS}})},
+  title = {City-Wide Low-Altitude Urban Air Mobility: A Scalable Global Path Planning Approach via Risk-Aware Multi-Scale Cell Decomposition},
+  booktitle = {Proceedings of the 2026 IEEE 6th International Conference on Human-Machine Systems (ICHMS)},
   author = {Rivera, Josue N. and Sun, Dengfeng and Lv, Chen},
   year = 2026,
   month = jul,

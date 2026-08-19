@@ -21,8 +21,7 @@ def test_quad_on_simple_pf():
     quadtree = larp.quad.QuadTree(field=field,
                                   build_tree=True,
                                   minimum_length_limit=2,
-                                  maximum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2))
+                                  maximum_length_limit=5)
     
     quadtree.build()
 
@@ -57,7 +56,6 @@ def test_rgj_idx_passed():
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
 
     def get_rgj_idx(quad:larp.quad.QuadNode):
@@ -96,7 +94,6 @@ def test_leaf_none_children():
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
 
     for quad in quadtree.leaves:
@@ -130,7 +127,6 @@ def test_iter_quadtree():
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     
     for quad in quadtree:
@@ -164,7 +160,6 @@ def test_quad_link():
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   minimum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     
     quad_chain = quadtree.find_quads_chain([[50.1, 50.1]])[0]

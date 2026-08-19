@@ -30,7 +30,7 @@ cdef class QuadNode:
     cdef public int boundary_zone
     cdef public double boundary_max_range
     cdef public object rgj_idx
-    cdef public object rgj_zones
+    cdef public object rgj_risks
     cdef public list children
     cdef public list neighbors
 
@@ -42,7 +42,7 @@ cdef class QuadNode:
         self.boundary_max_range = 1.0
 
         self.rgj_idx = np.array([], dtype=int)
-        self.rgj_zones = np.array([], dtype=int)
+        self.rgj_risks = np.array([], dtype=float)
 
         self.children = [None] * len(_CHD_TO_IDX)
         self.neighbors = [None] * len(_NGH_TO_IDX)
@@ -135,11 +135,8 @@ cdef class QuadTree:
     cdef public double min_sector_size
     cdef public double max_sector_size
     cdef public double size
-    cdef public object edge_bounds
-    cdef public int n_zones
-    cdef object _zones_rad_ln
-    cdef public object ZONEToMaxRANGE
-    cdef public object ZONEToMinRANGE
+    cdef public double risk_epsilon
+    cdef public double conservative_tol
     cdef public bint conservative
     cdef public object root
     cdef public set leaves
@@ -163,7 +160,8 @@ cdef class QuadTree:
     def __init__(self, field,
                  minimum_length_limit=None,
                  maximum_length_limit=np.inf,
-                 edge_bounds=np.arange(0.2, 0.8, 0.2),
+                 risk_epsilon=0.01,
+                 conservative_tol=0.05,
                  size=None,
                  conservative=False,
                  build_tree=True):
@@ -173,11 +171,8 @@ cdef class QuadTree:
         self.max_sector_size = maximum_length_limit
         self.size = size or np.max(self.field.size)
 
-        self.edge_bounds = np.sort(np.array(edge_bounds))[::-1]
-        self.n_zones = len(self.edge_bounds) + 1
-        self._zones_rad_ln = -np.log(self.edge_bounds)
-        self.ZONEToMaxRANGE = np.concatenate([[1.0, 1.0], self.edge_bounds])
-        self.ZONEToMinRANGE = np.concatenate([self.edge_bounds[0:1], self.edge_bounds, [0.0]])
+        self.risk_epsilon = risk_epsilon
+        self.conservative_tol = conservative_tol
         self.conservative = conservative
 
         self.root = None
@@ -207,29 +202,25 @@ cdef class QuadTree:
         self.leaves.add(quad)
         self._flat_dirty = True
 
-    def __approximated_PF_zones__(self, center_point, size, filter_idx=None):
-        n_rgjs = len(filter_idx)
-        zones = np.ones(n_rgjs, dtype=int) * self.n_zones
-
+    def __approximated_PF_risk__(self, center_point, size, filter_idx=None):
         rep_vectors, refs_idxs = self.field.repulsion_vectors([center_point], filted_idx=filter_idx, min_dist_select=True, return_reference=True)
 
         dist_sqr = (rep_vectors * rep_vectors).sum(1)
-        zone0_select = dist_sqr <= (size * size) / 2.0
-        zones[zone0_select] = 0
+        forbidden_select = dist_sqr <= (size * size) / 2.0
 
-        if sum(zone0_select) < n_rgjs:
-            not_zone0_select = ~zone0_select
-            rgjs_idx = filter_idx[not_zone0_select]
-            vectors = rep_vectors[not_zone0_select]
+        risks = np.zeros(len(filter_idx), dtype=float)
+        risks[forbidden_select] = np.inf
 
-            vectors = vectors.reshape(-1, 2)
+        not_forbidden = ~forbidden_select
+        if not_forbidden.any():
+            rgjs_idx = filter_idx[not_forbidden]
+            vectors = rep_vectors[not_forbidden].reshape(-1, 2)
             uni_vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
 
-            dist_sqr = self.field.squared_dist_per(center_point - uni_vectors * (size / np.sqrt(2)), idxs=rgjs_idx).ravel()
+            worst_dist_sqr = self.field.squared_dist_per(center_point - uni_vectors * (size / np.sqrt(2)), idxs=rgjs_idx).ravel()
+            risks[not_forbidden] = np.exp(-worst_dist_sqr)
 
-            zones[not_zone0_select] = np.digitize(dist_sqr, self._zones_rad_ln, right=True) + 1
-
-        return zones, rep_vectors, refs_idxs
+        return risks, rep_vectors, refs_idxs
 
     def __build__(self, center_point, size, filter_idx):
 
@@ -237,32 +228,31 @@ cdef class QuadTree:
         filter_n = len(filter_idx)
 
         if filter_n:
-            zones, rep_vectors, refs_idxs = self.__approximated_PF_zones__(center_point=center_point, size=size, filter_idx=filter_idx)
-            quad.boundary_zone = min(zones)
+            risks, rep_vectors, refs_idxs = self.__approximated_PF_risk__(center_point=center_point, size=size, filter_idx=filter_idx)
 
-            select = zones < self.n_zones
+            select = risks >= self.risk_epsilon
             quad.rgj_idx = filter_idx[select]
-            quad.rgj_zones = zones[select]
+            quad.rgj_risks = risks[select]
+            quad.boundary_max_range = float(quad.rgj_risks.max()) if len(quad.rgj_risks) else 0.0
+            quad.boundary_zone = 0 if np.isinf(quad.boundary_max_range) else 1
         else:
-            quad.boundary_zone = self.n_zones
-
-        quad.boundary_max_range = self.ZONEToMaxRANGE[quad.boundary_zone]
+            quad.boundary_zone = 1
+            quad.boundary_max_range = 0.0
 
         size2 = size / 2.0
         if size <= self.max_sector_size:
-            if size2 < self.min_sector_size or quad.boundary_zone == self.n_zones:
+            if size2 < self.min_sector_size or len(quad.rgj_idx) == 0:
                 self.mark_leaf(quad)
                 return quad
-            if self.conservative and quad.boundary_zone > 0:
-                lower_range = self.ZONEToMinRANGE[quad.boundary_zone]
-
-                select = zones == quad.boundary_zone
-                vectors, refs_idxs = rep_vectors[select], refs_idxs[select]
-                vectors = vectors.reshape(-1, 2)
+            if self.conservative and quad.boundary_zone != 0:
+                governing = risks == quad.boundary_max_range
+                vectors = rep_vectors[governing].reshape(-1, 2)
                 uni_vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
 
-                bounds_evals = self.field.eval_per(center_point + uni_vectors * (size / np.sqrt(2)), idxs=refs_idxs)
-                if (bounds_evals >= lower_range).any():
+                opposite_dist_sqr = self.field.squared_dist_per(center_point + uni_vectors * (size / np.sqrt(2)), idxs=refs_idxs[governing]).ravel()
+                best_case_risk = np.exp(-opposite_dist_sqr).max()
+
+                if (quad.boundary_max_range - best_case_risk) < self.conservative_tol:
                     self.mark_leaf(quad)
                     return quad
 
@@ -419,7 +409,7 @@ cdef class QuadTree:
     def get_quad_zones(self):
         return np.array([quad.boundary_zone for quad in self.leaves], dtype=int)
 
-    def toDict(self):
+    def to_dict(self):
         def __save_quad__(quad):
             if quad is None:
                 return None
@@ -430,7 +420,7 @@ cdef class QuadTree:
                 'boundary_zone': quad.boundary_zone,
                 'boundary_max_range': quad.boundary_max_range,
                 'rgj_idx': quad.rgj_idx,
-                'rgj_zones': quad.rgj_zones,
+                'rgj_risks': quad.rgj_risks,
                 'children': [__save_quad__(child) for child in quad.children],
             }
 
@@ -439,16 +429,13 @@ cdef class QuadTree:
             'min_sector_size': self.min_sector_size,
             'max_sector_size': self.max_sector_size,
             'size': self.size,
-            'edge_bounds': self.edge_bounds,
-            'n_zones': self.n_zones,
-            '__zones_rad_ln': self._zones_rad_ln,
-            'ZONEToMaxRANGE': self.ZONEToMaxRANGE,
-            'ZONEToMinRANGE': self.ZONEToMinRANGE,
+            'risk_epsilon': self.risk_epsilon,
+            'conservative_tol': self.conservative_tol,
             'conservative': self.conservative,
             'root': __save_quad__(self.root),
         }
 
-    def fromDict(self, data):
+    def from_dict(self, data):
         def __load_quad__(quad_data):
             if quad_data is None:
                 return None
@@ -457,18 +444,16 @@ cdef class QuadTree:
             quad.boundary_zone = quad_data['boundary_zone']
             quad.boundary_max_range = quad_data['boundary_max_range']
             quad.rgj_idx = quad_data['rgj_idx']
-            quad.rgj_zones = quad_data['rgj_zones']
+            quad.rgj_risks = quad_data['rgj_risks']
             quad.children = [__load_quad__(child) for child in quad_data['children']]
             return quad
 
         self.min_sector_size = data['min_sector_size']
         self.max_sector_size = data['max_sector_size']
         self.size = data['size']
-        self.edge_bounds = data['edge_bounds']
-        self.n_zones = data['n_zones']
-        self._zones_rad_ln = data['__zones_rad_ln']
-        self.ZONEToMaxRANGE = data['ZONEToMaxRANGE']
-        self.ZONEToMinRANGE = data['ZONEToMinRANGE']
+        self.risk_epsilon = data['risk_epsilon']
+        self.conservative_tol = data['conservative_tol']
+        self.conservative = data['conservative']
         self.root = __load_quad__(data['root'])
         self.leaves = self.search_leaves()
 
@@ -479,7 +464,8 @@ cdef class QuadTree:
         resolution = 2 ** int(np.floor(np.log2(self.root.size / self.min_sector_size))) + 1
         pixel_size = self.root.size / resolution
 
-        image = np.ones((resolution, resolution), dtype=int) * self.n_zones
+        zone_image = np.ones((resolution, resolution), dtype=np.int8)
+        risk_image = np.zeros((resolution, resolution), dtype=float)
 
         half_size = self.root.size / 2.0
         lower_bound = self.root.center_point - half_size
@@ -488,7 +474,7 @@ cdef class QuadTree:
         quads = self.leaves if max_depth is None else self.search_leaves(max_depth=max_depth)
 
         for quad in quads:
-            if quad.boundary_zone == self.n_zones:
+            if len(quad.rgj_idx) == 0:
                 continue
 
             quad_half = quad.size / 2.0
@@ -499,12 +485,14 @@ cdef class QuadTree:
             x1 = min(x0 + block_size, resolution)
             y1 = min(y0 + block_size, resolution)
 
-            image[y0:y1, x0:x1] = quad.boundary_zone
+            zone_image[y0:y1, x0:x1] = quad.boundary_zone
+            risk_image[y0:y1, x0:x1] = quad.boundary_max_range
 
-        if not return_zone:
-            image_p = self.ZONEToMaxRANGE[image]
-            image_p[image == 0] = np.nan
-            image = image_p
+        if return_zone:
+            image = zone_image
+        else:
+            image = risk_image
+            image[zone_image == 0] = np.nan
 
         if return_extent:
             return image, [lower_bound[0], upper_bound[0], lower_bound[1], upper_bound[1]]

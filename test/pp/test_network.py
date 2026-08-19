@@ -20,8 +20,7 @@ def test_network_on_simple_pf():
     field = larp.RiskField(size=50, center_point=[55, 55], rgjs=point_rgjs)
     quadtree = larp.quad.QuadTree(field=field,
                                   build_tree=True,
-                                  minimum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2))
+                                  minimum_length_limit=5)
     
     network = larp.pp.QuadNetwork(quadtree=quadtree, build_network=True)
 
@@ -40,7 +39,7 @@ def test_refresh_of_network():
     }]
 
     field = larp.RiskField(size=50, center_point=[55, 55], rgjs=point_rgjs,
-                            minimum_cell_size=5, edge_bounds=np.arange(0.2, 0.8, 0.2))
+                            minimum_cell_size=5)
     quadtree = field.quadtree
 
     network = larp.pp.QuadNetwork(quadtree=quadtree, build_network=True)

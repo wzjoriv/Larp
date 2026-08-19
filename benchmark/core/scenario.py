@@ -204,7 +204,7 @@ class VehicleScenario(BenchmarkScenario):
             grid_sz  = cfg["dist"] / 256
             qfield = lp.RiskField(
                 rgjs=field.rgjs, center_point=field.center_point, size=field.size,
-                minimum_cell_size=grid_sz, edge_bounds=[0.2, 0.4, 0.6, 0.8],
+                minimum_cell_size=grid_sz,
             )
             field_map = {"field": field, "qfield": qfield}
 
@@ -217,7 +217,7 @@ class VehicleScenario(BenchmarkScenario):
             path_planner = pp.QuadPlanner(
                 lp.quad.QuadTree(
                     field, minimum_length_limit=grid_sz,
-                    edge_bounds=[0.2, 0.4, 0.6, 0.8], build_tree=True,
+                    build_tree=True,
                 )
             )
             path_planner.select_alg("a*")
@@ -371,7 +371,7 @@ class WMRScenario(BenchmarkScenario):
         grid_sz  = min(self.field.size) / 120.0
         qfield = lp.RiskField(
             rgjs=self.field.rgjs, center_point=self.field.center_point, size=self.field.size,
-            minimum_cell_size=grid_sz, edge_bounds=[0.2, 0.4, 0.6, 0.8],
+            minimum_cell_size=grid_sz,
         )
         self.field_map = {"field": self.field, "qfield": qfield}
 
@@ -384,7 +384,7 @@ class WMRScenario(BenchmarkScenario):
         self.path_planner = pp.QuadPlanner(
             lp.quad.QuadTree(
                 self.field, minimum_length_limit=10.0,
-                edge_bounds=[0.2, 0.5, 0.8], build_tree=True,
+                build_tree=True,
             )
         )
         self.path_planner.select_alg("a*")

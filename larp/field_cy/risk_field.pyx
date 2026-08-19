@@ -38,7 +38,8 @@ cdef class RiskField:
 
     cdef public object minimum_cell_size
     cdef public object maximum_cell_size
-    cdef public object edge_bounds
+    cdef public double risk_epsilon
+    cdef public double conservative_tol
     cdef public bint conservative
 
     cdef bint _reload_center
@@ -46,7 +47,7 @@ cdef class RiskField:
 
     def __init__(self, rgjs=None, center_point=None, size=None, properties=None, extra_info=None,
                  minimum_cell_size=None, maximum_cell_size=np.inf,
-                 edge_bounds=np.arange(0.2, 0.8, 0.2), conservative=False):
+                 risk_epsilon=0.01, conservative_tol=0.05, conservative=False):
         rgjs = [] if rgjs is None else rgjs
 
         self.rgjs = []
@@ -57,7 +58,8 @@ cdef class RiskField:
 
         self.minimum_cell_size = minimum_cell_size
         self.maximum_cell_size = maximum_cell_size
-        self.edge_bounds = edge_bounds
+        self.risk_epsilon = risk_epsilon
+        self.conservative_tol = conservative_tol
         self.conservative = conservative
         self.quadtree = None
 
@@ -98,17 +100,19 @@ cdef class RiskField:
             self,
             minimum_length_limit=self.minimum_cell_size,
             maximum_length_limit=self.maximum_cell_size,
-            edge_bounds=self.edge_bounds,
+            risk_epsilon=self.risk_epsilon,
+            conservative_tol=self.conservative_tol,
             conservative=self.conservative,
             build_tree=True,
         )
 
     def enable_quadtree(self, minimum_cell_size, maximum_cell_size=np.inf,
-                         edge_bounds=np.arange(0.2, 0.8, 0.2), conservative=False):
+                         risk_epsilon=0.01, conservative_tol=0.05, conservative=False):
         """Build (or rebuild) the quadtree for this field."""
         self.minimum_cell_size = minimum_cell_size
         self.maximum_cell_size = maximum_cell_size
-        self.edge_bounds = edge_bounds
+        self.risk_epsilon = risk_epsilon
+        self.conservative_tol = conservative_tol
         self.conservative = conservative
         self._build_quadtree()
 
@@ -290,7 +294,8 @@ cdef class RiskField:
             new_field,
             minimum_length_limit=self.quadtree.min_sector_size,
             maximum_length_limit=self.quadtree.max_sector_size,
-            edge_bounds=self.quadtree.edge_bounds,
+            risk_epsilon=self.quadtree.risk_epsilon,
+            conservative_tol=self.quadtree.conservative_tol,
             size=self.quadtree.size,
             build_tree=True,
             conservative=False,
@@ -306,16 +311,16 @@ cdef class RiskField:
         update_idx(new_qtree.root)
 
         def update_quad(rootquad, newquad):
-            if newquad is None or newquad.boundary_zone == self.quadtree.n_zones:
+            if newquad is None or len(newquad.rgj_idx) == 0:
                 return
 
-            if newquad.boundary_zone < rootquad.boundary_zone:
-                rootquad.boundary_zone = newquad.boundary_zone
-                rootquad.boundary_max_range = newquad.boundary_max_range
+            if newquad.boundary_zone == 0:
+                rootquad.boundary_zone = 0
+            rootquad.boundary_max_range = max(rootquad.boundary_max_range, newquad.boundary_max_range)
 
             if len(newquad.rgj_idx) > 0:
                 rootquad.rgj_idx = np.concatenate([rootquad.rgj_idx, newquad.rgj_idx])
-                rootquad.rgj_zones = np.concatenate([rootquad.rgj_zones, newquad.rgj_zones])
+                rootquad.rgj_risks = np.concatenate([rootquad.rgj_risks, newquad.rgj_risks])
 
             if rootquad.leaf and not newquad.leaf:
                 self.quadtree.leaves.remove(rootquad)
@@ -387,10 +392,15 @@ cdef class RiskField:
                 return
 
             quad.rgj_idx = shift_map[quad.rgj_idx[keep_mask]]
-            quad.rgj_zones = quad.rgj_zones[keep_mask]
-            quad.boundary_zone = (min(quad.rgj_zones) if len(quad.rgj_zones) > 0 else self.quadtree.n_zones)
+            quad.rgj_risks = quad.rgj_risks[keep_mask]
+            if len(quad.rgj_risks) > 0:
+                quad.boundary_max_range = float(quad.rgj_risks.max())
+                quad.boundary_zone = 0 if np.isinf(quad.boundary_max_range) else 1
+            else:
+                quad.boundary_max_range = 0.0
+                quad.boundary_zone = 1
 
-            if (not quad.leaf) and quad.size <= self.quadtree.max_sector_size and quad.boundary_zone == self.quadtree.n_zones:
+            if (not quad.leaf) and quad.size <= self.quadtree.max_sector_size and len(quad.rgj_idx) == 0:
                 self.quadtree.leaves -= self.quadtree.search_leaves(quad)
                 quad.children = [None] * len(quad.chdToIdx)
                 quad.neighbors = [None] * len(quad.nghToIdx)

@@ -159,7 +159,7 @@ def test_add_remove_field():
     }]
 
     field = larp.RiskField(size=50, center_point=[55, 55], rgjs=point_rgjs,
-                            minimum_cell_size=5, edge_bounds=np.arange(0.2, 0.8, 0.2))
+                            minimum_cell_size=5)
     quadtree = field.quadtree
 
     assert field.eval([(55, 55)])[0] != 1.0, "RiskField eval correct"
@@ -200,7 +200,7 @@ def test_add_rgj_idx_passed():
     }]
 
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs,
-                            minimum_cell_size=5, edge_bounds=np.arange(0.2, 0.8, 0.2))
+                            minimum_cell_size=5)
     quadtree = field.quadtree
 
     field.addRGJ(larp.PointRGJ((55, 55), repulsion=[[25, 0], [0, 25]]))
@@ -246,7 +246,7 @@ def test_remove_rgj_idx_passed():
     }]
 
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs,
-                            minimum_cell_size=0.5, edge_bounds=np.arange(0.2, 0.8, 0.2))
+                            minimum_cell_size=0.5)
     quadtree = field.quadtree
 
     field.delRGJ([2, 3])
@@ -287,7 +287,7 @@ def test_add_leaf_none_children():
     }]
 
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs,
-                            minimum_cell_size=5, edge_bounds=np.arange(0.2, 0.8, 0.2))
+                            minimum_cell_size=5)
     quadtree = field.quadtree
 
     field.addRGJ(larp.PointRGJ((55, 55), repulsion=[[25, 0], [0, 25]]))
@@ -326,7 +326,7 @@ def test_remove_leaf_none_children():
     }]
 
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs,
-                            minimum_cell_size=1, edge_bounds=np.arange(0.2, 0.8, 0.2))
+                            minimum_cell_size=1)
     quadtree = field.quadtree
 
     field.delRGJ([2, 3])

@@ -1,5 +1,5 @@
 """
-Build script for larp's optional Cython extension (larp/field_cy/kernels.pyx).
+Build script for larp's optional Cython extension (larp/field/kernels.pyx).
 
 Packaging metadata itself lives in pyproject.toml; this file exists only
 because the Cython extension needs an explicit build step:
@@ -15,8 +15,8 @@ try:
     ext_modules = cythonize(
         [
             Extension(
-                f"larp.field_cy.{name}",
-                [f"larp/field_cy/{name}.pyx"],
+                f"larp.field.{name}",
+                [f"larp/field/{name}.pyx"],
                 include_dirs=[np.get_include()],
                 extra_compile_args=["-O3"],
             )

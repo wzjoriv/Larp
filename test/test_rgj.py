@@ -46,7 +46,7 @@ def test_line_string_rgj():
     assert np.squeeze(out)[3] == 1.0, "Evaluation of line string rgj is incorrect for point at an origin"
 
 # NOTE: Rectangle/Ellipse/MultiRectangle/MultiEllipse are not part of the
-# GeoJSON-standard geometry set carried into the new field_cy architecture
+# GeoJSON-standard geometry set carried into the new field architecture
 # (Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon,
 # GeometryCollection only), so their dedicated tests were removed rather
 # than ported. Polygon covers the rectangle case; see test_polygon_rgj.

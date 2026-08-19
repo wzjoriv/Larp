@@ -1,17 +1,17 @@
 # cython: language_level=3
 """
-Cython port of larp.quad's QuadTree/QuadNode.
+QuadTree/QuadNode: spatial index for RiskField's automatic quad
+decomposition.
 
 `field` is kept as a generic Python object (not a compile-time cimport of
-RiskField) so this module and larp.field_cy.risk_field can reference each
+RiskField) so this module and larp.field.risk_field can reference each
 other without a circular compile-time dependency -- all cross-calls go
-through ordinary Python attribute/method access, exactly as the original
-pure-Python code did.
+through ordinary Python attribute/method access.
 """
 import numpy as np
 cimport numpy as cnp
 
-from larp.field_cy import kernels
+from larp.field import kernels
 
 cnp.import_array()
 
@@ -167,7 +167,13 @@ cdef class QuadTree:
                  build_tree=True):
 
         self.field = field
-        self.min_sector_size = np.min(field.size) / 128.0 if minimum_length_limit is None else minimum_length_limit
+        if minimum_length_limit is None:
+            self.min_sector_size = np.min(field.size) / 128.0
+        elif minimum_length_limit is Ellipsis:
+            # Matches the old QRiskField auto-default.
+            self.min_sector_size = (np.max(field.size) / 8.0) * 0.9
+        else:
+            self.min_sector_size = minimum_length_limit
         self.max_sector_size = maximum_length_limit
         self.size = size or np.max(self.field.size)
 
@@ -290,7 +296,7 @@ cdef class QuadTree:
         """
         Flatten the QuadNode tree into typed arrays (center_point x/y, leaf
         flag, 4 child indices) so find_quad/find_quads_chain can walk it in
-        a nogil C loop (larp.field_cy.kernels.quadtree_find_leaf/_chain)
+        a nogil C loop (larp.field.kernels.quadtree_find_leaf/_chain)
         instead of Python-level recursion. Rebuilt lazily -- cheap relative
         to the query volume it serves, since mutations are comparatively
         rare (see mark_leaf/build/replace_branch setting _flat_dirty).

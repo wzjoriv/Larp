@@ -25,7 +25,7 @@ def test_load_quadtree():
     # pickled QuadTree would go stale the moment RiskField's class layout
     # changes anyway -- so build+save+load a fresh one instead.
     field = lpio.loadRGeoJSONFile("test/data.rgj")
-    quadtree = larp.quad.QuadTree(field, minimum_length_limit=min(field.size) / 16.0)
+    quadtree = larp.QuadTree(field, minimum_length_limit=min(field.size) / 16.0)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         path = os.path.join(tmpdir, "data.quad.lp")

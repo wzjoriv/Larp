@@ -4,11 +4,11 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
 from scipy.spatial import cKDTree
-from larp.field_cy import RiskField
+from larp.field import RiskField
 from larp.fn import interpolate_along_route
 from larp.pp.network import QuadNetwork
 
-from larp.quad import QuadNode, QuadTree
+from larp.field import QuadNode, QuadTree
 from larp.types import Scaler, Point
 
 """

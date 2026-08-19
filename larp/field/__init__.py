@@ -7,12 +7,12 @@ Build with (from repo root):
     python setup.py build_ext --inplace
 """
 
-from larp.field_cy.kernels import (
+from larp.field.kernels import (
     segment_repulsion_vectors,
     point_in_rings,
     point_obstacles_eval_max,
 )
-from larp.field_cy.geometry import (
+from larp.field.geometry import (
     RGJGeometry,
     MultiRGJGeometry,
     PointRGJ,
@@ -23,8 +23,8 @@ from larp.field_cy.geometry import (
     MultiPolygonRGJ,
     GeometryCollectionRGJ,
 )
-from larp.field_cy.quadtree import QuadTree, QuadNode
-from larp.field_cy.risk_field import RiskField
+from larp.field.quadtree import QuadTree, QuadNode
+from larp.field.risk_field import RiskField
 
 __all__ = [
     "segment_repulsion_vectors",

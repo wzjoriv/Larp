@@ -205,7 +205,7 @@ def test_add_rgj_idx_passed():
 
     field.addRGJ(larp.PointRGJ((55, 55), repulsion=[[25, 0], [0, 25]]))
 
-    def get_rgj_idx(quad:larp.quad.QuadNode):
+    def get_rgj_idx(quad:larp.QuadNode):
         assert all(np.array(quad.rgj_idx) < len(field)), f"Quad's rgj indexes {quad.rgj_idx} are out of bound"
 
         if quad.leaf:
@@ -251,7 +251,7 @@ def test_remove_rgj_idx_passed():
 
     field.delRGJ([2, 3])
 
-    def get_rgj_idx(quad:larp.quad.QuadNode):
+    def get_rgj_idx(quad:larp.QuadNode):
         assert all(np.array(quad.rgj_idx) < len(field)), f"Quad's rgj indexes {quad.rgj_idx} are out of bound"
 
         if quad.leaf:

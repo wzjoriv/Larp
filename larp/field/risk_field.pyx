@@ -1,17 +1,17 @@
 # cython: language_level=3
 """
-Cython RiskField: the merge of larp.field.RiskField and larp.quad.QRiskField.
+RiskField: a collection of RGJ geometries with optional automatic quad
+decomposition.
 
-Quad decomposition is now a first-class, optional feature of RiskField
-itself rather than a separate wrapper class:
+    RiskField(rgjs)                                  # no quadtree -- straight loop over self.rgjs
+    RiskField(rgjs, minimum_cell_size=2.0)            # quadtree built with an explicit minimum cell size
+    RiskField(rgjs, minimum_cell_size=...)            # quadtree built with an auto-picked minimum cell size
 
-    RiskField(rgjs)                                  # no quadtree (old RiskField behavior)
-    RiskField(rgjs, minimum_cell_size=2.0)            # quadtree built automatically (old QRiskField behavior)
-
-When `minimum_cell_size` is None (the default), every method behaves
-exactly like the old plain RiskField: a straight loop over `self.rgjs`.
-When it is set, queries are routed through the quadtree to only consider
-RGJs relevant to each query point/region -- the old QRiskField behavior.
+When `minimum_cell_size` is None (the default), every method loops
+directly over `self.rgjs`. Otherwise a quadtree is built and queries are
+routed through it to only consider RGJs relevant to each query
+point/region -- pass a float for an explicit minimum cell size, or `...`
+(Ellipsis) to have QuadTree pick one from the field's own size.
 """
 
 import warnings
@@ -21,8 +21,8 @@ import numpy as np
 cimport numpy as cnp
 
 import larp.fn as lpf
-from larp.field_cy.geometry import RGJGeometry, _RGJ_TYPES
-from larp.field_cy.quadtree import QuadTree, QuadNode
+from larp.field.geometry import RGJGeometry, _RGJ_TYPES
+from larp.field.quadtree import QuadTree, QuadNode
 
 cnp.import_array()
 

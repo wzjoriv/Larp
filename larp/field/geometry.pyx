@@ -1,22 +1,17 @@
 # cython: language_level=3
 """
-Cython port of larp.field's RGJGeometry hierarchy, restricted to geometries
-with a direct GeoJSON equivalent: Point, LineString, Polygon, MultiPoint,
+The RGJGeometry hierarchy: Point, LineString, Polygon, MultiPoint,
 MultiLineString, MultiPolygon, GeometryCollection.
 
-Rectangle and Ellipse (non-standard extensions in larp/field.py) are not
-carried over -- the new architecture only supports standard GeoJSON shapes.
-
 Hot numeric loops (segment projection, point-in-polygon) are delegated to
-larp.field_cy.kernels; everything else (bookkeeping, bbox, RGeoJSON I/O)
-stays as ordinary Cython-compiled Python logic, since that's not where the
-measured speedups come from (see benchmark/bench_field_cy.py).
+larp.field.kernels; everything else (bookkeeping, bbox, RGeoJSON I/O)
+stays as ordinary Cython-compiled Python logic.
 """
 
 import numpy as np
 cimport numpy as cnp
 
-from larp.field_cy import kernels
+from larp.field import kernels
 
 cnp.import_array()
 

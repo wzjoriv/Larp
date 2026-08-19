@@ -451,7 +451,7 @@ class WaypointPlanner(Planner):
         ))
         ds      = s - self.cached_cum_len[seg_idx]
         direction = self.cached_directions[seg_idx]
-        pos     = self.path[seg_idx, :2] + self.cached_directions[seg_idx] * ds
+        pos     = self.path[seg_idx, :2] + self.cached_directions[seg_idx] * ds # TODO: Update pos
         heading = float(self.path[seg_idx, 2] if self._use_custom_heading
                         else self.cached_seg_headings[seg_idx])
         return pos, heading, direction
@@ -480,9 +480,16 @@ class WaypointPlanner(Planner):
         s_prev = s_robot + self.lookahead
         for _ in range(N):
             remaining = max(self.total_len - s_prev, 0.0)
-            speed = (nominal_pace * min(1.0, remaining / self.goal_blend_dist)
-                    if self.goal_blend_dist > 0 else nominal_pace)
-            s_prev = min(s_prev + speed * dt, self.total_len)
+
+            if self.goal_blend_dist > 0 and remaining <= self.goal_blend_dist:
+                # Already within the blend zone: saturate to the goal now
+                # rather than asymptotically decaying toward it, so the
+                # solver sees a stationary target as documented above.
+                speed = 0.0
+                s_prev = self.total_len
+            else:
+                speed = nominal_pace
+                s_prev = min(s_prev + speed * dt, self.total_len)
 
             pos_ref, hdg_ref, direction = self._interp_on_path(s_prev)
             state      = self.stable_state.copy()

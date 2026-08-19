@@ -2,7 +2,7 @@ from os import PathLike
 from typing import List, Optional, Tuple, Union
 import re
 import numpy as np
-from larp.field import RiskField, RGJGeometry
+from larp.field_cy import RiskField, RGJGeometry
 from larp.quad import QuadTree
 from larp.const import FLOOT_METER_HEIGHT, OSM_INSTALLED
 from pyproj import CRS, Transformer

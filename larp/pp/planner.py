@@ -4,11 +4,11 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
 from scipy.spatial import cKDTree
-from larp.field import RiskField
+from larp.field_cy import RiskField
 from larp.fn import interpolate_along_route
 from larp.pp.network import QuadNetwork
 
-from larp.quad import QuadNode, QuadTree, QRiskField
+from larp.quad import QuadNode, QuadTree
 from larp.types import Scaler, Point
 
 """
@@ -651,7 +651,7 @@ def find_path_irrt_star(
         return smooth_path_line_of_sight(best_path, field, collision_threshold)
     return None
 
-def batch_collision_check(origin: np.ndarray, targets: np.ndarray, field: QRiskField, threshold: float, num_samples: int = 5):
+def batch_collision_check(origin: np.ndarray, targets: np.ndarray, field: RiskField, threshold: float, num_samples: int = 5):
     """
     Checks multiple segments (origin -> targets[i]) for collisions in one go.
     """
@@ -673,7 +673,7 @@ def batch_collision_check(origin: np.ndarray, targets: np.ndarray, field: QRiskF
 def is_segment_valid_vectorized(
     p1: np.ndarray, 
     p2: np.ndarray, 
-    field: QRiskField, 
+    field: RiskField, 
     threshold: float, 
     min_samples: int = 5
 ) -> bool:
@@ -703,7 +703,7 @@ def _fast_segment_check(p1: np.ndarray, p2: np.ndarray, field: RiskField, thresh
     if np.any(field.eval(np.vstack([p1, p2])) > threshold):
         return False, np.inf
 
-    # 2. Quadtree Awareness (QRiskField integration)
+    # 2. Quadtree Awareness (RiskField quad decomposition)
     if hasattr(field, 'quadtree'):
         midpoint = (p1 + p2) / 2.0
         q_node = field.quadtree.find_quad([midpoint], max_depth=3)[0]

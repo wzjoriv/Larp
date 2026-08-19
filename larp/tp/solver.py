@@ -27,7 +27,7 @@ import numpy as np
 import osqp
 from scipy import sparse
 
-from larp import QRiskField, RiskField
+from larp import RiskField
 from larp.dynamics import Dynamics
 from larp.fn import angle_diff
 
@@ -51,14 +51,14 @@ class Solver(ABC):
 
     Provides:
       * RK4 forward rollout (NumPy or JAX-JIT)
-      * Repulsion queries from RiskField / QRiskField
+      * Repulsion queries from RiskField (with or without quad decomposition)
       * Local linearised obstacle half-planes:  A_local @ x  <=  b_local
       * Bound parsing and shared hyper-parameters
     """
 
     def __init__(
         self,
-        field: "RiskField | QRiskField",
+        field: "RiskField",
         dynamics: Dynamics,
         dt: float = 0.1,
         horizon: int = 40,
@@ -77,7 +77,7 @@ class Solver(ABC):
     ):
         self.dynamics = dynamics
         self.field = field
-        self.is_qfield = isinstance(field, QRiskField)
+        self.is_qfield = field is not None and field.quadtree is not None
         self.dt = dt
         self.N = int(horizon) if isinstance(horizon, int) else int(np.ceil(horizon / dt))
         self.minimum_dist = minimum_dist
@@ -203,7 +203,7 @@ class Solver(ABC):
             quad = self.field.quadtree.find_quad(origin, max_depth=20)[0]
             if not len(quad.rgj_idx):
                 return None, None
-            repulsion_vecs = -self.field.field.repulsion_vectors(
+            repulsion_vecs = -self.field.repulsion_vectors(
                 origin, filted_idx=quad.rgj_idx, min_dist_select=True
             )
         else:
@@ -276,14 +276,23 @@ class SQPSolver(Solver):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # Constant cost matrix  P 
+        # Constant cost matrix  P
+        # Control cost penalises rate-of-change (u_k - u_{k-1}).T R (u_k - u_{k-1})
+        # for k = 1..N-1; the k = 0 term is dropped since u_{-1} is unknown.
         P_x_blocks = [sparse.csc_matrix(2 * self.Q)] * (self.N - 1)
         P_x_blocks.append(sparse.csc_matrix(2 * self.Qf))
-        self.P = sparse.block_diag(
-            P_x_blocks
-            + [sparse.kron(sparse.eye(self.N), sparse.csc_matrix(2 * self.R))],
-            format="csc",
+
+        D_scalar = sparse.diags(
+            [-np.ones(self.N - 1), np.ones(self.N - 1)],
+            offsets=[0, 1],
+            shape=(self.N - 1, self.N),
         )
+        D_u = sparse.kron(D_scalar, sparse.eye(self.m), format="csc")
+        P_u = 2 * (
+            D_u.T @ sparse.kron(sparse.eye(self.N - 1), sparse.csc_matrix(self.R)) @ D_u
+        )
+
+        self.P = sparse.block_diag(P_x_blocks + [P_u], format="csc")
 
         # Identity box-constraint matrix
         self.A_box = sparse.eye(self.var_count, format="csc")
@@ -567,6 +576,9 @@ class _ALSolverBase(Solver):
 
         self.alphas = 0.5 ** np.arange(10)
 
+        # Augmented state size: [x, u_{k-1}] used for the control-rate cost
+        self.n_aug = self.n + self.m
+
         # Dynamics Jacobian cache for inner iLQR loop
         self._il_dyn_cache: Dict[str, Any] = {"Ad": None, "Bd": None}
 
@@ -602,19 +614,23 @@ class _ALSolverBase(Solver):
         return cost, grad, hess
 
     # Per-step cost
+    #
+    # Control cost penalises rate-of-change (u_k - u_{k-1}).T R (u_k - u_{k-1})
+    # for k = 1..N-1. Since u_{-1} is unknown, k = 0 carries no control cost
+    # (`_stage_cost`). From k = 1 onward the backward/forward passes operate
+    # on the augmented state z = [x, p] with p = u_{k-1} (`_stage_cost_aug`),
+    # so u_0's effect on stage 1's rate cost still flows back through V.
 
-    def _stage_cost(self, x, u, x_ref, lam, rho, lin_con):
+    def _stage_cost(self, x, x_ref, lam, rho, lin_con):
+        """Stage cost at k = 0 — no control term, since u_{-1} is unknown."""
         diff = x - x_ref
         if self.angle_idxs:
             aidx = np.array(self.angle_idxs, dtype=int)
             diff[aidx] = angle_diff(x[aidx], x_ref[aidx])
 
-        l    = 0.5 * (diff @ self.Q @ diff + u @ self.R @ u)
+        l    = 0.5 * (diff @ self.Q @ diff)
         l_x  = self.Q @ diff
-        l_u  = self.R @ u
         l_xx = self.Q.copy()
-        l_uu = self.R.copy()
-        l_ux = np.zeros((self.m, self.n))
 
         A_t, b_t = lin_con
         if A_t is not None and len(lam) > 0:
@@ -624,9 +640,48 @@ class _ALSolverBase(Solver):
             l_x  += al_g
             l_xx += al_h
 
-        return l, l_x, l_u, l_xx, l_uu, l_ux
+        return l, l_x, l_xx
+
+    def _stage_cost_aug(self, x, u, p, x_ref, lam, rho, lin_con):
+        """
+        Stage cost at k = 1..N-1 on the augmented state z = [x, p], p = u_{k-1}.
+        Penalises (u - p).T R (u - p) in place of u.T R u.
+        """
+        diff = x - x_ref
+        if self.angle_idxs:
+            aidx = np.array(self.angle_idxs, dtype=int)
+            diff[aidx] = angle_diff(x[aidx], x_ref[aidx])
+        du = u - p
+
+        l    = 0.5 * (diff @ self.Q @ diff + du @ self.R @ du)
+        l_x  = self.Q @ diff
+        l_xx = self.Q.copy()
+
+        A_t, b_t = lin_con
+        if A_t is not None and len(lam) > 0:
+            c = self._eval_constraint(A_t, b_t, x)
+            al_c, al_g, al_h = self._al_terms(lam, rho, c, A_t)
+            l    += al_c
+            l_x  += al_g
+            l_xx += al_h
+
+        l_u  = self.R @ du
+        l_p  = -self.R @ du
+        l_uu = self.R.copy()
+        l_up = -self.R.copy()
+        l_pp = self.R.copy()
+        l_ux = np.zeros((self.m, self.n))
+
+        l_z  = np.concatenate([l_x, l_p])
+        l_zz = np.zeros((self.n_aug, self.n_aug))
+        l_zz[: self.n, : self.n] = l_xx
+        l_zz[self.n :, self.n :] = l_pp
+        l_uz = np.hstack([l_ux, l_up])
+
+        return l, l_z, l_u, l_zz, l_uu, l_uz
 
     def _terminal_cost(self, x, x_ref, lam, rho, lin_con):
+        """Terminal cost, returned on the augmented [x, p] value dimensions."""
         diff = x - x_ref
         if self.angle_idxs:
             aidx = np.array(self.angle_idxs, dtype=int)
@@ -644,15 +699,27 @@ class _ALSolverBase(Solver):
             l_x  += al_g
             l_xx += al_h
 
-        return l, l_x, l_xx
+        V_x  = np.concatenate([l_x, np.zeros(self.m)])
+        V_xx = np.zeros((self.n_aug, self.n_aug))
+        V_xx[: self.n, : self.n] = l_xx
+
+        return l, V_x, V_xx
 
     def _total_aug_cost(self, xs, us, ref, lam_list, rho, lin_cons):
         max_ref_idx = len(ref) - 1
         J = 0.0
-        for t in range(self.N):
+
+        x_ref = ref[min(0, max_ref_idx)]
+        l, *_ = self._stage_cost(xs[0], x_ref, lam_list[0], rho, lin_cons[0])
+        J += l
+
+        for t in range(1, self.N):
             x_ref = ref[min(t, max_ref_idx)]
-            l, *_ = self._stage_cost(xs[t], us[t], x_ref, lam_list[t], rho, lin_cons[t])
+            l, *_ = self._stage_cost_aug(
+                xs[t], us[t], us[t - 1], x_ref, lam_list[t], rho, lin_cons[t]
+            )
             J += l
+
         x_ref = ref[min(self.N, max_ref_idx)]
         l, *_ = self._terminal_cost(xs[self.N], x_ref, lam_list[self.N], rho, lin_cons[self.N])
         J += l
@@ -779,24 +846,73 @@ class _ALSolverBase(Solver):
                 A_t = Ad[t]; B_t = Bd[t]
                 x_ref_t = ref[min(t, max_ref_idx)]
 
-                _, l_x, l_u, l_xx, l_uu, l_ux = self._stage_cost(
-                    xs[t], us[t], x_ref_t, lam_list[t], rho, lin_cons[t]
+                if t == 0:
+                    # Unaugmented: no control cost, but dynamics still feed
+                    # into stage 1's augmented value (p_1 = u_0).
+                    A_aug = np.zeros((self.n_aug, self.n))
+                    A_aug[: self.n, :] = A_t
+                    B_aug = np.zeros((self.n_aug, self.m))
+                    B_aug[: self.n, :] = B_t
+                    B_aug[self.n :, :] = np.eye(self.m)
+
+                    _, l_x, l_xx = self._stage_cost(
+                        xs[t], x_ref_t, lam_list[t], rho, lin_cons[t]
+                    )
+                    l_u  = np.zeros(self.m)
+                    l_uu = np.zeros((self.m, self.m))
+                    l_ux = np.zeros((self.m, self.n))
+
+                    Q_x  = l_x  + A_aug.T @ V_x
+                    Q_u  = l_u  + B_aug.T @ V_x
+                    Q_xx = l_xx + A_aug.T @ V_xx @ A_aug
+                    Q_uu = l_uu + B_aug.T @ V_xx @ B_aug
+                    Q_ux = l_ux + B_aug.T @ V_xx @ A_aug
+
+                    if self.use_ddp:
+                        dQ_xx, dQ_uu, dQ_ux = self.ddp_correction(
+                            V_x[: self.n], xs[t : t + 1], us[t : t + 1]
+                        )
+                        Q_xx += dQ_xx; Q_uu += dQ_uu; Q_ux += dQ_ux
+
+                    try:
+                        k, K = self._box_ddp_gains(Q_uu, Q_u, Q_ux, us[t], u_lb, u_ub)
+                    except np.linalg.LinAlgError:
+                        if self.verbose:
+                            print(f"[{self.__class__.__name__}] Singular Q_uu at t={t}.")
+                        back_failed = True
+                        break
+
+                    k_list[t] = k; K_list[t] = K
+                    # x_0 is fixed, so this V is never consumed further.
+                    break
+
+                # Augmented stage: z_t = [x_t, p_t] with p_t = u_{t-1}
+                A_aug = np.zeros((self.n_aug, self.n_aug))
+                A_aug[: self.n, : self.n] = A_t
+                B_aug = np.zeros((self.n_aug, self.m))
+                B_aug[: self.n, :] = B_t
+                B_aug[self.n :, :] = np.eye(self.m)
+
+                _, l_z, l_u, l_zz, l_uu, l_uz = self._stage_cost_aug(
+                    xs[t], us[t], us[t - 1], x_ref_t, lam_list[t], rho, lin_cons[t]
                 )
 
-                Q_x  = l_x  + A_t.T @ V_x
-                Q_u  = l_u  + B_t.T @ V_x
-                Q_xx = l_xx + A_t.T @ V_xx @ A_t
-                Q_uu = l_uu + B_t.T @ V_xx @ B_t
-                Q_ux = l_ux + B_t.T @ V_xx @ A_t
+                Q_z  = l_z  + A_aug.T @ V_x
+                Q_u  = l_u  + B_aug.T @ V_x
+                Q_zz = l_zz + A_aug.T @ V_xx @ A_aug
+                Q_uu = l_uu + B_aug.T @ V_xx @ B_aug
+                Q_uz = l_uz + B_aug.T @ V_xx @ A_aug
 
                 if self.use_ddp:
                     dQ_xx, dQ_uu, dQ_ux = self.ddp_correction(
-                        V_x, xs[t : t + 1], us[t : t + 1]
+                        V_x[: self.n], xs[t : t + 1], us[t : t + 1]
                     )
-                    Q_xx += dQ_xx; Q_uu += dQ_uu; Q_ux += dQ_ux
+                    Q_zz[: self.n, : self.n] += dQ_xx
+                    Q_uu += dQ_uu
+                    Q_uz[:, : self.n] += dQ_ux
 
                 try:
-                    k, K = self._box_ddp_gains(Q_uu, Q_u, Q_ux, us[t], u_lb, u_ub)
+                    k, K = self._box_ddp_gains(Q_uu, Q_u, Q_uz, us[t], u_lb, u_ub)
                 except np.linalg.LinAlgError:
                     if self.verbose:
                         print(f"[{self.__class__.__name__}] Singular Q_uu at t={t}.")
@@ -805,8 +921,8 @@ class _ALSolverBase(Solver):
 
                 k_list[t] = k; K_list[t] = K
 
-                V_x  = Q_x  + K.T @ Q_uu @ k + K.T @ Q_u  + Q_ux.T @ k
-                V_xx = Q_xx + K.T @ Q_uu @ K + K.T @ Q_ux + Q_ux.T @ K
+                V_x  = Q_z  + K.T @ Q_uu @ k + K.T @ Q_u  + Q_uz.T @ k
+                V_xx = Q_zz + K.T @ Q_uu @ K + K.T @ Q_uz + Q_uz.T @ K
                 V_xx = 0.5 * (V_xx + V_xx.T)
 
             if back_failed:
@@ -827,7 +943,13 @@ class _ALSolverBase(Solver):
                     if has_angles:
                         dx[aidx] = angle_diff(xs_new[t, aidx], xs[t, aidx])
 
-                    u_raw     = us[t] + alpha * k_list[t] + K_list[t] @ dx
+                    if t == 0:
+                        u_raw = us[t] + alpha * k_list[t] + K_list[t] @ dx
+                    else:
+                        dp    = us_new[t - 1] - us[t - 1]
+                        dz    = np.concatenate([dx, dp])
+                        u_raw = us[t] + alpha * k_list[t] + K_list[t] @ dz
+
                     us_new[t] = np.clip(u_raw, u_lb, u_ub)
 
                     u_in = us_new[t : t + 1]

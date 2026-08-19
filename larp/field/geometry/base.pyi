@@ -1,0 +1,49 @@
+"""Type stubs for larp.field.geometry.base (compiled from base.pyx)."""
+
+from __future__ import annotations
+
+from typing import Any, ClassVar
+
+import numpy as np
+import numpy.typing as npt
+
+from larp.types import Point, RGeoJSONObject
+
+FloatArray = npt.NDArray[np.float64]
+
+class RGJGeometry:
+    RGJType: ClassVar[str | None]
+
+    coordinates: FloatArray
+    repulsion: FloatArray
+    inv_repulsion: FloatArray
+    eye_repulsion: FloatArray
+    grad_matrix: FloatArray
+    properties: dict
+    bbox: FloatArray
+
+    def __init__(
+        self,
+        coordinates: FloatArray | list[Point] | Point,
+        repulsion: FloatArray | None = ...,
+        properties: dict | None = ...,
+        optional_dim: int = ...,
+        **kwargs: Any,
+    ) -> None: ...
+    def set_coordinates(self, new_coords: Any) -> None: ...
+    def set_repulsion(self, new_repulsion: Any) -> None: ...
+    def get_dist_matrix(self, scaled: bool = ..., inverted: bool = ...) -> FloatArray: ...
+    def get_center_point(self) -> FloatArray: ...
+    def in_bbox(self, x: Point) -> bool: ...
+    def repulsion_vector(self, x: FloatArray, **kwargs: Any) -> FloatArray: ...
+    def squared_dist(self, x: FloatArray, scaled: bool = ..., inverted: bool = ..., **kwargs: Any) -> FloatArray: ...
+    def contact_point(self, x: FloatArray, **kwargs: Any) -> FloatArray: ...
+    def gradient(self, x: FloatArray, **kwargs: Any) -> FloatArray: ...
+    def eval(self, x: FloatArray) -> FloatArray: ...
+    def toRGeoJSON(self) -> RGeoJSONObject: ...
+    @property
+    def __geo_interface__(self) -> RGeoJSONObject: ...
+
+class MultiRGJGeometry(RGJGeometry):
+    def repulsion_vector(self, x: FloatArray, min_dist_select: bool = ..., **kwargs: Any) -> FloatArray: ...
+    def contact_point(self, x: FloatArray, min_dist_select: bool = ..., **kwargs: Any) -> FloatArray: ...

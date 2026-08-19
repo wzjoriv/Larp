@@ -1,8 +1,9 @@
 """
-Build script for larp's optional Cython extension (larp/field/kernels.pyx).
+Build script for larp's optional Cython extensions (larp/field/*.pyx,
+larp/field/geometry/*.pyx).
 
 Packaging metadata itself lives in pyproject.toml; this file exists only
-because the Cython extension needs an explicit build step:
+because the Cython extensions need an explicit build step:
 
     python setup.py build_ext --inplace
 """
@@ -12,15 +13,19 @@ try:
     from Cython.Build import cythonize
     import numpy as np
 
+    module_names = ["kernels", "quadtree", "risk_field"] + [
+        f"geometry.{name}" for name in ["base", "point", "linestring", "polygon", "collection"]
+    ]
+
     ext_modules = cythonize(
         [
             Extension(
                 f"larp.field.{name}",
-                [f"larp/field/{name}.pyx"],
+                [f"larp/field/{name.replace('.', '/')}.pyx"],
                 include_dirs=[np.get_include()],
                 extra_compile_args=["-O3"],
             )
-            for name in ["kernels", "geometry", "quadtree", "risk_field"]
+            for name in module_names
         ],
         compiler_directives={"language_level": "3"},
     )

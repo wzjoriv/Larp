@@ -1,4 +1,4 @@
-"""Type stubs for larp.field (compiled from geometry.pyx, quadtree.pyx, risk_field.pyx, kernels.pyx)."""
+"""Type stubs for larp.field (compiled from kernels.pyx, geometry/*.pyx, quadtree.pyx, risk_field.pyx)."""
 
 from larp.field.kernels import (
     point_in_rings as point_in_rings,

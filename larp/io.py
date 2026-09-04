@@ -186,6 +186,81 @@ def loadGeoJSONFile(file: Union[str, PathLike], size_offset = 0.0):
 
     return loadGeoJSON(geojson, size_offset=size_offset)
 
+def toWaypoints(coordinates:np.ndarray, from_crs="EPSG:3857", to_crs="EPSG:4326"):
+
+    if len(coordinates.shape) != 2 or coordinates.shape[1] != 3:
+        raise RuntimeError("Coordinates must be of shape (B, 3) for x, y, and z coordinates.")
+
+    from_crs = CRS(from_crs)
+    to_crs = CRS(to_crs)
+    
+    proj = Transformer.from_crs(crs_from=from_crs, crs_to=to_crs)
+
+    return np.stack(list(proj.transform(coordinates[:,0], coordinates[:, 1])) + [coordinates[:, 2]], axis=1)
+
+def saveWaypointsFile(
+    coordinates: np.ndarray,
+    path: str = "mission.waypoints",
+    from_crs = "EPSG:3857",
+    to_crs = "EPSG:4326",
+    coord_frame: str = "3",
+    command: int = 16,
+    hold_time: float = 0.0,
+    acceptance_radius: float = 0.0,
+    pass_radius: float = 0.0,
+    yaw: float = 0.0,
+    autocontinue: bool = True,
+    home_frame: int = 0,
+    home_altitude: float | None = None,
+) -> None:
+    """Save a set of coordinates as a QGC WPL 110 mission file.
+
+    Parameters
+    ----------
+    coordinates : np.ndarray
+        Waypoint positions in `from_crs`, shape (N, 3) for x, y, z.
+    path : str
+        Output file path.
+    from_crs, to_crs
+        Source and target CRSs for the coordinate projection.
+    coord_frame : str
+        MAV_FRAME id (as a string) applied to every non-home waypoint.
+    command : int
+        MAV_CMD id applied to every non-home waypoint (default 16, NAV_WAYPOINT).
+    hold_time, acceptance_radius, pass_radius, yaw : float
+        MAV_CMD params 1-4 for each non-home waypoint.
+    autocontinue : bool
+        Whether each waypoint autocontinues to the next.
+    home_frame : int
+        MAV_FRAME id for the home line (line 0).
+    home_altitude : float, optional
+        Altitude for the home line. Defaults to the first waypoint's altitude.
+    """
+
+    waypoints = toWaypoints(coordinates, from_crs, to_crs)
+
+    crf = str(int(coord_frame[0]))
+    cont = int(bool(autocontinue))
+
+    lat0, lon0, alt0 = waypoints[0]
+    if home_altitude is not None:
+        alt0 = home_altitude
+
+    with open(path, "w", encoding='utf-8') as file:
+        file.write("QGC WPL 110\n")
+
+        file.write(f"0\t1\t{home_frame}\t16\t0\t0\t0\t0\t{lat0}\t{lon0}\t{alt0}\t1\n")
+
+        for i, (lat, lon, alt) in enumerate(waypoints):
+
+            idx = int(i+1)
+
+            file.write(
+                f"{idx}\t0\t{crf}\t{command}\t{hold_time}\t{acceptance_radius}\t"
+                f"{pass_radius}\t{yaw}\t{lat}\t{lon}\t{alt}\t{cont}\n"
+            )
+
+
 def projectCoordinates(field: RiskField, from_crs="EPSG:4326", to_crs="EPSG:3857", recal_size=True):
 
     from_crs = CRS(from_crs)

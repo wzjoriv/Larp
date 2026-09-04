@@ -1601,7 +1601,7 @@ class HighFidelityQuadcopterDynamics(Dynamics):
 
     This class models the physical behavior of a quadrotor UAV, including advanced aerodynamic
     effects, actuator dynamics, and electrical system constraints. It is designed for
-    Model Predictive Control (MPC) and realistic flight simulation.
+     realistic flight simulation.
 
     **State Vector (17-Dimensional):**
 
@@ -1651,27 +1651,28 @@ class HighFidelityQuadcopterDynamics(Dynamics):
     """
 
     def __init__(self,
-                 frame: str = 'x',
-                 mass: float = 5.2,
-                 gravity: float = 9.81,
-                 inertia: List[float] = [0.04, 0.04, 0.08],
-                 arm_length: float = 0.35,
-                 motor_time_constant: float = 0.05,
-                 max_rpm: float = 12000,
-                 min_rpm: float = 1000,
-                 thrust_constant: float = 6.0e-5,
-                 torque_constant: float = 1.0e-6,
-                 motor_inertia: float = 1e-4,
-                 drag_coeffs_linear: List[float] = [0.1, 0.1, 0.1],
-                 drag_coeffs_quadratic: List[float] = [0.4, 0.4, 0.6],
-                 rotational_drag: List[float] = [0.2, 0.2, 0.2],
-                 blade_flapping_coeff: float = 0.05,
-                 ground_effect_coeff: float = 0.1,
-                 ground_effect_height: float = 0.5,
-                 battery_voltage_max: float = 25.2,
-                 battery_resistance: float = 0.02,
-                 current_draw_coeff: float = 0.00015,
-                 com_offset: List[float] = [0.0, 0.0, 0.0]) -> None:
+            frame: str = 'x',
+            mass: float = 5.2,
+            gravity: float = 9.81,
+            inertia: List[float] = [0.04, 0.04, 0.08],
+            arm_length: float = 0.35,
+            motor_time_constant: float = 0.05,
+            max_rpm: float = 12000,
+            min_rpm: float = 1000,
+            thrust_constant: float = 6.0e-5,
+            torque_constant: float = 1.0e-6,
+            motor_inertia: float = 1e-4,
+            drag_coeffs_linear: List[float] = [0.1, 0.1, 0.1],
+            drag_coeffs_quadratic: List[float] = [0.4, 0.4, 0.6],
+            rotational_drag: List[float] = [0.2, 0.2, 0.2],
+            blade_flapping_coeff: float = 0.05,
+            ground_effect_coeff: float = 0.1,
+            ground_effect_height: float = 0.5,
+            battery_voltage_max: float = 25.2,
+            battery_resistance: float = 0.02,
+            current_draw_coeff: float = 0.00015,
+            com_offset: List[float] = [0.0, 0.0, 0.0],
+        ) -> None:
         """
         Initialize the High Fidelity Dynamics model parameters.
 

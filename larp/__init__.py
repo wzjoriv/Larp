@@ -1,4 +1,8 @@
-from larp.field import *
+import os
+os.environ["JAX_PLATFORMS"] = "cpu"
+os.environ["OSQP_ALGEBRA_BACKEND"] = "builtin"
+
+from larp.field import *       # Cython-backed RiskField (merged w/ quad decomposition) + GeoJSON geometries
 from larp.fn import *
 from larp.quad import QRiskField
 from larp.dynamics import Dynamics

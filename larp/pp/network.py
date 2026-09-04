@@ -4,7 +4,7 @@ from typing import Callable, List, Optional, Set
 
 import numpy as np
 
-from larp.quad import QuadNode, QuadTree
+from larp.field import QuadNode, QuadTree
 from larp.types import Scaler, Point, RoutingAlgorithmStr
 
 """

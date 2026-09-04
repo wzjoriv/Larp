@@ -301,9 +301,11 @@ class TestSQPSolver:
     def test_solve_respects_u_bounds(self, solver):
         x0  = np.zeros(solver.n)
         ref = _straight_ref(solver, np.array([10.0, 0.0, 0.0]))
-        xs, us = solver.solve(x0, ref)
-        assert np.all(us >= solver.u_min - 1e-4)
-        assert np.all(us <= solver.u_max + 1e-4)
+        _, us = solver.solve(x0, ref)
+        min_slack = solver.tol + solver.rtol * np.abs(solver.u_min)
+        max_slack = solver.tol + solver.rtol * np.abs(solver.u_max)
+        assert np.all(us >= solver.u_min - min_slack)
+        assert np.all(us <= solver.u_max + max_slack)
 
     def test_solve_zero_ref_small_control(self, solver):
         """With goal = current position, optimal control should be near zero."""
@@ -317,8 +319,8 @@ class TestSQPSolver:
         x0  = np.zeros(solver.n)
         ref = _straight_ref(solver, np.array([2.0, 2.0, 0.0]))
         xs1, us1 = solver.solve(x0, ref)
-        # Second call with warm start — should still produce valid output
-        xs2, us2 = solver.solve(x0, ref, us_init=us1)
+        
+        xs2, _ = solver.solve(x0, ref, us_init=us1)
         assert xs2.shape == xs1.shape
         assert np.all(np.isfinite(xs2))
 

@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple, Union
 import re
 import numpy as np
 from larp.field import RiskField, RGJGeometry
-from larp.quad import QuadTree
+from larp.field import QuadTree
 from larp.const import FLOOT_METER_HEIGHT, OSM_INSTALLED
 from pyproj import CRS, Transformer
 import json
@@ -20,7 +20,7 @@ def saveRGeoJSON(field:RiskField, file:Union[str, PathLike], return_bbox=False):
 
 def saveQuadTree(tree:QuadTree, file:Union[str, PathLike]):
 
-    data = tree.toDict()
+    data = tree.to_dict()
 
     with open(file, "wb") as outfile:
         pickle.dump(data, outfile)
@@ -53,7 +53,7 @@ def loadQuadTreeFile(file: Union[str, PathLike], size_offset = 0.0, return_field
 
     field = loadRGeoJSON(data.pop('field'), size_offset=size_offset)
     tree = QuadTree(field=field)
-    tree.fromDict(data=data)
+    tree.from_dict(data=data)
 
     if return_field:
         return tree, field

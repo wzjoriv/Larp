@@ -38,22 +38,21 @@
             "repulsion": [[9, 0], [0, 9]]
         }},
 
-        { "type": "Feature", 
+        { "type": "Feature",
           "properties": {
             "name": "Column 1"
           }, "geometry":{
-            "type": "Rectangle",
-            "coordinates": [[68, 22], [85, 0]], 
+            "type": "Polygon",
+            "coordinates": [[[68, 22], [85, 22], [85, 0], [68, 0], [68, 22]]],
             "repulsion": [[4, 0], [0, 4]]
         }},
-        { "type": "Feature", 
+        { "type": "Feature",
           "properties": {
             "name": "Column 2"
           },"geometry":{
-            "type": "Ellipse",
-            "coordinates": [10, 80], 
-            "repulsion": [[9, 0], [0, 9]],
-            "shape": [[4, 0], [0, 4]]
+            "type": "Polygon",
+            "coordinates": [[[6, 80], [10, 84], [14, 80], [10, 76], [6, 80]]],
+            "repulsion": [[9, 0], [0, 9]]
         }},
 
         { "type": "Feature", 

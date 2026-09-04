@@ -14,9 +14,6 @@ cdef class GeometryCollectionRGJ(MultiRGJGeometry):
     cdef public object grad_matrixes
 
     def __init__(self, geometries, properties=None, **kwargs):
-        # Imported lazily to avoid a circular import: larp.field.geometry's
-        # __init__ builds _RGJ_TYPES from this module (among others), so it
-        # can't be imported at this module's top level.
         from larp.field.geometry import _RGJ_TYPES
 
         self.properties = {} if properties is None else properties

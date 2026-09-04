@@ -18,11 +18,10 @@ def test_quad_on_simple_pf():
     }]
 
     field = larp.RiskField(size=50, center_point=[55, 55], rgjs=point_rgjs)
-    quadtree = larp.quad.QuadTree(field=field,
+    quadtree = larp.QuadTree(field=field,
                                   build_tree=True,
                                   minimum_length_limit=2,
-                                  maximum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2))
+                                  maximum_length_limit=5)
     
     quadtree.build()
 
@@ -55,12 +54,11 @@ def test_rgj_idx_passed():
     }]
 
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
-    quadtree = larp.quad.QuadTree(field=field,
+    quadtree = larp.QuadTree(field=field,
                                   minimum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
 
-    def get_rgj_idx(quad:larp.quad.QuadNode):
+    def get_rgj_idx(quad:larp.QuadNode):
 
         if quad.leaf:
             return
@@ -94,9 +92,8 @@ def test_leaf_none_children():
     }]
 
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
-    quadtree = larp.quad.QuadTree(field=field,
+    quadtree = larp.QuadTree(field=field,
                                   minimum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
 
     for quad in quadtree.leaves:
@@ -128,9 +125,8 @@ def test_iter_quadtree():
     }]
 
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
-    quadtree = larp.quad.QuadTree(field=field,
+    quadtree = larp.QuadTree(field=field,
                                   minimum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     
     for quad in quadtree:
@@ -162,9 +158,8 @@ def test_quad_link():
     }]
 
     field = larp.RiskField(size=40, center_point=[55, 55], rgjs=point_rgjs)
-    quadtree = larp.quad.QuadTree(field=field,
+    quadtree = larp.QuadTree(field=field,
                                   minimum_length_limit=5,
-                                  edge_bounds=np.arange(0.2, 0.8, 0.2),
                                   build_tree=True)
     
     quad_chain = quadtree.find_quads_chain([[50.1, 50.1]])[0]
@@ -175,14 +170,14 @@ def test_quad_link():
 
 def test_boundary():
 
-    quad = larp.quad.QuadNode((2, 3), 2)
+    quad = larp.QuadNode((2, 3), 2)
     assert np.allclose(quad.get_boundaries(), np.array([1, 2, 3, 4])) , "Expected edge of quads not returned"
 
 def test_quad_shared_edge():
 
     # Scenerio 1: Sharing partial edge
-    quad1 = larp.quad.QuadNode((2, 3), 2)
-    quad2 = larp.quad.QuadNode((4, 2), 2)
+    quad1 = larp.QuadNode((2, 3), 2)
+    quad2 = larp.QuadNode((4, 2), 2)
     shared_edge1 = quad1.get_shared_edge(quad2)
     shared_edge2 = quad2.get_shared_edge(quad1)
 
@@ -190,8 +185,8 @@ def test_quad_shared_edge():
     assert np.allclose(shared_edge1, shared_edge2) , "Expected edge of quads not returned"
 
     # Scenerio 2: Big box to the side of small box
-    quad1 = larp.quad.QuadNode((2, 4), 2)
-    quad2 = larp.quad.QuadNode((5, 4), 4)
+    quad1 = larp.QuadNode((2, 4), 2)
+    quad2 = larp.QuadNode((5, 4), 4)
     shared_edge1 = quad1.get_shared_edge(quad2)
     shared_edge2 = quad2.get_shared_edge(quad1)
 
@@ -199,8 +194,8 @@ def test_quad_shared_edge():
     assert np.allclose(shared_edge1, shared_edge2) , "Expected edge of quads not returned"
 
     # Scenerio 3: Big box on top of small box
-    quad1 = larp.quad.QuadNode((3.5, 6.5), 3)
-    quad2 = larp.quad.QuadNode((4, 4), 2)
+    quad1 = larp.QuadNode((3.5, 6.5), 3)
+    quad2 = larp.QuadNode((4, 4), 2)
     shared_edge1 = quad1.get_shared_edge(quad2)
     shared_edge2 = quad2.get_shared_edge(quad1)
 
@@ -208,8 +203,8 @@ def test_quad_shared_edge():
     assert np.allclose(shared_edge1, shared_edge2) , "Expected edge of quads not returned"
 
     # Scenerio 4: Not sharing an edge
-    quad1 = larp.quad.QuadNode((3, 14), 2)
-    quad2 = larp.quad.QuadNode((6, 11), 2)
+    quad1 = larp.QuadNode((3, 14), 2)
+    quad2 = larp.QuadNode((6, 11), 2)
     shared_edge1 = quad1.get_shared_edge(quad2)
     shared_edge2 = quad2.get_shared_edge(quad1)
 
@@ -217,16 +212,16 @@ def test_quad_shared_edge():
     assert shared_edge1 is shared_edge2, "Expected edge of quads not returned"
 
     # Scenerio 5: Touching at a corner
-    quad1 = larp.quad.QuadNode((2, 1), 2)
-    quad2 = larp.quad.QuadNode((4, 3), 2)
+    quad1 = larp.QuadNode((2, 1), 2)
+    quad2 = larp.QuadNode((4, 3), 2)
     shared_edge1 = quad1.get_shared_edge(quad2)
     shared_edge2 = quad2.get_shared_edge(quad1)
 
     assert np.allclose(shared_edge1, np.array([[3, 2], [3, 2]])) , "Expected edge of quads not returned"
     assert np.allclose(shared_edge1, shared_edge2) , "Expected edge of quads not returned"
 
-    quad1 = larp.quad.QuadNode((4, 1), 2)
-    quad2 = larp.quad.QuadNode((2, 3), 2)
+    quad1 = larp.QuadNode((4, 1), 2)
+    quad2 = larp.QuadNode((2, 3), 2)
     shared_edge1 = quad1.get_shared_edge(quad2)
     shared_edge2 = quad2.get_shared_edge(quad1)
 
@@ -234,8 +229,8 @@ def test_quad_shared_edge():
     assert np.allclose(shared_edge1, shared_edge2) , "Expected edge of quads not returned"
 
     # Scenerio 6: Overlap
-    quad1 = larp.quad.QuadNode((102, -6), 2)
-    quad2 = larp.quad.QuadNode((103, -7), 2)
+    quad1 = larp.QuadNode((102, -6), 2)
+    quad2 = larp.QuadNode((103, -7), 2)
     shared_edge1 = quad1.get_shared_edge(quad2)
     shared_edge2 = quad2.get_shared_edge(quad1)
 
@@ -245,8 +240,8 @@ def test_quad_shared_edge():
 def test_quad_bbox():
 
     # Scenerio 1: Sharing partial edge
-    quad1 = larp.quad.QuadNode((2, 3), 2)
-    quad2 = larp.quad.QuadNode((4, 2), 2)
+    quad1 = larp.QuadNode((2, 3), 2)
+    quad2 = larp.QuadNode((4, 2), 2)
 
     in_bbox1 = quad1.in_bbox([[1, 2], [2, 3], [-1, -1], [4, 2], [3, 3], [3.1, 2], [2.9, 2]])
     in_bbox2 = quad2.in_bbox([[1, 2], [2, 3], [-1, -1], [4, 2], [3, 3], [3.1, 2], [2.9, 2]])

@@ -202,11 +202,10 @@ class VehicleScenario(BenchmarkScenario):
             field    = lp.RiskField(rgjs=rgjs, center_point=(0, 0), size=cfg["dist"] * 2)
             field.set_all_repulsion([[100.0, 0], [0, 100.0]])
             grid_sz  = cfg["dist"] / 256
-            quadtree = lp.quad.QuadTree(
-                field, minimum_length_limit=grid_sz,
-                edge_bounds=[0.2, 0.4, 0.6, 0.8], build_tree=True,
+            qfield = lp.RiskField(
+                rgjs=field.rgjs, center_point=field.center_point, size=field.size,
+                minimum_cell_size=grid_sz,
             )
-            qfield    = lp.QRiskField(quadtree)
             field_map = {"field": field, "qfield": qfield}
 
             waypoints = np.array(cfg["waypoints"], dtype=float)
@@ -218,7 +217,7 @@ class VehicleScenario(BenchmarkScenario):
             path_planner = pp.QuadPlanner(
                 lp.quad.QuadTree(
                     field, minimum_length_limit=grid_sz,
-                    edge_bounds=[0.2, 0.4, 0.6, 0.8], build_tree=True,
+                    build_tree=True,
                 )
             )
             path_planner.select_alg("a*")
@@ -370,11 +369,11 @@ class WMRScenario(BenchmarkScenario):
         self.field.set_all_repulsion([[100.0, 0], [0, 100.0]])
 
         grid_sz  = min(self.field.size) / 120.0
-        quadtree = lp.quad.QuadTree(
-            self.field, minimum_length_limit=grid_sz,
-            edge_bounds=[0.2, 0.4, 0.6, 0.8], build_tree=True,
+        qfield = lp.RiskField(
+            rgjs=self.field.rgjs, center_point=self.field.center_point, size=self.field.size,
+            minimum_cell_size=grid_sz,
         )
-        self.field_map = {"field": self.field, "qfield": lp.QRiskField(quadtree)}
+        self.field_map = {"field": self.field, "qfield": qfield}
 
         u_v_max     = 5.0
         u_omega_max = 2.0
@@ -385,7 +384,7 @@ class WMRScenario(BenchmarkScenario):
         self.path_planner = pp.QuadPlanner(
             lp.quad.QuadTree(
                 self.field, minimum_length_limit=10.0,
-                edge_bounds=[0.2, 0.5, 0.8], build_tree=True,
+                build_tree=True,
             )
         )
         self.path_planner.select_alg("a*")

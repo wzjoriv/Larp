@@ -165,17 +165,17 @@ def simulate(cfg: dict) -> list[np.ndarray]:
     print(f"Number of obstacles: {len(field)}")
 
     dist     = city["dist"]
-    quadtree = larp.quad.QuadTree(
+    quadtree = larp.QuadTree(
         field,
         minimum_length_limit=dist / cfg["planning"]["min_quad_size_divisor"],
     )
     if cfg["optimizer"]["use_risk_field"]:
-        search = larp.quad.QuadTree(
-            field,
-            minimum_length_limit=field.size[0] / cfg["planning"]["search_quad_divisor"],
-            edge_bounds=cfg["planning"]["search_edge_bounds"],
+        opt_field = larp.RiskField(
+            rgjs=viz.get_obstacle_rgjs(),
+            center_point=(0, 0),
+            size=city["dist"] * 2,
+            minimum_cell_size=field.size[0] / cfg["planning"]["search_quad_divisor"],
         )
-        opt_field = larp.quad.QRiskField(search)
     else:
         opt_field = field
 

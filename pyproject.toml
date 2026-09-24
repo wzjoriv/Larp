@@ -42,6 +42,9 @@ Issues = "https://github.com/wzjoriv/Larp/issues"
 [tool.setuptools.packages.find]
 include = ["larp*"]
 
+[tool.cibuildwheel]
+skip = ["cp38-*", "cp39-win_arm64", "cp310-win_arm64", "pp*"]
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --disable-plugin-autoload"

@@ -1,21 +1,28 @@
-# custom
+# Personal folders
 .rug_*
 rug_*
-.vscode
-cache
+.vscode/
+.idea/
+cache/
+files/
+demos/
 
-!docs/imgs/uam_demo.svg
-docs
-
-tp_benchmark_route_data
+# Benchmark/results output
 tp_benchmark_*
 results/
 console*.txt
-!.github/
-!.gitignore
-.*
-files
 *.mp4
+
+# Docs folder, except the README demo image
+docs/*
+!docs/imgs/
+docs/imgs/*
+!docs/imgs/uam_demo.svg
+
+# Dotfiles, except the ones git/GitHub need (must stay after any !dotfile rules above)
+.*
+!.gitignore
+!.github/
 
 
 # Byte-compiled / optimized / DLL files
@@ -178,9 +185,5 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# Cython-generated C sources (compiled from larp/field/**/*.pyx)
+# Cython-generated C sources
 larp/field/**/*.c
-
-.idea/
-
-demos/

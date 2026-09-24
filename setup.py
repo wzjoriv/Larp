@@ -1,12 +1,4 @@
-"""
-Build script for larp's optional Cython extensions (larp/field/*.pyx,
-larp/field/geometry/*.pyx).
 
-Packaging metadata itself lives in pyproject.toml; this file exists only
-because the Cython extensions need an explicit build step:
-
-    python setup.py build_ext --inplace
-"""
 from setuptools import setup, Extension
 
 try:

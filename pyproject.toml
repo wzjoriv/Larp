@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "larp"
-version = "0.3.0"
+version = "0.4.0"
 authors = [
   { name="Josue N Rivera", email="josue.n.rivera@outlook.com" },
 ]
@@ -14,12 +14,9 @@ readme = "README.md"
 dependencies = [
     'numpy>=2.0.0',
     'scipy',
-    'matplotlib',
-    'rich',
     'osmnx',
     'jax',
     'osqp',
-    'Cython>=3.0'
 ]
 
 classifiers = [
@@ -28,16 +25,14 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-cuda = [ # NOTE: Future feature 
-    "jax[cuda12]",
-    "osqp[cuda]",
-    "cupy-cuda12x",
-]
 
 dev = [
     "pytest>=8.0",
     "pytest-cov",
-    "typer[all]"
+    "typer[all]",
+    'matplotlib',
+    'rich',
+    'Cython>=3.0',
 ]
 
 [project.urls]

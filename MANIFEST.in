@@ -1,0 +1,11 @@
+recursive-include larp *.pyx
+recursive-include larp *.pxd
+
+global-exclude *.c
+
+prune test
+
+include LICENSE
+include README.md
+include pyproject.toml
+include setup.py

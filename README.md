@@ -13,7 +13,7 @@ A fast, flexible Python toolkit for aerial autonomous urban navigation optimized
 
 ## Overview
 
-**Larp** (/lärp/) is a modular framework for autonomous navigation that leverages *risk/potential fields* to model obstacles and UAM environmental constraints. It provides a full planning pipeline, from global path search to real-time trajectory optimization, where each stage can be used independently or replaced with a custom implementation. This makes Larp suitable for rapid prototyping, research work, and exploration of UAM and UTM navigation systems.
+**Larp** (/lärp/) is a modular stack for autonomous navigation that leverages *risk/repulsive potential fields* to model obstacles and UAM environmental constraints. It provides a full planning pipeline, from global path search to real-time trajectory optimization, where each stage can be used independently or replaced with a custom implementation. This makes Larp suitable for rapid prototyping, research work, and exploration of UAM and UTM navigation systems.
 
 ---
 
@@ -146,10 +146,6 @@ larp/
   tp/
     solver.py       SQPSolver, ALILQRSolver, ALDDPSolver
     planner.py      WaypointPlanner, SplinePlanner, QuinticPlanner
-  env/
-    environments.py CityEnvironment, FieldHeatmapEnvironment
-    visualizers.py  FieldTrajectoryVisualizer, CityVisualizer, ZoomedCityVisualizer
-    twin.py         Digital twins
 ```
 
 ---
@@ -192,6 +188,17 @@ Interactive Jupyter Notebook demos:
 If you use Larp in your work, please cite:
 
 ```bibtex
+@inproceedings{rivera2026scalable,
+  title = {Scalable Online Flight Trajectory Optimization via Sequential Quadratic Programming for Urban Air Mobility in Ultra Low-Altitude Airspace},
+  booktitle = {Proceedings of the 2026 IEEE/AIAA 45th Digital Avionics Systems Conference (DASC)},
+  author = {Rivera, Josue N. and Liang, Bohang and Lv, Chen and Wang, James},
+  year = 2026,
+  month = sep,
+  publisher = {IEEE},
+  address = {Orlando, Florida, USA},
+  langid = {English}
+}
+
 @inproceedings{rivera2026citywide,
   title = {City-Wide Low-Altitude Urban Air Mobility: A Scalable Global Path Planning Approach via Risk-Aware Multi-Scale Cell Decomposition},
   booktitle = {Proceedings of the 2026 IEEE 6th International Conference on Human-Machine Systems (ICHMS)},
@@ -200,15 +207,18 @@ If you use Larp in your work, please cite:
   month = jul,
   publisher = {IEEE},
   address = {Singapore},
-  langid = {english}
+  langid = {English}
 }
 
 @inproceedings{rivera2024air,
   title = {Air Traffic Management for Collaborative Routing of Unmanned Aerial Vehicles via Potential Fields},
   author = {Rivera, Josue N and Sun, Dengfeng},
-  booktitle = {International Conference for Research in Air Transportation (ICRAT)},
+  booktitle = {Proceedings of the 11th International Conference on Research in Air Transportation (ICRAT)},
   year = {2024},
-  publisher = {ICRAT}
+  month = jul,
+  publisher = {ICRAT},
+  address = {Singapore},
+  langid = {English}
 }
 ```
 
